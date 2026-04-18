@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1031218970443",
+    "project_id": "auraguide-46d15",
+    "storage_bucket": "auraguide-46d15.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1031218970443:android:d7d12d421b3a25f04572ce",
+        "android_client_info": {
+          "package_name": "com.example.aura_guide_fyp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDGaewy9zHwJ46bBp9moSa2wmCm8HdAd_c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
