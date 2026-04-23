@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'manual_register_page.dart';
+import 'voice_register_page.dart';
 
 class RegisterPage extends StatelessWidget {
   const RegisterPage({super.key});
@@ -61,9 +62,9 @@ class RegisterPage extends StatelessWidget {
               const SizedBox(height: 24),
               _VoiceRegisterCard(
                 onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Voice registration will be available soon.'),
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (context) => const VoiceRegisterPage(),
                     ),
                   );
                 },
