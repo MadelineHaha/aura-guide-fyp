@@ -61,9 +61,29 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
   String? _validateStep3() {
     final password = _passwordController.text;
     if (password.isEmpty) return 'Please enter a password.';
+    if (!_hasMinLength(password)) return 'Password must be at least 8 characters.';
     if (password.length > 255) return 'Password must be at most 255 characters.';
+    if (!_hasUppercase(password)) {
+      return 'Password must include at least one uppercase letter.';
+    }
+    if (!_hasLowercase(password)) {
+      return 'Password must include at least one lowercase letter.';
+    }
+    if (!_hasDigit(password)) {
+      return 'Password must include at least one number.';
+    }
+    if (!_hasSpecialChar(password)) {
+      return 'Password must include at least one special character.';
+    }
     return null;
   }
+
+  bool _hasMinLength(String password) => password.length >= 8;
+  bool _hasUppercase(String password) => RegExp(r'[A-Z]').hasMatch(password);
+  bool _hasLowercase(String password) => RegExp(r'[a-z]').hasMatch(password);
+  bool _hasDigit(String password) => RegExp(r'\d').hasMatch(password);
+  bool _hasSpecialChar(String password) =>
+      RegExp(r'[!@#$%^&*(),.?":{}|<>_\-\\/\[\];+=~`]').hasMatch(password);
 
   void _onContinue() {
     FocusScope.of(context).unfocus();
@@ -379,8 +399,29 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
           prefixIcon: Icons.lock_outline,
           obscureText: true,
           autofillHints: const [AutofillHints.newPassword],
-          micBorderOnly: true,
+          onChanged: (_) => setState(() {}),
           onMic: () => _voiceFieldHint('password'),
+        ),
+        const SizedBox(height: 14),
+        _PasswordRequirement(
+          text: 'At least 8 characters',
+          met: _hasMinLength(_passwordController.text),
+        ),
+        const SizedBox(height: 6),
+        _PasswordRequirement(
+          text: 'One uppercase and one lowercase letter',
+          met: _hasUppercase(_passwordController.text) &&
+              _hasLowercase(_passwordController.text),
+        ),
+        const SizedBox(height: 6),
+        _PasswordRequirement(
+          text: 'At least one number',
+          met: _hasDigit(_passwordController.text),
+        ),
+        const SizedBox(height: 6),
+        _PasswordRequirement(
+          text: 'At least one special character',
+          met: _hasSpecialChar(_passwordController.text),
         ),
         const SizedBox(height: 20),
         _PrivacyNotice(
@@ -394,9 +435,28 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
                   'Privacy Policy',
                   style: TextStyle(color: Colors.white),
                 ),
-                content: const Text(
-                  'Privacy policy content will appear here.',
-                  style: TextStyle(color: _subtext),
+                content: const SingleChildScrollView(
+                  child: Text(
+                    'Aura Guide Privacy Policy\n\n'
+                    '1. Information We Collect\n'
+                    '- Account details (name, email, date of birth).\n'
+                    '- Accessibility preferences you provide.\n'
+                    '- Optional voice profile metadata for voice login.\n\n'
+                    '2. How We Use Your Data\n'
+                    '- To authenticate your account and secure access.\n'
+                    '- To personalize health and accessibility features.\n'
+                    '- To provide support and improve app reliability.\n\n'
+                    '3. Data Protection\n'
+                    '- Your credentials are handled by Firebase Authentication.\n'
+                    '- Health-related profile data is stored in secured cloud services.\n'
+                    '- Access is restricted to authorized systems and processes.\n\n'
+                    '4. Your Choices\n'
+                    '- You may update profile details in app settings.\n'
+                    '- You may request account deletion and data removal.\n\n'
+                    '5. Consent\n'
+                    'By creating an account, you consent to this processing for service delivery.',
+                    style: TextStyle(color: _subtext, height: 1.45),
+                  ),
                 ),
                 actions: [
                   TextButton(
@@ -612,7 +672,7 @@ class _BirthDateField extends StatelessWidget {
             ),
             Padding(
               padding: const EdgeInsets.only(right: 4),
-              child: _MicButton(onPressed: onMic, borderOnly: false),
+              child: _MicButton(onPressed: onMic),
             ),
           ],
         ),
@@ -663,7 +723,7 @@ class _DarkLabeledField extends StatelessWidget {
     this.keyboardType,
     this.obscureText = false,
     this.autofillHints,
-    this.micBorderOnly = false,
+    this.onChanged,
   });
 
   final TextEditingController controller;
@@ -673,8 +733,7 @@ class _DarkLabeledField extends StatelessWidget {
   final TextInputType? keyboardType;
   final bool obscureText;
   final Iterable<String>? autofillHints;
-  /// Password step: teal ring around mic (per mock).
-  final bool micBorderOnly;
+  final ValueChanged<String>? onChanged;
 
   static const Color _accent = Color(0xFF66C2BD);
   static const Color _fieldFill = Color(0xFF141414);
@@ -688,6 +747,7 @@ class _DarkLabeledField extends StatelessWidget {
       obscureText: obscureText,
       keyboardType: keyboardType,
       autofillHints: autofillHints,
+      onChanged: onChanged,
       style: const TextStyle(color: Colors.white, fontSize: 16),
       decoration: InputDecoration(
         filled: true,
@@ -699,7 +759,6 @@ class _DarkLabeledField extends StatelessWidget {
           padding: const EdgeInsets.only(right: 10),
           child: _MicButton(
             onPressed: onMic,
-            borderOnly: micBorderOnly,
           ),
         ),
         suffixIconConstraints: const BoxConstraints(minHeight: 48, minWidth: 52),
@@ -718,45 +777,16 @@ class _DarkLabeledField extends StatelessWidget {
 }
 
 class _MicButton extends StatelessWidget {
-  const _MicButton({required this.onPressed, this.borderOnly = false});
+  const _MicButton({required this.onPressed});
 
   final VoidCallback onPressed;
-  final bool borderOnly;
 
-  static const Color _accent = Color(0xFF66C2BD);
+  static const Color _micFill = Color(0xFF1D7278);
 
   @override
   Widget build(BuildContext context) {
-    if (borderOnly) {
-      const inner = Icon(
-        Icons.mic,
-        size: 20,
-        color: Colors.white,
-      );
-
-      return Material(
-        color: Colors.transparent,
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onPressed,
-          child: Container(
-            width: 40,
-            height: 40,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: _accent, width: 1.5),
-              color: const Color(0xFF141414),
-            ),
-            child: inner,
-          ),
-        ),
-      );
-    }
-
     return Material(
-      color: _accent,
+      color: _micFill,
       shape: const CircleBorder(),
       child: InkWell(
         customBorder: const CircleBorder(),
@@ -767,6 +797,42 @@ class _MicButton extends StatelessWidget {
           child: Icon(Icons.mic, color: Colors.white, size: 20),
         ),
       ),
+    );
+  }
+}
+
+class _PasswordRequirement extends StatelessWidget {
+  const _PasswordRequirement({
+    required this.text,
+    required this.met,
+  });
+
+  final String text;
+  final bool met;
+
+  @override
+  Widget build(BuildContext context) {
+    const unmetColor = Color(0xFF8F8F8F);
+    const metColor = Color(0xFF4CAF6A);
+
+    return Row(
+      children: [
+        Icon(
+          Icons.circle,
+          size: 8,
+          color: met ? metColor : unmetColor,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: met ? metColor : unmetColor,
+              fontSize: 15,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

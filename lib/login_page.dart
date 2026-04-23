@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'manual_login_page.dart';
 import 'register_page.dart';
+import 'voice_login_page.dart';
 
 class LoginPage extends StatelessWidget {
   const LoginPage({super.key});
@@ -62,9 +63,9 @@ class LoginPage extends StatelessWidget {
               const SizedBox(height: 24),
               _VoiceLoginCard(
                 onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Voice sign-in will be available soon.'),
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (context) => const VoiceLoginPage(),
                     ),
                   );
                 },
