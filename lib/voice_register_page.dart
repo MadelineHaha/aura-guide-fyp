@@ -1,4 +1,10 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:speech_to_text/speech_to_text.dart';
+
+import 'main_menu_page.dart';
+import 'services/user_registration_service.dart';
+import 'services/voice_profile_service.dart';
 
 class VoiceRegisterPage extends StatefulWidget {
   const VoiceRegisterPage({super.key});
@@ -10,11 +16,15 @@ class VoiceRegisterPage extends StatefulWidget {
 class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _speech = SpeechToText();
+  final _registration = UserRegistrationService();
+  final _voiceProfile = VoiceProfileService();
 
   int _step = 0;
   bool _isRecording = false;
   bool _hasSample = false;
   bool _submitting = false;
+  String _capturedPhrase = '';
 
   static const Color _accent = Color(0xFF66C2BD);
   static const Color _bg = Color(0xFF000000);
@@ -27,13 +37,50 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
     r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$',
   );
 
-  void _toggleRecording() {
+  Future<void> _toggleRecording() async {
+    if (_isRecording) {
+      await _speech.stop();
+      if (!mounted) return;
+      setState(() => _isRecording = false);
+      return;
+    }
+
+    final available = await _speech.initialize(
+      onStatus: (status) {
+        if (status == 'done' && mounted) {
+          setState(() => _isRecording = false);
+        }
+      },
+      onError: (error) {
+        if (!mounted) return;
+        setState(() => _isRecording = false);
+        _showValidation('Voice capture failed: ${error.errorMsg}');
+      },
+    );
+
+    if (!available) {
+      _showValidation('Microphone permission is required for voice registration.');
+      return;
+    }
+
     setState(() {
-      _isRecording = !_isRecording;
-      if (!_isRecording) {
-        _hasSample = true;
-      }
+      _isRecording = true;
+      _capturedPhrase = '';
     });
+
+    await _speech.listen(
+      listenFor: const Duration(seconds: 8),
+      pauseFor: const Duration(seconds: 2),
+      listenOptions: SpeechListenOptions(partialResults: true),
+      onResult: (result) {
+        if (!mounted) return;
+        final normalized = _voiceProfile.normalize(result.recognizedWords);
+        setState(() {
+          _capturedPhrase = normalized;
+          _hasSample = normalized.isNotEmpty;
+        });
+      },
+    );
   }
 
   void _showVoiceHint(String field) {
@@ -82,17 +129,49 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
       RegExp(r'[!@#$%^&*(),.?":{}|<>_\-\\/\[\];+=~`]').hasMatch(password);
 
   Future<void> _completeVoiceOnly() async {
+    if (!_hasSample) {
+      _showValidation('Please record your voice sample first.');
+      return;
+    }
+
     setState(() => _submitting = true);
-    await Future<void>.delayed(const Duration(milliseconds: 450));
-    if (!mounted) return;
-    setState(() => _submitting = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Voice registration completed.')),
-    );
-    Navigator.of(context).popUntil((route) => route.isFirst);
+    try {
+      final credential = await FirebaseAuth.instance.signInAnonymously();
+      final uid = credential.user?.uid;
+      if (uid == null) throw StateError('No uid returned from Firebase Auth.');
+
+      await _registration.createUserProfile(
+        uid: uid,
+        name: 'Voice User',
+        birthDate: DateTime(2000, 1, 1),
+        email: 'voice_$uid@auraguide.local',
+        voiceProfile: _capturedPhrase,
+      );
+
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Voice registration completed.')),
+      );
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(builder: (context) => const MainMenuPage()),
+        (route) => false,
+      );
+    } catch (e) {
+      await _registration.deleteCurrentAuthUser();
+      await FirebaseAuth.instance.signOut();
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      _showValidation('Could not complete voice registration: $e');
+    }
   }
 
   Future<void> _submitWithEmailPassword() async {
+    if (!_hasSample) {
+      _showValidation('Please record your voice sample first.');
+      return;
+    }
+
     final email = _emailController.text.trim();
     final password = _passwordController.text;
 
@@ -109,17 +188,46 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
     }
 
     setState(() => _submitting = true);
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-    if (!mounted) return;
-    setState(() => _submitting = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Voice registration setup completed.')),
-    );
-    Navigator.of(context).popUntil((route) => route.isFirst);
+    try {
+      final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      final uid = cred.user?.uid;
+      if (uid == null) throw StateError('No uid returned from Firebase Auth.');
+
+      await _registration.createUserProfile(
+        uid: uid,
+        name: 'Voice User',
+        birthDate: DateTime(2000, 1, 1),
+        email: email,
+        voiceProfile: _capturedPhrase,
+      );
+
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Voice registration setup completed.')),
+      );
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(builder: (context) => const MainMenuPage()),
+        (route) => false,
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      _showValidation(e.message ?? 'Voice registration failed.');
+    } catch (e) {
+      await _registration.deleteCurrentAuthUser();
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      _showValidation('Could not save voice profile: $e');
+    }
   }
 
   @override
   void dispose() {
+    _speech.stop();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -235,10 +343,12 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
           ),
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Please say: "Sign me in"',
+        Text(
+          _capturedPhrase.isEmpty
+              ? 'Please say: "Sign me in"'
+              : 'Captured: "$_capturedPhrase"',
           textAlign: TextAlign.center,
-          style: TextStyle(color: _subtext, fontSize: 15),
+          style: const TextStyle(color: _subtext, fontSize: 15),
         ),
         const SizedBox(height: 20),
         Row(
@@ -317,6 +427,7 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
           prefixIcon: Icons.lock_outline,
           onMic: () => _showVoiceHint('password'),
           obscureText: true,
+          hintFontSize: 20,
           onChanged: (_) => setState(() {}),
         ),
         const SizedBox(height: 14),
