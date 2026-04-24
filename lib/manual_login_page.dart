@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'main_menu_page.dart';
+import 'password_recovery_page.dart';
 
 class ManualLoginPage extends StatefulWidget {
   const ManualLoginPage({super.key});
@@ -52,7 +54,12 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Signed in successfully')),
       );
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(
+          builder: (context) => const MainMenuPage(),
+        ),
+        (route) => false,
+      );
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -233,9 +240,9 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
           alignment: Alignment.centerLeft,
           child: TextButton(
             onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Password recovery will be available soon.'),
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const PasswordRecoveryPage(),
                 ),
               );
             },

@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:speech_to_text/speech_to_text.dart';
+
+import 'main_menu_page.dart';
+import 'services/voice_profile_service.dart';
 
 class VoiceLoginPage extends StatefulWidget {
   const VoiceLoginPage({super.key});
@@ -8,21 +13,67 @@ class VoiceLoginPage extends StatefulWidget {
 }
 
 class _VoiceLoginPageState extends State<VoiceLoginPage> {
+  final _speech = SpeechToText();
+  final _voiceProfile = VoiceProfileService();
+
   bool _isRecording = false;
   bool _hasSample = false;
   bool _enteringDashboard = false;
+  String _capturedPhrase = '';
 
   static const Color _accent = Color(0xFF63C3C4);
   static const Color _bg = Color(0xFF000000);
   static const Color _subtext = Color(0xFFB0B0B0);
 
-  void _toggleRecording() {
+  Future<void> _toggleRecording() async {
+    if (_isRecording) {
+      await _speech.stop();
+      if (!mounted) return;
+      setState(() => _isRecording = false);
+      return;
+    }
+
+    final available = await _speech.initialize(
+      onStatus: (status) {
+        if (status == 'done' && mounted) {
+          setState(() => _isRecording = false);
+        }
+      },
+      onError: (error) {
+        if (!mounted) return;
+        setState(() => _isRecording = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Voice capture failed: ${error.errorMsg}')),
+        );
+      },
+    );
+
+    if (!available) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Microphone permission is required.')),
+      );
+      return;
+    }
+
     setState(() {
-      _isRecording = !_isRecording;
-      if (!_isRecording) {
-        _hasSample = true;
-      }
+      _isRecording = true;
+      _capturedPhrase = '';
     });
+
+    await _speech.listen(
+      listenFor: const Duration(seconds: 8),
+      pauseFor: const Duration(seconds: 2),
+      listenOptions: SpeechListenOptions(partialResults: true),
+      onResult: (result) {
+        if (!mounted) return;
+        final normalized = _voiceProfile.normalize(result.recognizedWords);
+        setState(() {
+          _capturedPhrase = normalized;
+          _hasSample = normalized.isNotEmpty;
+        });
+      },
+    );
   }
 
   Future<void> _enterDashboard() async {
@@ -39,12 +90,45 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
     }
 
     setState(() => _enteringDashboard = true);
-    await Future<void>.delayed(const Duration(milliseconds: 450));
-    if (!mounted) return;
-    setState(() => _enteringDashboard = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Voice login successful.')),
-    );
+    try {
+      final matched = await _voiceProfile.findMatchingProfile(_capturedPhrase);
+      if (matched == null) {
+        if (!mounted) return;
+        setState(() => _enteringDashboard = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Voice does not match any registered profile.')),
+        );
+        return;
+      }
+
+      if (FirebaseAuth.instance.currentUser == null) {
+        await FirebaseAuth.instance.signInAnonymously();
+      }
+
+      if (!mounted) return;
+      setState(() => _enteringDashboard = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Voice verified. Welcome ${matched['name'] ?? 'User'}!')),
+      );
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(
+          builder: (context) => const MainMenuPage(),
+        ),
+        (route) => false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _enteringDashboard = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Voice login failed: $e')),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _speech.stop();
+    super.dispose();
   }
 
   @override
@@ -113,10 +197,12 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Please say: “Sign me in”',
+              Text(
+                _capturedPhrase.isEmpty
+                    ? 'Please say: "Sign me in"'
+                    : 'Captured: "$_capturedPhrase"',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: _subtext, fontSize: 15),
+                style: const TextStyle(color: _subtext, fontSize: 15),
               ),
               const SizedBox(height: 20),
               Row(
