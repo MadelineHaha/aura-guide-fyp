@@ -1,0 +1,19 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // User profile: doc id must match Firebase Auth uid.
+    match /users/{userId} {
+      // Signed-in users can read profiles (needed for voice login + email lookup).
+      allow read: if request.auth != null;
+      // Only the owner can create/update their own document.
+      allow create, update, delete: if request.auth != null
+        && request.auth.uid == userId;
+    }
+
+    // Sequential user id counter used during registration.
+    match /system/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

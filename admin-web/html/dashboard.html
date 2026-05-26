@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Staff Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body>
+  <main class="dashboard-page">
+    <header class="dashboard-header">
+      <div class="dashboard-header-top">
+        <img class="logo" src="../assets/images/logo.png" alt="" width="52" height="52" />
+        <h1 class="dashboard-title">Staff Dashboard</h1>
+      </div>
+      <p class="dashboard-subtitle">Welcome back. You are signed in as healthcare staff.</p>
+    </header>
+
+    <section class="dashboard-card" aria-label="Your profile">
+      <h2 class="dashboard-card-title">Your profile</h2>
+      <dl class="profile-list">
+        <div class="profile-row">
+          <dt>Name</dt>
+          <dd id="staff-name">—</dd>
+        </div>
+        <div class="profile-row">
+          <dt>Role</dt>
+          <dd id="staff-role">—</dd>
+        </div>
+        <div class="profile-row">
+          <dt>Staff ID</dt>
+          <dd id="staff-id">—</dd>
+        </div>
+        <div class="profile-row">
+          <dt>Email</dt>
+          <dd id="staff-email">—</dd>
+        </div>
+      </dl>
+    </section>
+
+    <button type="button" class="btn-sign-out" id="btn-sign-out">Sign out</button>
+  </main>
+
+  <script type="module" src="../js/dashboard.js"></script>
+</body>
+</html>
