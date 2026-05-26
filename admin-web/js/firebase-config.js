@@ -3,12 +3,12 @@
  * Firebase Console → Project settings → Your apps → SDK setup and configuration
  */
 export const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID",
+  apiKey: "AIzaSyCQlrH2N3KG64xQhMQEkSLy-QPkfVzuU6k",
+  authDomain: "auraguide-46d15.firebaseapp.com",
+  projectId: "auraguide-46d15",
+  storageBucket: "auraguide-46d15.firebasestorage.app",
+  messagingSenderId: "1031218970443",
+  appId: "1:1031218970443:web:b608f4a5800a34174572ce",
 };
 
 /** True once you paste real values from Firebase Console (not YOUR_* placeholders). */

@@ -60,6 +60,18 @@ export async function signOutStaff() {
   await signOut(auth);
 }
 
-export function getAuthErrorMessage() {
-  return LOGIN_ERROR_MESSAGE;
+export function getAuthErrorMessage(error) {
+  const code = error?.code;
+  if (
+    code === "auth/invalid-credential" ||
+    code === "auth/wrong-password" ||
+    code === "auth/user-not-found" ||
+    code === "auth/invalid-email"
+  ) {
+    return LOGIN_ERROR_MESSAGE;
+  }
+  if (code === "permission-denied") {
+    return "Could not load your staff profile. Check Firestore rules for healthcarestaff.";
+  }
+  return error?.message || LOGIN_ERROR_MESSAGE;
 }

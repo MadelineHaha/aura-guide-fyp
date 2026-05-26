@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Patient Records — Aura Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body class="staff-app">
+  <header class="staff-nav">
+    <a class="staff-nav-brand" href="dashboard.html">
+      <img class="logo" src="../assets/images/logo.png" alt="" width="40" height="40" />
+      <span class="staff-nav-brand-text">Aura Guide</span>
+    </a>
+    <nav class="staff-nav-links" aria-label="Main">
+      <a class="staff-nav-link" href="dashboard.html">Dashboard</a>
+      <a class="staff-nav-link" href="appointments.html">Appointments</a>
+      <a class="staff-nav-link is-active" href="patients.html">Patients</a>
+      <a class="staff-nav-link" href="#">Emergencies</a>
+      <a class="staff-nav-link" href="#">Reports</a>
+    </nav>
+    <div class="staff-nav-user">
+      <button type="button" class="staff-avatar" id="btn-user-menu" aria-label="Account menu">
+        <span class="staff-avatar-initials" id="staff-avatar-initials">—</span>
+      </button>
+      <div class="staff-user-menu" id="user-menu" hidden>
+        <p class="staff-user-menu-name" id="menu-staff-name">—</p>
+        <p class="staff-user-menu-role" id="menu-staff-role">—</p>
+        <button type="button" class="staff-user-menu-signout" id="btn-sign-out">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="staff-page patients-page">
+    <header class="page-toolbar">
+      <div class="page-toolbar-heading">
+        <h1 class="page-title">Patient Records</h1>
+        <p class="page-subtitle" id="patients-count">6 patients</p>
+      </div>
+      <button type="button" class="btn-primary" id="btn-add-patient">+ Add Patient</button>
+    </header>
+
+    <div class="appointments-toolbar">
+      <label class="search-field">
+        <span class="search-field-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="7" />
+            <line x1="16.5" y1="16.5" x2="21" y2="21" />
+          </svg>
+        </span>
+        <input
+          type="search"
+          class="search-field-input"
+          id="patient-search"
+          placeholder="Search patient name or ID..."
+          autocomplete="off"
+        />
+      </label>
+      <div class="filter-tabs" role="tablist" aria-label="Filter by status">
+        <button type="button" class="filter-tab is-active" data-status="all">All</button>
+        <button type="button" class="filter-tab" data-status="stable">Stable</button>
+        <button type="button" class="filter-tab" data-status="monitoring">Monitoring</button>
+        <button type="button" class="filter-tab" data-status="critical">Critical</button>
+      </div>
+    </div>
+
+    <div class="table-card">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Patient</th>
+            <th scope="col">Age</th>
+            <th scope="col">Condition</th>
+            <th scope="col">Last Visit</th>
+            <th scope="col">Status</th>
+            <th scope="col">Health Records</th>
+            <th scope="col">Profile</th>
+          </tr>
+        </thead>
+        <tbody id="patients-tbody"></tbody>
+      </table>
+      <p class="table-empty" id="patients-empty" hidden>No patients match your search.</p>
+      <nav class="table-pagination" id="patients-pagination" aria-label="Patients pages"></nav>
+    </div>
+  </main>
+
+  <div class="modal-backdrop" id="health-records-modal" hidden>
+    <div
+      class="health-records-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="health-records-title"
+    >
+      <header class="health-records-header">
+        <div class="health-records-header-main">
+          <span class="health-records-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="8" y1="13" x2="16" y2="13" />
+              <line x1="8" y1="17" x2="16" y2="17" />
+            </svg>
+          </span>
+          <div>
+            <h2 class="health-records-title" id="health-records-title">Health Records</h2>
+            <p class="health-records-patient" id="health-records-patient">Patient: —</p>
+          </div>
+        </div>
+        <button type="button" class="health-records-close" id="health-records-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+
+      <div class="health-records-body" id="health-records-list"></div>
+      <p class="health-records-empty" id="health-records-empty" hidden>No health records yet.</p>
+
+      <footer class="health-records-footer">
+        <button type="button" class="btn-primary btn-add-record">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          Add New Record
+        </button>
+      </footer>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="add-patient-modal" hidden>
+    <div
+      class="add-patient-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-patient-title"
+    >
+      <header class="modal-dialog-header">
+        <div class="modal-dialog-header-main">
+          <span class="modal-dialog-icon modal-dialog-icon--person" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+          </span>
+          <h2 class="modal-dialog-title" id="add-patient-title">Add Patient</h2>
+        </div>
+        <button type="button" class="modal-dialog-close" id="add-patient-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+
+      <form class="add-patient-form" id="add-patient-form" novalidate>
+        <div class="add-patient-grid">
+          <label class="form-field">
+            <span class="form-field-label">Name</span>
+            <input class="form-field-input" type="text" name="name" id="add-patient-name" required autocomplete="name" />
+          </label>
+          <label class="form-field">
+            <span class="form-field-label">Email Address</span>
+            <input class="form-field-input" type="email" name="email" id="add-patient-email" required autocomplete="email" />
+          </label>
+          <label class="form-field">
+            <span class="form-field-label">Birthdate</span>
+            <input class="form-field-input" type="date" name="birthdate" id="add-patient-birthdate" required />
+          </label>
+          <label class="form-field">
+            <span class="form-field-label">Address</span>
+            <input class="form-field-input" type="text" name="address" id="add-patient-address" required autocomplete="street-address" />
+          </label>
+        </div>
+        <p class="add-patient-error" id="add-patient-error" role="alert" hidden></p>
+        <footer class="add-patient-footer">
+          <button type="submit" class="btn-primary btn-add-profile">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            Add Profile
+          </button>
+        </footer>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="../js/patients.js"></script>
+</body>
+</html>

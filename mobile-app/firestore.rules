@@ -2,13 +2,31 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // User profile: doc id must match Firebase Auth uid.
+    function isActiveStaff() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid))
+        && get(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid)).data.status == 'Active';
+    }
+
+    // User profile: doc id matches Firebase Auth uid for self-registration;
+    // staff may also create patient profiles (auto-generated doc id).
     match /users/{userId} {
-      // Signed-in users can read profiles (needed for voice login + email lookup).
       allow read: if request.auth != null;
-      // Only the owner can create/update their own document.
-      allow create, update, delete: if request.auth != null
-        && request.auth.uid == userId;
+      allow create: if request.auth != null
+        && (request.auth.uid == userId || isActiveStaff());
+      allow update, delete: if request.auth != null
+        && (request.auth.uid == userId || isActiveStaff());
+    }
+
+    match /appointments/{appointmentId} {
+      allow read: if request.auth != null && isActiveStaff();
+      allow create, update, delete: if isActiveStaff();
+    }
+
+    // Healthcare staff profile: doc id must match Firebase Auth uid.
+    match /healthcarestaff/{staffId} {
+      allow read: if request.auth != null
+        && (request.auth.uid == staffId || isActiveStaff());
     }
 
     // Sequential user id counter used during registration.
