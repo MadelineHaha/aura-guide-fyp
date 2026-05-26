@@ -1,0 +1,33 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isActiveStaff() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid))
+        && get(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid)).data.status == 'Active';
+    }
+
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && (request.auth.uid == userId || isActiveStaff());
+      allow update, delete: if request.auth != null
+        && (request.auth.uid == userId || isActiveStaff());
+    }
+
+    match /appointments/{appointmentId} {
+      allow read: if request.auth != null && isActiveStaff();
+      allow create, update, delete: if isActiveStaff();
+    }
+
+    match /healthcarestaff/{staffId} {
+      allow read: if request.auth != null
+        && (request.auth.uid == staffId || isActiveStaff());
+    }
+
+    match /system/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

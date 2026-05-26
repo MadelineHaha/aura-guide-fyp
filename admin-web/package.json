@@ -1,0 +1,11 @@
+{
+  "name": "admin-web-fyp",
+  "private": true,
+  "scripts": {
+    "start": "npx --yes serve . -l 5500",
+    "dev": "npm run start"
+  },
+  "dependencies": {
+    "firebase": "^12.13.0"
+  }
+}
