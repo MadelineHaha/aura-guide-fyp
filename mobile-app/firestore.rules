@@ -23,6 +23,11 @@ service cloud.firestore {
       allow create, update, delete: if isActiveStaff();
     }
 
+    match /healthrecords/{recordId} {
+      allow read: if request.auth != null && isActiveStaff();
+      allow create, update, delete: if isActiveStaff();
+    }
+
     // Healthcare staff profile: doc id must match Firebase Auth uid.
     match /healthcarestaff/{staffId} {
       allow read: if request.auth != null

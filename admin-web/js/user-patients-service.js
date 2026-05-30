@@ -5,6 +5,7 @@ import {
   runTransaction,
   serverTimestamp,
   Timestamp,
+  updateDoc,
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { auth, db } from "./firebase.js";
 
@@ -46,6 +47,7 @@ function displayStatus(data) {
 export function mapUserDoc(docSnap) {
   const data = docSnap.data();
   const birthDate = birthDateFromFirestore(data.birthDate);
+  const clinicalStatus = displayStatus(data);
   return {
     id: docSnap.id,
     name: data.name || "—",
@@ -53,10 +55,12 @@ export function mapUserDoc(docSnap) {
     age: birthDate ? computeAge(birthDate) : "—",
     condition: data.condition || "—",
     lastVisit: formatLastVisit(data.lastVisit || data.createdAt),
-    status: displayStatus(data),
+    status: clinicalStatus,
     email: data.email || "",
+    phone: data.phone || data.emergencyContact || "",
     address: data.address || "",
     birthDate,
+    accountStatus: data.status || "Active",
   };
 }
 
@@ -112,4 +116,50 @@ export async function createPatient({ name, email, birthDate, address }) {
   });
 
   return newRef.id;
+}
+
+export function dateToInputValue(date) {
+  if (!date) return "";
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+export async function updatePatient(docId, fields) {
+  const payload = { updatedAt: serverTimestamp() };
+
+  if (Object.hasOwn(fields, "email")) {
+    payload.email = fields.email.trim().toLowerCase();
+  }
+  if (Object.hasOwn(fields, "phone")) {
+    payload.phone = fields.phone.trim();
+  }
+  if (Object.hasOwn(fields, "condition")) {
+    payload.condition = fields.condition.trim();
+  }
+  if (Object.hasOwn(fields, "clinicalStatus")) {
+    payload.clinicalStatus = fields.clinicalStatus.toLowerCase();
+  }
+  if (Object.hasOwn(fields, "address")) {
+    payload.address = fields.address.trim();
+  }
+  if (Object.hasOwn(fields, "birthDate")) {
+    if (!fields.birthDate) {
+      throw new Error("Please select a birthdate.");
+    }
+    if (fields.birthDate > todayDateString()) {
+      throw new Error("Birthdate cannot be in the future.");
+    }
+    payload.birthDate = Timestamp.fromDate(dateOnlyUtc(fields.birthDate));
+  }
+  if (Object.hasOwn(fields, "status")) {
+    payload.status = fields.status;
+  }
+
+  await updateDoc(doc(db, USERS_COLLECTION, docId), payload);
+}
+
+export async function deactivatePatient(docId) {
+  await updatePatient(docId, { status: "Inactive" });
 }

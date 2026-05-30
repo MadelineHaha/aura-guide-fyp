@@ -1,0 +1,17 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // exists() only — avoids slow firestore.get() on every upload (notably small PDFs).
+    function isHealthcareStaffUser() {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/healthcarestaff/$(request.auth.uid));
+    }
+
+    match /healthrecords/{userId}/{fileName} {
+      allow read: if isHealthcareStaffUser();
+      allow write: if isHealthcareStaffUser()
+        && request.resource.size <= 2 * 1024 * 1024;
+    }
+  }
+}
