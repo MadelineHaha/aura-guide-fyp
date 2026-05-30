@@ -21,6 +21,21 @@ service cloud.firestore {
       allow create, update, delete: if isActiveStaff();
     }
 
+    match /healthrecords/{recordId} {
+      allow read: if request.auth != null && isActiveStaff();
+      allow create, update, delete: if isActiveStaff();
+    }
+
+    match /conversations/{conversationId} {
+      allow read: if request.auth != null && isActiveStaff();
+      allow create, update, delete: if isActiveStaff();
+    }
+
+    match /messages/{messageId} {
+      allow read: if request.auth != null && isActiveStaff();
+      allow create, update, delete: if isActiveStaff();
+    }
+
     match /healthcarestaff/{staffId} {
       allow read: if request.auth != null
         && (request.auth.uid == staffId || isActiveStaff());

@@ -15,13 +15,23 @@
       <img class="logo" src="../assets/images/logo.png" alt="" width="40" height="40" />
       <span class="staff-nav-brand-text">Aura Guide</span>
     </a>
-    <nav class="staff-nav-links" aria-label="Main">
-      <a class="staff-nav-link is-active" href="dashboard.html">Dashboard</a>
-      <a class="staff-nav-link" href="appointments.html">Appointments</a>
-      <a class="staff-nav-link" href="patients.html">Patients</a>
-      <a class="staff-nav-link" href="#">Emergencies</a>
-      <a class="staff-nav-link" href="#">Reports</a>
-    </nav>
+    <div class="staff-nav-links-wrap">
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--prev" aria-label="Scroll navigation left">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <nav class="staff-nav-links" aria-label="Main">
+        <a class="staff-nav-link is-active" href="dashboard.html">Dashboard</a>
+        <a class="staff-nav-link" href="appointments.html">Appointments</a>
+        <a class="staff-nav-link" href="patients.html">Patients</a>
+        <a class="staff-nav-link" href="#">Emergencies</a>
+        <a class="staff-nav-link" href="#">Reports</a>
+        <a class="staff-nav-link" href="communication.html">Communication</a>
+        <a class="staff-nav-link" href="logs.html">Logs</a>
+      </nav>
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--next" aria-label="Scroll navigation right">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
     <div class="staff-nav-user">
       <button type="button" class="staff-avatar" id="btn-user-menu" aria-label="Account menu">
         <span class="staff-avatar-initials" id="staff-avatar-initials">—</span>

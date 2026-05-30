@@ -7,6 +7,7 @@ import {
   runTransaction,
   serverTimestamp,
   Timestamp,
+  updateDoc,
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { db } from "./firebase.js";
 import { fetchPatients } from "./user-patients-service.js";
@@ -22,7 +23,12 @@ export const APPOINTMENT_TYPES = [
   "Emergency",
 ];
 
-export const APPOINTMENT_STATUSES = ["Scheduled", "Cancelled", "Rescheduled"];
+export const APPOINTMENT_STATUSES = [
+  "Scheduled",
+  "Rescheduled",
+  "Done",
+  "Cancelled",
+];
 
 function timestampToDate(value) {
   if (!value) return null;
@@ -59,8 +65,27 @@ export function formatErdDatetime(date) {
 export function normalizeStatus(status) {
   const value = (status || "Scheduled").toLowerCase();
   if (value === "cancelled") return "cancelled";
+  if (value === "done" || value === "completed") return "done";
   if (value === "rescheduled") return "rescheduled";
   return "scheduled";
+}
+
+export function isDateTimeChanged(previousDate, date, time) {
+  if (!previousDate) return false;
+  return previousDate.getTime() !== combineDateAndTime(date, time).getTime();
+}
+
+export function dateToInputValue(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+export function timeToInputValue(date) {
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
 }
 
 function staffDisplayName(staff) {
@@ -173,4 +198,63 @@ export async function createAppointment({
       createdAt: serverTimestamp(),
     });
   });
+}
+
+function appointmentRef(appointmentId) {
+  return doc(db, APPOINTMENTS_COLLECTION, appointmentId);
+}
+
+export async function updateAppointmentStatus(appointmentId, status) {
+  await updateDoc(appointmentRef(appointmentId), {
+    status,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function updateAppointment({
+  appointmentId,
+  userId,
+  date,
+  time,
+  appointmentType,
+  location,
+  notes,
+  requireFuture = true,
+  currentStatus = "scheduled",
+  previousDateTime = null,
+}) {
+  const dateTime = combineDateAndTime(date, time);
+  const now = new Date();
+
+  if (date < todayDateString()) {
+    throw new Error("Appointment date cannot be in the past.");
+  }
+
+  if (requireFuture && dateTime <= now) {
+    throw new Error("Appointment date and time must be in the future.");
+  }
+
+  if (!userId) {
+    throw new Error("Patient is required.");
+  }
+
+  const payload = {
+    userId,
+    dateTime: Timestamp.fromDate(dateTime),
+    appointmentType,
+    location: location.trim(),
+    notes: (notes || "").trim(),
+    updatedAt: serverTimestamp(),
+  };
+
+  const normalized = normalizeStatus(currentStatus);
+  const dateChanged = isDateTimeChanged(previousDateTime, date, time);
+  if (
+    dateChanged &&
+    (normalized === "scheduled" || normalized === "rescheduled")
+  ) {
+    payload.status = "Rescheduled";
+  }
+
+  await updateDoc(appointmentRef(appointmentId), payload);
 }
