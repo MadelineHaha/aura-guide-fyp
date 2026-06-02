@@ -1990,6 +1990,7 @@ body.modal-open {
 .communication-filters {
   display: flex;
   gap: 8px;
+  align-items: center;
 }
 
 .communication-filter {
@@ -2008,6 +2009,31 @@ body.modal-open {
 .communication-filter.is-active {
   background-color: #6bc4c4;
   color: #0d3d3d;
+}
+
+.communication-add-contact-icon {
+  margin-left: auto;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #dce3e6;
+  border-radius: 10px;
+  background-color: #ffffff;
+  color: #2f8f8f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.communication-add-contact-icon:hover {
+  background-color: #ecf8f8;
+  border-color: #6bc4c4;
+}
+
+.communication-add-contact-icon svg {
+  width: 16px;
+  height: 16px;
 }
 
 .communication-thread-list {
@@ -2154,6 +2180,10 @@ body.modal-open {
   flex-shrink: 0;
 }
 
+.communication-panel-header[hidden] {
+  display: none !important;
+}
+
 .communication-panel-contact {
   display: flex;
   align-items: center;
@@ -2242,6 +2272,126 @@ body.modal-open {
   font-size: 0.95rem;
 }
 
+.communication-empty-state {
+  margin: auto;
+  max-width: 360px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: #495057;
+}
+
+.communication-empty-icon {
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  background-color: #e8f5f5;
+  color: #2f8f8f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.communication-empty-icon svg {
+  width: 34px;
+  height: 34px;
+}
+
+.communication-empty-title {
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: #212529;
+}
+
+.communication-empty-subtitle {
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: #6c757d;
+}
+
+.communication-empty-btn {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  background-color: #6bc4c4;
+  color: #0d3d3d;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 0.86rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.communication-empty-btn:hover {
+  background-color: #5db8b8;
+}
+
+.communication-empty-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.add-contact-patient-list {
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-contact-patient-item {
+  width: 100%;
+  border: 1px solid #e8ecef;
+  border-radius: 12px;
+  background-color: #ffffff;
+  padding: 10px 12px;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.add-contact-patient-item:hover {
+  background-color: #f8f9fa;
+}
+
+.add-contact-patient-item.is-selected {
+  border-color: #6bc4c4;
+  background-color: #ecf8f8;
+}
+
+.add-contact-patient-item.is-disabled {
+  background-color: #f8f9fa;
+  color: #9aa1a8;
+  border-color: #edf0f2;
+  cursor: not-allowed;
+}
+
+.add-contact-patient-item.is-disabled .add-contact-patient-name,
+.add-contact-patient-item.is-disabled .add-contact-patient-id {
+  color: #9aa1a8;
+}
+
+.add-contact-patient-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #212529;
+}
+
+.add-contact-patient-id {
+  font-size: 0.8rem;
+  color: #6c757d;
+}
+
 .chat-divider {
   text-align: center;
   font-size: 0.8rem;
@@ -2311,6 +2461,10 @@ body.modal-open {
   flex-shrink: 0;
 }
 
+.communication-compose[hidden] {
+  display: none !important;
+}
+
 .communication-compose-input {
   flex: 1;
   padding: 14px 18px;
@@ -2358,14 +2512,98 @@ body.modal-open {
 
 /* --- Logs page ---------------------------------------------------------- */
 
-.logs-placeholder {
-  padding: 48px 32px;
-  text-align: center;
+.logs-page .page-toolbar {
+  margin-bottom: 14px;
 }
 
-.logs-placeholder-text {
-  font-size: 0.95rem;
-  color: #868e96;
+.logs-toolbar-top {
+  align-items: flex-end;
+}
+
+.logs-export-btn {
+  height: 42px;
+  padding: 0 16px;
+  border: 1px solid #dce3e6;
+  border-radius: 14px;
+  background-color: #ffffff;
+  color: #343a40;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.logs-export-btn:hover {
+  background-color: #f8f9fa;
+  border-color: #ced4da;
+}
+
+.logs-export-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.logs-toolbar-filters {
+  margin-bottom: 16px;
+}
+
+.logs-filter-tabs {
+  background-color: #eceff1;
+}
+
+.logs-table td {
+  font-size: 0.88rem;
+}
+
+.logs-timestamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #343a40;
+  white-space: nowrap;
+}
+
+.logs-timestamp svg {
+  width: 14px;
+  height: 14px;
+  color: #6c757d;
+  flex-shrink: 0;
+}
+
+.logs-details {
+  max-width: 220px;
+  color: #495057;
+}
+
+.logs-type-badge {
+  display: inline-block;
+  min-width: 72px;
+  text-align: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.logs-type-badge--info {
+  background-color: #d4f0f0;
+  color: #0d5c5c;
+}
+
+.logs-type-badge--warning {
+  background-color: #f8d7da;
+  color: #842029;
+}
+
+.logs-type-badge--security {
+  background-color: #ffe8cc;
+  color: #b26a00;
 }
 
 @media (max-width: 560px) {
@@ -2466,5 +2704,9 @@ body.modal-open {
   .communication-messages {
     padding: 16px;
     min-height: 280px;
+  }
+
+  .logs-toolbar-top {
+    align-items: stretch;
   }
 }

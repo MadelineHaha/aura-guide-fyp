@@ -44,15 +44,61 @@
     </div>
   </header>
 
-  <main class="staff-page">
-    <header class="page-toolbar">
+  <main class="staff-page logs-page">
+    <header class="page-toolbar logs-toolbar-top">
       <div class="page-toolbar-heading">
-        <h1 class="page-title">Logs</h1>
-        <p class="page-subtitle">System and activity logs</p>
+        <h1 class="page-title">System Activity Logs</h1>
+        <p class="page-subtitle">Audit trail for all user actions and system events.</p>
       </div>
+      <button type="button" class="logs-export-btn" id="logs-export-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M12 3v12" />
+          <path d="M8 11l4 4 4-4" />
+          <path d="M5 21h14" />
+        </svg>
+        Export Logs
+      </button>
     </header>
-    <div class="table-card logs-placeholder">
-      <p class="logs-placeholder-text">Activity logs will appear here in a future update.</p>
+
+    <div class="appointments-toolbar logs-toolbar-filters">
+      <label class="search-field">
+        <span class="search-field-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="7" />
+            <line x1="16.5" y1="16.5" x2="21" y2="21" />
+          </svg>
+        </span>
+        <input
+          type="search"
+          class="search-field-input"
+          id="logs-search"
+          placeholder="Search by user, action, or ID..."
+          autocomplete="off"
+        />
+      </label>
+      <div class="filter-tabs logs-filter-tabs" role="tablist" aria-label="Filter logs by type">
+        <button type="button" class="filter-tab is-active" data-type="all">All</button>
+        <button type="button" class="filter-tab" data-type="info">Info</button>
+        <button type="button" class="filter-tab" data-type="warning">Warning</button>
+        <button type="button" class="filter-tab" data-type="security">Security</button>
+      </div>
+    </div>
+
+    <div class="table-card">
+      <table class="data-table logs-table">
+        <thead>
+          <tr>
+            <th scope="col">Timestamp</th>
+            <th scope="col">User</th>
+            <th scope="col">Action</th>
+            <th scope="col">Details</th>
+            <th scope="col">Type</th>
+            <th scope="col">IP Address</th>
+          </tr>
+        </thead>
+        <tbody id="logs-tbody"></tbody>
+      </table>
+      <p class="table-empty" id="logs-empty" hidden>No logs match your filters.</p>
     </div>
   </main>
 
