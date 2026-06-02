@@ -66,16 +66,23 @@
           <div class="communication-filters" role="tablist" aria-label="Filter chats">
             <button type="button" class="communication-filter is-active" data-filter="all">All</button>
             <button type="button" class="communication-filter" data-filter="unread">Unread</button>
+            <button type="button" class="communication-add-contact-icon" id="btn-add-contact-sidebar" aria-label="Add contact">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h10" />
+                <line x1="19" y1="8" x2="19" y2="14" />
+                <line x1="16" y1="11" x2="22" y2="11" />
+              </svg>
+            </button>
           </div>
           <ul class="communication-thread-list" id="chat-thread-list" role="list"></ul>
         </div>
       </aside>
 
       <section class="communication-panel" aria-label="Conversation">
-        <header class="communication-panel-header">
+        <header class="communication-panel-header" hidden>
           <div class="communication-panel-contact">
-            <span class="chat-avatar chat-avatar--lg" id="active-chat-avatar" aria-hidden="true">—</span>
-            <h1 class="communication-panel-name" id="active-chat-name">Select a chat</h1>
+            <span class="chat-avatar chat-avatar--lg chat-avatar--teal" id="active-chat-avatar" aria-hidden="true">—</span>
+            <h1 class="communication-panel-name" id="active-chat-name"></h1>
           </div>
           <div class="communication-panel-actions">
             <button type="button" class="btn-chat-call" id="btn-chat-call">
@@ -102,7 +109,7 @@
 
         <div class="communication-messages" id="chat-messages" role="log" aria-live="polite"></div>
 
-        <form class="communication-compose" id="chat-compose-form">
+        <form class="communication-compose" id="chat-compose-form" hidden>
           <button type="button" class="btn-chat-compose-icon" aria-label="Add attachment">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <line x1="12" y1="5" x2="12" y2="19" />
@@ -128,6 +135,56 @@
       </section>
     </div>
   </main>
+
+  <div class="modal-backdrop modal-backdrop--stacked" id="add-contact-modal" hidden>
+    <div
+      class="add-patient-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-contact-title"
+    >
+      <header class="modal-dialog-header">
+        <div class="modal-dialog-header-main">
+          <span class="modal-dialog-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h10" />
+              <line x1="19" y1="8" x2="19" y2="14" />
+              <line x1="16" y1="11" x2="22" y2="11" />
+            </svg>
+          </span>
+          <div>
+            <h2 class="modal-dialog-title" id="add-contact-title">Add Contact</h2>
+            <p class="health-records-patient">Start a conversation with an available patient.</p>
+          </div>
+        </div>
+        <button type="button" class="modal-dialog-close" id="add-contact-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+
+      <form class="add-patient-form" id="add-contact-form" novalidate>
+        <div class="add-patient-grid">
+          <div class="form-field form-field--full">
+            <span class="form-field-label">Patient List</span>
+            <div class="add-contact-patient-list" id="add-contact-patient-list" role="listbox" aria-label="Available patients"></div>
+          </div>
+        </div>
+        <p class="add-patient-error" id="add-contact-error" role="alert" hidden></p>
+        <footer class="add-patient-footer">
+          <button type="submit" class="btn-primary btn-add-profile" id="add-contact-submit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            Add Contact
+          </button>
+        </footer>
+      </form>
+    </div>
+  </div>
 
   <script type="module" src="../js/communication.js"></script>
 </body>

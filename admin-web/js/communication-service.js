@@ -15,6 +15,7 @@ import { fetchPatients } from "./user-patients-service.js";
 export const CONVERSATIONS_COLLECTION = "conversations";
 export const MESSAGES_COLLECTION = "messages";
 export const MESSAGE_COUNTER_PATH = ["system", "messageCounter"];
+export const CONVERSATION_COUNTER_PATH = ["system", "conversationCounter"];
 
 const CONVERSATION_ID_PATTERN = /^C\d{5}$/;
 const MESSAGE_ID_PATTERN = /^G\d{5}$/;
@@ -175,6 +176,46 @@ function isPatientAccountActive(patient) {
   return (patient?.accountStatus || "Active").toLowerCase() !== "inactive";
 }
 
+function isPermissionDenied(error) {
+  const code = error?.code || "";
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    code === "permission-denied" ||
+    message.includes("missing or insufficient permissions") ||
+    message.includes("insufficient permissions")
+  );
+}
+
+function mapUserForConversation(docSnap) {
+  const data = docSnap.data();
+  return {
+    id: docSnap.id,
+    patientId: String(data.userId || "").trim(),
+    name: String(data.name || "").trim() || "—",
+    accountStatus: String(data.status || "Active").trim() || "Active",
+  };
+}
+
+async function fetchUsersForConversation() {
+  const patients = await fetchPatients();
+  return patients.map((patient) => ({
+    id: patient.id,
+    patientId: String(patient.patientId || "").trim(),
+    name: String(patient.name || "").trim() || "—",
+    accountStatus: String(patient.accountStatus || "Active").trim() || "Active",
+  }));
+}
+
+function formatCreatedDateString(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  const second = String(date.getSeconds()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
 async function fetchAllActiveConversationsForStaff(staffId) {
   const trimmedStaffId = String(staffId || "").trim();
   if (!PARTICIPANT_ID_PATTERN.test(trimmedStaffId)) {
@@ -196,6 +237,17 @@ async function fetchAllActiveConversationsForStaff(staffId) {
         (conversation.participant1Id === trimmedStaffId ||
           conversation.participant2Id === trimmedStaffId),
     );
+}
+
+async function reserveConversationId() {
+  const counterRef = doc(db, ...CONVERSATION_COUNTER_PATH);
+  return runTransaction(db, async (transaction) => {
+    const counterSnap = await transaction.get(counterRef);
+    const next = counterSnap.exists() ? Number(counterSnap.data().next) || 1 : 1;
+    const conversationId = `C${String(next).padStart(5, "0")}`;
+    transaction.set(counterRef, { next: next + 1 }, { merge: true });
+    return conversationId;
+  });
 }
 
 async function fetchLatestMessageByConversationIds(conversationIds) {
@@ -227,7 +279,7 @@ async function fetchLatestMessageByConversationIds(conversationIds) {
 }
 
 export async function fetchAvailableConversationsForStaff(staffId) {
-  const patients = await fetchPatients();
+  const patients = await fetchUsersForConversation();
   const activePatients = patients.filter(isPatientAccountActive);
   const patientNameById = buildPatientNameMap(activePatients);
   const activePatientIds = new Set(patientNameById.keys());
@@ -266,6 +318,44 @@ export async function fetchAvailableConversationsForStaff(staffId) {
 
   threads.sort((a, b) => b.lastMessageAt - a.lastMessageAt);
   return threads;
+}
+
+export async function fetchAvailablePatientsForNewConversation(staffId) {
+  const trimmedStaffId = String(staffId || "").trim();
+  if (!PARTICIPANT_ID_PATTERN.test(trimmedStaffId)) {
+    throw new Error("Your staff profile is missing a valid Staff ID (e.g. S00001).");
+  }
+
+  const patients = await fetchUsersForConversation();
+  const activePatients = patients.filter(
+    (patient) =>
+      isPatientAccountActive(patient) && patient.patientId && patient.patientId !== "—",
+  );
+
+  let linkedPatientIds = new Set();
+  try {
+    const existingConversations = await fetchAllActiveConversationsForStaff(
+      trimmedStaffId,
+    );
+    linkedPatientIds = new Set(
+      existingConversations
+        .map((conversation) => getOtherParticipantId(conversation, trimmedStaffId))
+        .filter((id) => id.startsWith("U")),
+    );
+  } catch (error) {
+    if (!isPermissionDenied(error)) {
+      throw error;
+    }
+    linkedPatientIds = new Set();
+  }
+
+  return activePatients
+    .map((patient) => ({
+      patientId: patient.patientId,
+      name: patient.name || patient.patientId,
+      hasConversation: linkedPatientIds.has(patient.patientId),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function formatMessagePreview(message) {
@@ -396,5 +486,68 @@ export async function sendTextMessage({
     preview: trimmedContent,
     time: formatChatListTime(new Date()),
     messages: [{ type: "out", text: trimmedContent, time: formatMessageClock(new Date()) }],
+  };
+}
+
+export async function createConversationForStaffPatient({ staffId, patientId }) {
+  const trimmedStaffId = String(staffId || "").trim();
+  const trimmedPatientId = String(patientId || "").trim();
+
+  if (!/^S\d{5}$/.test(trimmedStaffId)) {
+    throw new Error("Staff ID is missing or invalid.");
+  }
+  if (!/^U\d{5}$/.test(trimmedPatientId)) {
+    throw new Error("Please select a valid patient.");
+  }
+
+  const patients = await fetchUsersForConversation();
+  const selectedPatient = patients.find((p) => p.patientId === trimmedPatientId);
+  if (!selectedPatient || !isPatientAccountActive(selectedPatient)) {
+    throw new Error("Selected patient is not available for messaging.");
+  }
+
+  const existingConversations = await fetchAllActiveConversationsForStaff(
+    trimmedStaffId,
+  );
+  const existing = existingConversations.find(
+    (conversation) =>
+      getOtherParticipantId(conversation, trimmedStaffId) === trimmedPatientId,
+  );
+  if (existing) {
+    return {
+      id: existing.conversationId,
+      conversationId: existing.conversationId,
+      patientId: trimmedPatientId,
+      name: selectedPatient.name || trimmedPatientId,
+      avatarColor: avatarColorForId(existing.conversationId),
+      preview: "No messages yet",
+      time: formatChatListTime(existing.createdDate),
+      unread: false,
+      lastMessageAt: timestampToDate(existing.createdDate)?.getTime() || Date.now(),
+    };
+  }
+
+  const conversationId = await reserveConversationId();
+  const now = new Date();
+
+  await setDoc(doc(db, CONVERSATIONS_COLLECTION, conversationId), {
+    conversationId,
+    createdDate: formatCreatedDateString(now),
+    createdAt: serverTimestamp(),
+    status: "Active",
+    participant1Id: trimmedStaffId,
+    participant2Id: trimmedPatientId,
+  });
+
+  return {
+    id: conversationId,
+    conversationId,
+    patientId: trimmedPatientId,
+    name: selectedPatient.name || trimmedPatientId,
+    avatarColor: avatarColorForId(conversationId),
+    preview: "No messages yet",
+    time: formatChatListTime(now),
+    unread: false,
+    lastMessageAt: now.getTime(),
   };
 }
