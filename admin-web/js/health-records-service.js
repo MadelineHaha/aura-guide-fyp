@@ -4,6 +4,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   query,
   runTransaction,
   serverTimestamp,
@@ -25,6 +26,8 @@ import { db, storage } from "./firebase.js";
 import { todayDateString } from "./appointments-service.js";
 
 import { fetchActiveStaff } from "./staff-list-service.js";
+import { HEALTHCARE_STAFF_COLLECTION } from "./staff-auth.js";
+import { trackFirestoreListener } from "./firestore-realtime.js";
 
 
 
@@ -640,44 +643,79 @@ export function isHealthRecordsAccessError(error) {
 
 
 
+function mapHealthRecordsSnap(snap, staffByStaffId) {
+  if (snap.empty) return [];
+  return snap.docs
+    .map((docSnap) => mapHealthRecordDoc(docSnap, staffByStaffId))
+    .sort((a, b) => String(b.dateCreated).localeCompare(String(a.dateCreated)));
+}
+
 export async function fetchHealthRecordsByUserId(userId) {
-
   const q = query(
-
     collection(db, HEALTH_RECORDS_COLLECTION),
-
     where("userId", "==", userId),
-
   );
-
   const snap = await getDocs(q);
+  if (snap.empty) return [];
+  const staffList = await fetchActiveStaff();
+  const staffByStaffId = new Map(
+    staffList.map((staff) => [staff.staffID, staff]),
+  );
+  return mapHealthRecordsSnap(snap, staffByStaffId);
+}
 
+/** Real-time health records for one patient (modal / detail view). */
+export function subscribeHealthRecordsByUserId(userId, onData, onError) {
+  const trimmedUserId = String(userId || "").trim();
+  let staffByStaffId = new Map();
+  let recordsSnap = null;
 
-
-  if (snap.empty) {
-
-    return [];
-
+  function emit() {
+    if (!recordsSnap) return;
+    onData(mapHealthRecordsSnap(recordsSnap, staffByStaffId));
   }
 
-
-
-  const staffList = await fetchActiveStaff();
-
-  const staffByStaffId = new Map(
-
-    staffList.map((staff) => [staff.staffID, staff]),
-
+  const recordsQuery = query(
+    collection(db, HEALTH_RECORDS_COLLECTION),
+    where("userId", "==", trimmedUserId),
   );
 
+  const unsubs = [
+    onSnapshot(
+      collection(db, HEALTHCARE_STAFF_COLLECTION),
+      (snap) => {
+        const staffList = snap.docs
+          .map((docSnap) => {
+            const data = docSnap.data();
+            return {
+              staffID: data.staffID || "",
+              name: data.name || "",
+              status: data.status || "",
+            };
+          })
+          .filter((staff) => staff.status === "Active" && staff.staffID);
+        staffByStaffId = new Map(staffList.map((staff) => [staff.staffID, staff]));
+        emit();
+      },
+      onError,
+    ),
+    onSnapshot(
+      recordsQuery,
+      (snap) => {
+        recordsSnap = snap;
+        emit();
+      },
+      onError,
+    ),
+  ];
 
-
-  return snap.docs
-
-    .map((docSnap) => mapHealthRecordDoc(docSnap, staffByStaffId))
-
-    .sort((a, b) => String(b.dateCreated).localeCompare(String(a.dateCreated)));
-
+  const stopAll = () => {
+    for (const unsub of unsubs) {
+      if (typeof unsub === "function") unsub();
+    }
+  };
+  trackFirestoreListener(stopAll);
+  return stopAll;
 }
 
 

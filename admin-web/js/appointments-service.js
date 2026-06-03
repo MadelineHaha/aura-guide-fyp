@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDocs,
+  onSnapshot,
   orderBy,
   query,
   runTransaction,
@@ -10,13 +11,23 @@ import {
   updateDoc,
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { db } from "./firebase.js";
-import { fetchPatients } from "./user-patients-service.js";
+import { trackFirestoreListener } from "./firestore-realtime.js";
+import {
+  fetchPatients,
+  mapUserDoc,
+  USERS_COLLECTION,
+} from "./user-patients-service.js";
 import { fetchActiveStaff } from "./staff-list-service.js";
+import { HEALTHCARE_STAFF_COLLECTION } from "./staff-auth.js";
 
 export const APPOINTMENTS_COLLECTION = "appointments";
 export const APPOINTMENT_COUNTER_PATH = ["system", "appointmentCounter"];
 
+/** Mobile book flow session types + staff-created types. */
 export const APPOINTMENT_TYPES = [
+  "General Check-up",
+  "Therapist Session",
+  "Urgent Consultation",
   "Consultation",
   "Follow-up",
   "Therapy Session",
@@ -24,6 +35,7 @@ export const APPOINTMENT_TYPES = [
 ];
 
 export const APPOINTMENT_STATUSES = [
+  "Pending",
   "Scheduled",
   "Rescheduled",
   "Done",
@@ -67,6 +79,7 @@ export function normalizeStatus(status) {
   if (value === "cancelled") return "cancelled";
   if (value === "done" || value === "completed") return "done";
   if (value === "rescheduled") return "rescheduled";
+  if (value === "pending") return "pending";
   return "scheduled";
 }
 
@@ -97,12 +110,7 @@ function staffDisplayName(staff) {
   return staff.name;
 }
 
-async function buildLookups() {
-  const [patients, staffList] = await Promise.all([
-    fetchPatients(),
-    fetchActiveStaff(),
-  ]);
-
+function buildLookupsFrom(patients, staffList) {
   const usersByUserId = new Map();
   for (const patient of patients) {
     usersByUserId.set(patient.patientId, patient);
@@ -114,6 +122,14 @@ async function buildLookups() {
   }
 
   return { usersByUserId, staffByStaffId };
+}
+
+async function buildLookups() {
+  const [patients, staffList] = await Promise.all([
+    fetchPatients(),
+    fetchActiveStaff(),
+  ]);
+  return buildLookupsFrom(patients, staffList);
 }
 
 export function mapAppointmentDoc(docSnap, lookups) {
@@ -132,7 +148,7 @@ export function mapAppointmentDoc(docSnap, lookups) {
     datetime: dateTime ? formatErdDatetime(dateTime) : "—",
     dateTime,
     appointmentType: data.appointmentType || data.type || "—",
-    location: data.location || "—",
+    location: (data.location || "").trim() || "—",
     staff: staff ? staffDisplayName(staff) : staffId || "—",
     staffId,
     notes: data.notes || "",
@@ -148,6 +164,76 @@ export async function fetchAppointments() {
   );
   const snap = await getDocs(q);
   return snap.docs.map((docSnap) => mapAppointmentDoc(docSnap, lookups));
+}
+
+/**
+ * Real-time appointments (and related patient/staff labels).
+ * Updates only when Firestore documents change.
+ */
+function mapActiveStaffFromSnap(snap) {
+  return snap.docs
+    .map((docSnap) => {
+      const data = docSnap.data();
+      return {
+        uid: docSnap.id,
+        staffID: data.staffID || "",
+        name: data.name || "",
+        role: data.role || "",
+        status: data.status || "",
+      };
+    })
+    .filter((staff) => staff.status === "Active" && staff.staffID);
+}
+
+export function subscribeAppointments(onData, onError) {
+  let patients = [];
+  let staffList = [];
+  let appointmentDocs = [];
+
+  function emit() {
+    const lookups = buildLookupsFrom(patients, staffList);
+    onData(appointmentDocs.map((docSnap) => mapAppointmentDoc(docSnap, lookups)));
+  }
+
+  const appointmentsQuery = query(
+    collection(db, APPOINTMENTS_COLLECTION),
+    orderBy("dateTime", "asc"),
+  );
+
+  const unsubs = [
+    onSnapshot(
+      collection(db, USERS_COLLECTION),
+      (snap) => {
+        patients = snap.docs.map(mapUserDoc);
+        emit();
+      },
+      onError,
+    ),
+    onSnapshot(
+      collection(db, HEALTHCARE_STAFF_COLLECTION),
+      (snap) => {
+        staffList = mapActiveStaffFromSnap(snap);
+        emit();
+      },
+      onError,
+    ),
+    onSnapshot(
+      appointmentsQuery,
+      (snap) => {
+        appointmentDocs = snap.docs;
+        emit();
+      },
+      onError,
+    ),
+  ];
+
+  const stopAll = () => {
+    for (const unsub of unsubs) {
+      if (typeof unsub === "function") unsub();
+    }
+  };
+  trackFirestoreListener(stopAll);
+  return stopAll;
 }
 
 export async function createAppointment({
@@ -207,6 +293,20 @@ function appointmentRef(appointmentId) {
 export async function updateAppointmentStatus(appointmentId, status) {
   await updateDoc(appointmentRef(appointmentId), {
     status,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Staff assigns location and confirms a patient-booked pending appointment. */
+export async function acceptAppointment(appointmentId, location) {
+  const loc = (location || "").trim();
+  if (!loc) {
+    throw new Error("Location is required before accepting.");
+  }
+
+  await updateDoc(appointmentRef(appointmentId), {
+    status: "Scheduled",
+    location: loc,
     updatedAt: serverTimestamp(),
   });
 }

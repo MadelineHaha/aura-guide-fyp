@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'firebase_auth_helper.dart';
 import 'main_menu_page.dart';
 import 'password_recovery_page.dart';
 
@@ -46,6 +47,13 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
 
     setState(() => _submitting = true);
     try {
+      await configureFirebaseAuth();
+      final connectivity = await firebaseConnectivityWarning();
+      if (connectivity != null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(connectivity)));
+        return;
+      }
       await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text,
@@ -63,7 +71,7 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message ?? 'Login failed')),
+        SnackBar(content: Text(firebaseAuthErrorMessage(e))),
       );
     } catch (e) {
       if (!mounted) return;

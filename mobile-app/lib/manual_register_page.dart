@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'firebase_auth_helper.dart';
 import 'models/user_entity.dart';
 import 'services/user_registration_service.dart';
+import 'widgets/calendar_date_picker_dialog.dart';
+import 'widgets/date_select_field.dart';
 
 /// Manual registration: 4-step "Create Account" flow (name, date of birth, email, password).
 class ManualRegisterPage extends StatefulWidget {
@@ -127,6 +130,13 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
 
     setState(() => _submitting = true);
     try {
+      await configureFirebaseAuth();
+      final connectivity = await firebaseConnectivityWarning();
+      if (connectivity != null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(connectivity)));
+        return;
+      }
       final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text,
@@ -158,7 +168,7 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message ?? 'Registration failed')),
+        SnackBar(content: Text(firebaseAuthErrorMessage(e))),
       );
     } catch (e) {
       if (!mounted) return;
@@ -183,34 +193,23 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
     final now = DateTime.now();
     final first = DateTime(now.year - 120, 1, 1);
     final last = DateTime(now.year, now.month, now.day);
-    final initial = _clampDate(
+    final initial = clampCalendarDate(
       _birthDate ?? DateTime(now.year - 25, now.month, now.day),
       first,
       last,
     );
 
-    // Custom dialog with bounded height + scroll so the calendar (and year list)
-    // lay out correctly; the stock showDatePicker can clip or block scrolling on
-    // some devices when heavily themed.
-    final picked = await showDialog<DateTime>(
+    final picked = await showCalendarDatePickerDialog(
       context: context,
-      barrierDismissible: true,
-      builder: (context) => _DateOfBirthPickerDialog(
-        initialDate: initial,
-        firstDate: first,
-        lastDate: last,
-        accent: _accent,
-      ),
+      title: 'Date of birth',
+      initialDate: initial,
+      firstDate: first,
+      lastDate: last,
+      accent: _accent,
     );
     if (picked != null && mounted) {
       setState(() => _birthDate = picked);
     }
-  }
-
-  DateTime _clampDate(DateTime d, DateTime min, DateTime max) {
-    if (d.isBefore(min)) return min;
-    if (d.isAfter(max)) return max;
-    return d;
   }
 
   @override
@@ -332,10 +331,13 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
           style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
         ),
         const SizedBox(height: 28),
-        _BirthDateField(
-          birthDate: _birthDate,
+        DateSelectField(
+          selectedDate: _birthDate,
           onTap: _pickBirthDate,
-          onMic: () => _voiceFieldHint('date of birth'),
+          trailing: Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: _MicButton(onPressed: () => _voiceFieldHint('date of birth')),
+          ),
         ),
       ],
     );
@@ -496,187 +498,6 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
               'Continue',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
-    );
-  }
-}
-
-/// Dark date picker with explicit bounds + scrollable shell so month grid / year
-/// lists are not clipped and can scroll when space is tight.
-class _DateOfBirthPickerDialog extends StatefulWidget {
-  const _DateOfBirthPickerDialog({
-    required this.initialDate,
-    required this.firstDate,
-    required this.lastDate,
-    required this.accent,
-  });
-
-  final DateTime initialDate;
-  final DateTime firstDate;
-  final DateTime lastDate;
-  final Color accent;
-
-  @override
-  State<_DateOfBirthPickerDialog> createState() =>
-      _DateOfBirthPickerDialogState();
-}
-
-class _DateOfBirthPickerDialogState extends State<_DateOfBirthPickerDialog> {
-  late DateTime _selected;
-
-  @override
-  void initState() {
-    super.initState();
-    _selected = widget.initialDate;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final maxH = MediaQuery.sizeOf(context).height * 0.92;
-
-    final theme = ThemeData(
-      useMaterial3: true,
-      brightness: Brightness.dark,
-      colorScheme: ColorScheme.dark(
-        primary: widget.accent,
-        onPrimary: Colors.black,
-        surface: const Color(0xFF1E1E1E),
-        onSurface: Colors.white,
-        surfaceContainerHighest: const Color(0xFF2A2A2A),
-      ),
-    );
-
-    return Theme(
-      data: theme,
-      child: Dialog(
-        backgroundColor: const Color(0xFF1E1E1E),
-        clipBehavior: Clip.none,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: 420,
-            maxHeight: maxH,
-          ),
-          child: ScrollConfiguration(
-            behavior: ScrollConfiguration.of(context).copyWith(
-              scrollbars: true,
-              physics: const ClampingScrollPhysics(),
-            ),
-            child: SingleChildScrollView(
-              primary: true,
-              physics: const ClampingScrollPhysics(),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 18, 12, 12),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Date of birth',
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    // Fixed height gives [CalendarDatePicker] bounded constraints so its
-                    // internal year list / grid can scroll instead of overflowing.
-                    SizedBox(
-                      height: 360,
-                      width: double.infinity,
-                      child: CalendarDatePicker(
-                        initialDate: _selected,
-                        firstDate: widget.firstDate,
-                        lastDate: widget.lastDate,
-                        onDateChanged: (d) => setState(() => _selected = d),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          child: const Text('Cancel'),
-                        ),
-                        const SizedBox(width: 8),
-                        FilledButton(
-                          onPressed: () => Navigator.of(context).pop(_selected),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: widget.accent,
-                            foregroundColor: Colors.black,
-                          ),
-                          child: const Text('OK'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BirthDateField extends StatelessWidget {
-  const _BirthDateField({
-    required this.birthDate,
-    required this.onTap,
-    required this.onMic,
-  });
-
-  final DateTime? birthDate;
-  final VoidCallback onTap;
-  final VoidCallback onMic;
-
-  static const Color _fieldFill = Color(0xFF141414);
-  static const Color _fieldBorder = Color(0xFF3A3A3A);
-  static const Color _subtext = Color(0xFFB0B0B0);
-
-  @override
-  Widget build(BuildContext context) {
-    final loc = MaterialLocalizations.of(context);
-    final label = birthDate == null
-        ? 'Select Date'
-        : loc.formatFullDate(birthDate!);
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        decoration: BoxDecoration(
-          color: _fieldFill,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _fieldBorder, width: 1),
-        ),
-        child: Row(
-          children: [
-            const Icon(
-              Icons.calendar_today_outlined,
-              color: Colors.white70,
-              size: 22,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  color: birthDate == null ? _subtext : Colors.white,
-                  fontSize: 16,
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: _MicButton(onPressed: onMic),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

@@ -5,12 +5,17 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'app_route_observer.dart';
 import 'auth_session.dart';
+import 'firebase_auth_helper.dart';
+import 'firebase_options.dart';
 import 'main_menu_page.dart';
 import 'start_page.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  await configureFirebaseAuth();
   runApp(const MyApp());
 }
 

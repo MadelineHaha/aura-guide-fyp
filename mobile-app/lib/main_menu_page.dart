@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'appointments_page.dart';
 import 'auth_session.dart';
 import 'my_profile_page.dart';
 
@@ -44,16 +45,23 @@ class MainMenuPage extends StatelessWidget {
                   mainAxisSpacing: 12,
                   crossAxisSpacing: 12,
                   childAspectRatio: 1.02,
-                  children: const [
+                  children: [
                     _MenuTile(
                       title: 'Appointments',
-                      subtitle: '2 upcoming',
+                      subtitle: 'View schedule',
                       icon: Icons.calendar_today_outlined,
-                      border: Color(0xFF49BFC5),
-                      tile: Color(0xFF12363B),
-                      iconCircle: Color(0xFF226A6C),
+                      border: const Color(0xFF49BFC5),
+                      tile: const Color(0xFF12363B),
+                      iconCircle: const Color(0xFF226A6C),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (context) => const AppointmentsPage(),
+                          ),
+                        );
+                      },
                     ),
-                    _MenuTile(
+                    const _MenuTile(
                       title: 'Health Records',
                       subtitle: '4 records',
                       icon: Icons.description_outlined,
@@ -61,7 +69,7 @@ class MainMenuPage extends StatelessWidget {
                       tile: Color(0xFF19324F),
                       iconCircle: Color(0xFF2C4F7F),
                     ),
-                    _MenuTile(
+                    const _MenuTile(
                       title: 'Medications',
                       subtitle: '3 remaining today',
                       icon: Icons.link_outlined,
@@ -69,7 +77,7 @@ class MainMenuPage extends StatelessWidget {
                       tile: Color(0xFF263913),
                       iconCircle: Color(0xFF5C8D29),
                     ),
-                    _MenuTile(
+                    const _MenuTile(
                       title: 'Emergency SOS',
                       subtitle: 'Tap for help',
                       icon: Icons.info_outline,
@@ -77,7 +85,7 @@ class MainMenuPage extends StatelessWidget {
                       tile: Color(0xFF3C1111),
                       iconCircle: Color(0xFF8E2626),
                     ),
-                    _MenuTile(
+                    const _MenuTile(
                       title: 'Navigation',
                       subtitle: 'AI obstacle detection\nand AR guidance',
                       icon: Icons.near_me_outlined,
@@ -85,7 +93,7 @@ class MainMenuPage extends StatelessWidget {
                       tile: Color(0xFF3D2A10),
                       iconCircle: Color(0xFF885B1F),
                     ),
-                    _MenuTile(
+                    const _MenuTile(
                       title: 'Communication',
                       subtitle: '1 new message',
                       icon: Icons.forum_outlined,
@@ -210,6 +218,7 @@ class _MenuTile extends StatelessWidget {
     required this.border,
     required this.tile,
     required this.iconCircle,
+    this.onTap,
   });
 
   final String title;
@@ -218,16 +227,18 @@ class _MenuTile extends StatelessWidget {
   final Color border;
   final Color tile;
   final Color iconCircle;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(10),
-      onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$title is coming soon.')),
-        );
-      },
+      onTap: onTap ??
+          () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('$title is coming soon.')),
+            );
+          },
       child: Ink(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),

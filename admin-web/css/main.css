@@ -945,6 +945,11 @@ body.staff-app {
   font-weight: 700;
 }
 
+.status-badge--pending {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
 .status-badge--scheduled {
   background-color: #d4f0f0;
   color: #0d5c5c;
@@ -976,6 +981,81 @@ body.staff-app {
   gap: 6px;
 }
 
+/* Appointments table column alignment */
+.appointments-table {
+  table-layout: fixed;
+}
+
+.appointments-col--patient { width: 17%; }
+.appointments-col--datetime { width: 14%; }
+.appointments-col--type { width: 16%; }
+.appointments-col--location { width: 14%; }
+.appointments-col--staff { width: 14%; }
+.appointments-col--status { width: 11%; }
+.appointments-col--actions { width: 14%; }
+
+.appointments-table th,
+.appointments-table td,
+.appointments-th,
+.appointments-td {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.appointments-td--patient .cell-primary,
+.appointments-td--patient .cell-secondary {
+  text-align: center;
+}
+
+.appointments-th--datetime,
+.appointments-td--datetime {
+  white-space: nowrap;
+}
+
+.appointments-td--location,
+.appointments-td--type {
+  word-break: break-word;
+}
+
+.appointments-table .row-actions {
+  justify-content: center;
+  min-height: 34px;
+}
+
+.row-actions--text {
+  gap: 8px;
+}
+
+.btn-row-text {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.btn-row-text--accept {
+  color: #0d5c5c;
+  background-color: #d4f0f0;
+}
+
+.btn-row-text--accept:hover {
+  background-color: #b8e6e6;
+}
+
+.btn-row-text--decline {
+  color: #842029;
+  background-color: #f8d7da;
+}
+
+.btn-row-text--decline:hover {
+  background-color: #f1c2c6;
+}
+
 .row-action {
   width: 34px;
   height: 34px;
@@ -997,6 +1077,11 @@ body.staff-app {
 
 .row-action--edit {
   color: #6c757d;
+}
+
+.row-action--accept {
+  color: #0d5c5c;
+  border-color: #b8e0e0;
 }
 
 .row-action--confirm {
@@ -1539,6 +1624,58 @@ body.modal-open {
 .add-patient-form {
   display: flex;
   flex-direction: column;
+}
+
+/* --- Accept appointment modal -------------------------------------------- */
+
+.accept-appointment-details {
+  margin: 0 22px 16px;
+  padding: 16px 18px;
+  border: 1px solid #e8ecef;
+  border-radius: 14px;
+  background-color: #f8f9fa;
+}
+
+.accept-appointment-details-title {
+  margin: 0 0 12px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6c757d;
+}
+
+.accept-appointment-details-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.accept-appointment-details-row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.accept-appointment-details-row dt {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #6c757d;
+}
+
+.accept-appointment-details-row dd {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #212529;
+  word-break: break-word;
+}
+
+.accept-appointment-location-field {
+  margin: 0 22px 8px;
 }
 
 .add-patient-grid {

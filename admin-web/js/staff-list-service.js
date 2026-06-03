@@ -1,10 +1,14 @@
-import { collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+import {
+  collection,
+  getDocs,
+  onSnapshot,
+} from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { db } from "./firebase.js";
 import { HEALTHCARE_STAFF_COLLECTION } from "./staff-auth.js";
+import { trackFirestoreListener } from "./firestore-realtime.js";
 
-export async function fetchActiveStaff() {
-  const snap = await getDocs(collection(db, HEALTHCARE_STAFF_COLLECTION));
-  return snap.docs
+function mapActiveStaffDocs(docs) {
+  return docs
     .map((docSnap) => {
       const data = docSnap.data();
       return {
@@ -17,4 +21,22 @@ export async function fetchActiveStaff() {
     })
     .filter((staff) => staff.status === "Active" && staff.staffID)
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function fetchActiveStaff() {
+  const snap = await getDocs(collection(db, HEALTHCARE_STAFF_COLLECTION));
+  return mapActiveStaffDocs(snap.docs);
+}
+
+/** Real-time active staff list. */
+export function subscribeActiveStaff(onData, onError) {
+  const unsub = onSnapshot(
+    collection(db, HEALTHCARE_STAFF_COLLECTION),
+    (snap) => {
+      onData(mapActiveStaffDocs(snap.docs));
+    },
+    onError,
+  );
+  trackFirestoreListener(unsub);
+  return unsub;
 }

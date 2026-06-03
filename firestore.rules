@@ -16,9 +16,83 @@ service cloud.firestore {
         && (request.auth.uid == userId || isActiveStaff());
     }
 
+    function patientProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function patientUserId() {
+      return patientProfile().userId;
+    }
+
+    function isOwnPatientAppointment() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && resource.data.userId == patientUserId();
+    }
+
+    function appointmentHasStaffId() {
+      return resource.data.staffId is string
+        || resource.data.staffID is string;
+    }
+
+    // Patients read `appointments` rows when choosing a slot (`dateTime` + staff).
+    function isSlotAvailabilityLookup() {
+      return request.auth != null
+        && appointmentHasStaffId()
+        && resource.data.dateTime is timestamp;
+    }
+
+    // Patient claims an open slot document (Available / no userId) → Pending.
+    function isPatientClaimAppointmentSlot() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && patientUserId() is string
+        && appointmentHasStaffId()
+        && resource.data.dateTime is timestamp
+        && request.resource.data.dateTime == resource.data.dateTime
+        && request.resource.data.userId == patientUserId()
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.staffId is string
+        && (resource.data.status == 'Available'
+            || !('userId' in resource.data)
+            || resource.data.userId == '');
+    }
+
+    // Patient mobile booking: Pending, no location; optional notes / createdAt allowed.
+    function isPatientBookingCreate() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && patientUserId() is string
+        && request.resource.data.userId == patientUserId()
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.appointmentId is string
+        && request.resource.data.dateTime is timestamp
+        && request.resource.data.appointmentType is string
+        && request.resource.data.staffId is string;
+    }
+
     match /appointments/{appointmentId} {
-      allow read: if request.auth != null && isActiveStaff();
-      allow create, update, delete: if isActiveStaff();
+      // Single-doc reads (detail screens).
+      allow get: if request.auth != null
+        && (isActiveStaff() || isOwnPatientAppointment() || isSlotAvailabilityLookup());
+
+      // staffId/staffID + dateTime range (booking: load slots / hide taken times).
+      allow list: if request.auth != null
+        && (isActiveStaff() || isSlotAvailabilityLookup());
+
+      // userId + dateTime (patient appointment list).
+      allow list: if request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && resource.data.userId == patientUserId();
+
+      allow create: if isActiveStaff() || isPatientBookingCreate();
+      allow delete: if isActiveStaff();
+      allow update: if isActiveStaff()
+        || isPatientClaimAppointmentSlot()
+        || (isOwnPatientAppointment()
+            && request.resource.data.status == 'Cancelled'
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['status', 'updatedAt']));
     }
 
     match /healthrecords/{recordId} {
@@ -36,9 +110,12 @@ service cloud.firestore {
       allow create, update, delete: if isActiveStaff();
     }
 
+    // Patients book appointments: query with .where('status', '==', 'Active').
     match /healthcarestaff/{staffId} {
       allow read: if request.auth != null
-        && (request.auth.uid == staffId || isActiveStaff());
+        && (request.auth.uid == staffId
+            || isActiveStaff()
+            || resource.data.status == 'Active');
     }
 
     match /system/{document=**} {

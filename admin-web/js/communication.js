@@ -3,10 +3,11 @@ import { getStaffSession } from "./staff-auth.js";
 import {
   createConversationForStaffPatient,
   fetchAvailablePatientsForNewConversation,
-  fetchAvailableConversationsForStaff,
-  fetchMessagesForConversation,
+  subscribeAvailableConversationsForStaff,
+  subscribeMessagesForConversation,
   sendTextMessage,
 } from "./communication-service.js";
+import { releaseFirestoreListener } from "./firestore-realtime.js";
 
 let chatThreads = [];
 let activeThreadId = null;
@@ -15,6 +16,8 @@ let searchQuery = "";
 let loggedInStaffId = "";
 let isLoadingThreads = false;
 let isLoadingMessages = false;
+let unsubscribeConversations = null;
+let unsubscribeMessages = null;
 
 const threadListEl = document.getElementById("chat-thread-list");
 const messagesEl = document.getElementById("chat-messages");
@@ -146,7 +149,8 @@ async function createConversationFromSelectedPatient(patientId) {
     });
     activeThreadId = newThread.id;
     closeAddContactModal();
-    await loadConversations();
+    applyChatThreads([newThread, ...chatThreads.filter((t) => t.id !== newThread.id)]);
+    await selectThread(activeThreadId);
   } catch (error) {
     addContactErrorEl.textContent =
       error?.message || "Could not add contact. Please try again.";
@@ -306,7 +310,12 @@ function setActiveHeader(thread) {
   activeNameEl.textContent = thread.name;
 }
 
-async function selectThread(threadId) {
+function stopMessagesRealtime() {
+  releaseFirestoreListener(unsubscribeMessages);
+  unsubscribeMessages = null;
+}
+
+function selectThread(threadId) {
   const thread = getThreadById(threadId);
   if (!thread) return;
 
@@ -315,28 +324,70 @@ async function selectThread(threadId) {
   setActiveHeader(thread);
   renderThreadList();
 
+  stopMessagesRealtime();
   isLoadingMessages = true;
   renderMessages(thread);
 
-  try {
-    thread.messages = await fetchMessagesForConversation(
-      thread.conversationId,
-      loggedInStaffId,
-    );
-  } catch (error) {
-    thread.messages = [];
-    messagesEl.innerHTML = `<p class="communication-messages-empty">${escapeHtml(
-      error?.message || "Could not load messages.",
-    )}</p>`;
-    return;
-  } finally {
-    isLoadingMessages = false;
-  }
-
-  renderMessages(thread);
+  unsubscribeMessages = subscribeMessagesForConversation(
+    thread.conversationId,
+    loggedInStaffId,
+    (items) => {
+      thread.messages = items;
+      isLoadingMessages = false;
+      renderMessages(thread);
+    },
+    (error) => {
+      thread.messages = [];
+      isLoadingMessages = false;
+      messagesEl.innerHTML = `<p class="communication-messages-empty">${escapeHtml(
+        error?.message || "Could not load messages.",
+      )}</p>`;
+    },
+  );
 }
 
-async function loadConversations() {
+function applyChatThreads(threads) {
+  const previousMessages = activeThreadId
+    ? getThreadById(activeThreadId)?.messages
+    : null;
+  chatThreads = threads;
+
+  if (chatThreads.length === 0) {
+    activeThreadId = null;
+    stopMessagesRealtime();
+    setActiveHeader(null);
+    renderThreadList();
+    renderMessages(null);
+    return;
+  }
+
+  const stillExists = chatThreads.some((thread) => thread.id === activeThreadId);
+  if (!stillExists) {
+    activeThreadId = null;
+    stopMessagesRealtime();
+    setActiveHeader(null);
+    renderThreadList();
+    renderMessages(null);
+    return;
+  }
+
+  const thread = getThreadById(activeThreadId);
+  if (thread) {
+    if (previousMessages) thread.messages = previousMessages;
+    setActiveHeader(thread);
+    renderThreadList();
+    if (!unsubscribeMessages) {
+      selectThread(activeThreadId);
+    } else {
+      renderMessages(thread);
+    }
+  }
+}
+
+function startConversationsRealtime() {
+  releaseFirestoreListener(unsubscribeConversations);
+  stopMessagesRealtime();
+
   if (!loggedInStaffId) {
     threadListEl.innerHTML =
       '<li class="communication-thread-empty">Staff ID is required to load conversations.</li>';
@@ -348,38 +399,25 @@ async function loadConversations() {
   isLoadingThreads = true;
   renderThreadList();
 
-  try {
-    chatThreads = await fetchAvailableConversationsForStaff(loggedInStaffId);
-
-    if (chatThreads.length === 0) {
-      activeThreadId = null;
-      setActiveHeader(null);
+  unsubscribeConversations = subscribeAvailableConversationsForStaff(
+    loggedInStaffId,
+    (threads) => {
+      isLoadingThreads = false;
+      applyChatThreads(threads);
       renderThreadList();
-      renderMessages(null);
-      return;
-    }
-    const stillExists = chatThreads.some((thread) => thread.id === activeThreadId);
-    if (!stillExists) {
+    },
+    (error) => {
+      isLoadingThreads = false;
+      chatThreads = [];
       activeThreadId = null;
+      stopMessagesRealtime();
+      threadListEl.innerHTML = `<li class="communication-thread-empty">${escapeHtml(
+        error?.message || "Could not load conversations.",
+      )}</li>`;
       setActiveHeader(null);
-      renderThreadList();
       renderMessages(null);
-      return;
-    }
-
-    await selectThread(activeThreadId);
-  } catch (error) {
-    chatThreads = [];
-    activeThreadId = null;
-    threadListEl.innerHTML = `<li class="communication-thread-empty">${escapeHtml(
-      error?.message || "Could not load conversations.",
-    )}</li>`;
-    setActiveHeader(null);
-    renderMessages(null);
-  } finally {
-    isLoadingThreads = false;
-    renderThreadList();
-  }
+    },
+  );
 }
 
 async function handleComposeSubmit(event) {
@@ -408,11 +446,6 @@ async function handleComposeSubmit(event) {
       hour12: true,
     });
     thread.unread = false;
-
-    thread.messages = await fetchMessagesForConversation(
-      thread.conversationId,
-      loggedInStaffId,
-    );
 
     renderThreadList();
     renderMessages(thread);
@@ -485,5 +518,5 @@ document.getElementById("btn-chat-call")?.addEventListener("click", () => {
 initStaffAuth((profile) => {
   loggedInStaffId =
     profile?.staffID?.trim() || getStaffSession()?.staffID?.trim() || "";
-  loadConversations();
+  startConversationsRealtime();
 });
