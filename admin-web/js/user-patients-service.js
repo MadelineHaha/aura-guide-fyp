@@ -2,12 +2,14 @@ import {
   collection,
   doc,
   getDocs,
+  onSnapshot,
   runTransaction,
   serverTimestamp,
   Timestamp,
   updateDoc,
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { auth, db } from "./firebase.js";
+import { trackFirestoreListener } from "./firestore-realtime.js";
 
 export const USERS_COLLECTION = "users";
 export const USER_COUNTER_PATH = ["system", "userCounter"];
@@ -64,11 +66,26 @@ export function mapUserDoc(docSnap) {
   };
 }
 
+function sortPatients(patients) {
+  return [...patients].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function fetchPatients() {
   const snap = await getDocs(collection(db, USERS_COLLECTION));
-  const patients = snap.docs.map(mapUserDoc);
-  patients.sort((a, b) => a.name.localeCompare(b.name));
-  return patients;
+  return sortPatients(snap.docs.map(mapUserDoc));
+}
+
+/** Real-time patient list; fires when any user document changes. */
+export function subscribePatients(onData, onError) {
+  const unsub = onSnapshot(
+    collection(db, USERS_COLLECTION),
+    (snap) => {
+      onData(sortPatients(snap.docs.map(mapUserDoc)));
+    },
+    onError,
+  );
+  trackFirestoreListener(unsub);
+  return unsub;
 }
 
 function dateOnlyUtc(dateStr) {

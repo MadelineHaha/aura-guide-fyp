@@ -18,9 +18,42 @@ service cloud.firestore {
         && (request.auth.uid == userId || isActiveStaff());
     }
 
+    function patientProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function patientUserId() {
+      return patientProfile().userId;
+    }
+
+    function isOwnPatientAppointment() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && resource.data.userId == patientUserId();
+    }
+
+    function isPatientBookingCreate() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && patientUserId() is string
+        && request.resource.data.userId == patientUserId()
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.appointmentId is string
+        && request.resource.data.dateTime is timestamp
+        && request.resource.data.appointmentType is string
+        && request.resource.data.staffId is string;
+    }
+
     match /appointments/{appointmentId} {
-      allow read: if request.auth != null && isActiveStaff();
-      allow create, update, delete: if isActiveStaff();
+      allow read: if request.auth != null
+        && (isActiveStaff() || isOwnPatientAppointment());
+      allow create: if isActiveStaff() || isPatientBookingCreate();
+      allow delete: if isActiveStaff();
+      allow update: if isActiveStaff()
+        || (isOwnPatientAppointment()
+            && request.resource.data.status == 'Cancelled'
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['status', 'updatedAt']));
     }
 
     match /healthrecords/{recordId} {
@@ -29,9 +62,12 @@ service cloud.firestore {
     }
 
     // Healthcare staff profile: doc id must match Firebase Auth uid.
+    // Query with .where('status', '==', 'Active') from the mobile app.
     match /healthcarestaff/{staffId} {
       allow read: if request.auth != null
-        && (request.auth.uid == staffId || isActiveStaff());
+        && (request.auth.uid == staffId
+            || isActiveStaff()
+            || resource.data.status == 'Active');
     }
 
     // Sequential user id counter used during registration.

@@ -1,14 +1,16 @@
 import { initStaffAuth } from "./staff-shell.js";
-import { fetchPatients } from "./user-patients-service.js";
+import { subscribePatients } from "./user-patients-service.js";
 import {
   createAppointment,
   dateToInputValue,
-  fetchAppointments,
+  subscribeAppointments,
   timeToInputValue,
   todayDateString,
+  acceptAppointment,
   updateAppointment,
   updateAppointmentStatus,
 } from "./appointments-service.js";
+import { releaseFirestoreListener } from "./firestore-realtime.js";
 
 const PAGE_SIZE = 4;
 
@@ -52,11 +54,27 @@ let searchQuery = "";
 let currentPage = 1;
 let isSaving = false;
 let editingAppointmentId = null;
+let acceptingAppointmentId = null;
+
+const acceptModalEl = document.getElementById("accept-appointment-modal");
+const acceptFormEl = document.getElementById("accept-appointment-form");
+const acceptCloseBtn = document.getElementById("accept-appointment-close");
+const acceptDetailPatientEl = document.getElementById("accept-detail-patient");
+const acceptDetailUserIdEl = document.getElementById("accept-detail-user-id");
+const acceptDetailDatetimeEl = document.getElementById("accept-detail-datetime");
+const acceptDetailTypeEl = document.getElementById("accept-detail-type");
+const acceptDetailStaffEl = document.getElementById("accept-detail-staff");
+const acceptDetailIdEl = document.getElementById("accept-detail-id");
+const acceptDetailStatusEl = document.getElementById("accept-detail-status");
+const acceptLocationEl = document.getElementById("accept-appointment-location");
+const acceptErrorEl = document.getElementById("accept-appointment-error");
+const acceptSubmitBtn = document.getElementById("accept-appointment-submit");
 
 function statusLabel(status) {
   if (status === "done") return "Done";
   if (status === "cancelled") return "Cancelled";
   if (status === "rescheduled") return "Rescheduled";
+  if (status === "pending") return "Pending";
   return "Scheduled";
 }
 
@@ -64,11 +82,16 @@ function statusClass(status) {
   if (status === "cancelled") return "status-badge status-badge--cancelled";
   if (status === "done") return "status-badge status-badge--done";
   if (status === "rescheduled") return "status-badge status-badge--rescheduled";
+  if (status === "pending") return "status-badge status-badge--pending";
   return "status-badge status-badge--scheduled";
 }
 
 function canMarkDone(status) {
   return status === "scheduled" || status === "rescheduled";
+}
+
+function canAccept(status) {
+  return status === "pending";
 }
 
 function canEditDateTime(status) {
@@ -105,29 +128,40 @@ function populatePatientSelect(lockedPatient = null) {
   patientSelectEl.innerHTML = options.join("");
 }
 
-async function loadPatientsForSelect() {
-  try {
-    patientsForSelect = await fetchPatients();
-    populatePatientSelect();
-  } catch {
-    patientsForSelect = [];
-    patientSelectEl.innerHTML =
-      '<option value="">Could not load patients</option>';
-  }
+let unsubscribePatients = null;
+let unsubscribeAppointments = null;
+
+function startPatientsForSelectRealtime() {
+  releaseFirestoreListener(unsubscribePatients);
+  unsubscribePatients = subscribePatients(
+    (list) => {
+      patientsForSelect = list;
+      populatePatientSelect();
+    },
+    () => {
+      patientsForSelect = [];
+      patientSelectEl.innerHTML =
+        '<option value="">Could not load patients</option>';
+    },
+  );
 }
 
-async function loadAppointments() {
-  try {
-    appointments = await fetchAppointments();
-    renderTable();
-  } catch (error) {
-    appointments = [];
-    countEl.textContent = "Could not load appointments";
-    tbodyEl.innerHTML = "";
-    emptyEl.textContent =
-      error?.message || "Failed to load appointments from Firestore.";
-    emptyEl.hidden = false;
-  }
+function startAppointmentsRealtime() {
+  releaseFirestoreListener(unsubscribeAppointments);
+  unsubscribeAppointments = subscribeAppointments(
+    (list) => {
+      appointments = list;
+      renderTable();
+    },
+    (error) => {
+      appointments = [];
+      countEl.textContent = "Could not load appointments";
+      tbodyEl.innerHTML = "";
+      emptyEl.textContent =
+        error?.message || "Failed to load appointments from Firestore.";
+      emptyEl.hidden = false;
+    },
+  );
 }
 
 function filterAppointments() {
@@ -141,42 +175,74 @@ function filterAppointments() {
   });
 }
 
-function renderRow(apt) {
+function renderPendingActions(apt) {
+  return `
+    <div class="row-actions row-actions--text">
+      <button
+        type="button"
+        class="btn-row-text btn-row-text--accept"
+        data-action="accept"
+        data-id="${apt.id}"
+      >
+        Accept
+      </button>
+      <button
+        type="button"
+        class="btn-row-text btn-row-text--decline"
+        data-action="cancel"
+        data-id="${apt.id}"
+      >
+        Decline
+      </button>
+    </div>
+  `;
+}
+
+function renderScheduledActions(apt) {
   const markDoneEnabled = canMarkDone(apt.status);
   const isCancelled = apt.status === "cancelled";
 
   return `
+    <div class="row-actions">
+      <button type="button" class="row-action row-action--edit" data-action="edit" data-id="${apt.id}" aria-label="Edit appointment" ${isCancelled ? "disabled" : ""}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+        </svg>
+      </button>
+      <button type="button" class="row-action row-action--confirm" data-action="done" data-id="${apt.id}" aria-label="Mark as done" ${markDoneEnabled ? "" : "disabled"}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      </button>
+      <button type="button" class="row-action row-action--cancel" data-action="cancel" data-id="${apt.id}" aria-label="Cancel appointment" ${isCancelled ? "disabled" : ""}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+    </div>
+  `;
+}
+
+function renderRow(apt) {
+  const isPending = apt.status === "pending";
+  const actionsHtml = isPending
+    ? renderPendingActions(apt)
+    : renderScheduledActions(apt);
+
+  return `
     <tr data-id="${apt.id}">
-      <td>
+      <td class="appointments-td appointments-td--patient">
         <p class="cell-primary">${apt.patientName}</p>
         <p class="cell-secondary">${apt.patientId}</p>
       </td>
-      <td>${apt.datetime}</td>
-      <td>${apt.appointmentType}</td>
-      <td>${apt.location}</td>
-      <td>${apt.staff}</td>
-      <td><span class="${statusClass(apt.status)}">${statusLabel(apt.status)}</span></td>
-      <td>
-        <div class="row-actions">
-          <button type="button" class="row-action row-action--edit" data-action="edit" data-id="${apt.id}" aria-label="Edit appointment">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-            </svg>
-          </button>
-          <button type="button" class="row-action row-action--confirm" data-action="done" data-id="${apt.id}" aria-label="Mark as done" ${markDoneEnabled ? "" : "disabled"}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-          </button>
-          <button type="button" class="row-action row-action--cancel" data-action="cancel" data-id="${apt.id}" aria-label="Cancel appointment" ${isCancelled ? "disabled" : ""}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-      </td>
+      <td class="appointments-td appointments-td--datetime">${apt.datetime}</td>
+      <td class="appointments-td appointments-td--type">${apt.appointmentType}</td>
+      <td class="appointments-td appointments-td--location">${isPending ? "—" : apt.location}</td>
+      <td class="appointments-td appointments-td--staff">${apt.staff}</td>
+      <td class="appointments-td appointments-td--status"><span class="${statusClass(apt.status)}">${statusLabel(apt.status)}</span></td>
+      <td class="appointments-td appointments-td--actions">${actionsHtml}</td>
     </tr>
   `;
 }
@@ -311,9 +377,66 @@ async function handleMarkDone(appointmentId) {
 
   try {
     await updateAppointmentStatus(appointmentId, "Done");
-    await loadAppointments();
   } catch (error) {
     alert(error?.message || "Could not mark appointment as done.");
+  }
+}
+
+function closeAcceptModal() {
+  acceptModalEl.hidden = true;
+  document.body.classList.remove("modal-open");
+  acceptingAppointmentId = null;
+}
+
+function openAcceptModal(appointmentId) {
+  const apt = getAppointmentById(appointmentId);
+  if (!apt || !canAccept(apt.status)) return;
+
+  acceptingAppointmentId = appointmentId;
+  acceptErrorEl.hidden = true;
+  acceptErrorEl.textContent = "";
+  acceptDetailPatientEl.textContent = apt.patientName || "—";
+  acceptDetailUserIdEl.textContent = apt.patientId || "—";
+  acceptDetailDatetimeEl.textContent = apt.datetime || "—";
+  acceptDetailTypeEl.textContent = apt.appointmentType || "—";
+  acceptDetailStaffEl.textContent = apt.staff || "—";
+  acceptDetailIdEl.textContent = apt.appointmentId || apt.id || "—";
+  acceptDetailStatusEl.textContent = statusLabel(apt.status);
+  const currentLoc =
+    apt.location && apt.location !== "—" ? apt.location : "";
+  acceptLocationEl.value = currentLoc;
+  acceptModalEl.hidden = false;
+  document.body.classList.add("modal-open");
+  acceptLocationEl.focus();
+}
+
+async function handleAcceptSubmit(event) {
+  event.preventDefault();
+  if (!acceptingAppointmentId || isSaving) return;
+
+  const location = acceptLocationEl.value.trim();
+  if (!location) {
+    acceptErrorEl.textContent = "Please enter a location before accepting.";
+    acceptErrorEl.hidden = false;
+    return;
+  }
+
+  isSaving = true;
+  acceptSubmitBtn.disabled = true;
+  const originalLabel = acceptSubmitBtn.innerHTML;
+  acceptSubmitBtn.textContent = "Saving…";
+
+  try {
+    await acceptAppointment(acceptingAppointmentId, location);
+    closeAcceptModal();
+  } catch (error) {
+    acceptErrorEl.textContent =
+      error?.message || "Could not accept appointment. Please try again.";
+    acceptErrorEl.hidden = false;
+  } finally {
+    isSaving = false;
+    acceptSubmitBtn.disabled = false;
+    acceptSubmitBtn.innerHTML = originalLabel;
   }
 }
 
@@ -321,11 +444,11 @@ async function handleCancel(appointmentId) {
   const apt = getAppointmentById(appointmentId);
   if (!apt || apt.status === "cancelled") return;
 
-  if (!confirm(`Cancel appointment for ${apt.patientName}?`)) return;
+  const verb = apt.status === "pending" ? "Decline" : "Cancel";
+  if (!confirm(`${verb} appointment request for ${apt.patientName}?`)) return;
 
   try {
     await updateAppointmentStatus(appointmentId, "Cancelled");
-    await loadAppointments();
   } catch (error) {
     alert(error?.message || "Could not cancel appointment.");
   }
@@ -391,7 +514,6 @@ async function handleAppointmentFormSubmit(event) {
     }
 
     closeFormModal();
-    await loadAppointments();
   } catch (error) {
     const code = error?.code;
     if (code === "permission-denied") {
@@ -416,7 +538,9 @@ tbodyEl.addEventListener("click", (event) => {
   const appointmentId = btn.dataset.id;
   const action = btn.dataset.action;
 
-  if (action === "edit") {
+  if (action === "accept") {
+    openAcceptModal(appointmentId);
+  } else if (action === "edit") {
     openEditAppointmentModal(appointmentId);
   } else if (action === "done") {
     handleMarkDone(appointmentId);
@@ -449,14 +573,22 @@ formModalEl.addEventListener("click", (event) => {
   if (event.target === formModalEl) closeFormModal();
 });
 
+acceptCloseBtn.addEventListener("click", closeAcceptModal);
+acceptFormEl.addEventListener("submit", handleAcceptSubmit);
+
+acceptModalEl.addEventListener("click", (event) => {
+  if (event.target === acceptModalEl) closeAcceptModal();
+});
+
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !formModalEl.hidden) closeFormModal();
+  if (event.key === "Escape" && !acceptModalEl.hidden) closeAcceptModal();
 });
 
 dateInputEl.min = todayDateString();
 
 initStaffAuth((profile) => {
   staffProfile = profile;
-  loadPatientsForSelect();
-  loadAppointments();
+  startPatientsForSelectRealtime();
+  startAppointmentsRealtime();
 });

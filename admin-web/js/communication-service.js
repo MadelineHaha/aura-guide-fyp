@@ -3,6 +3,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   query,
   runTransaction,
   serverTimestamp,
@@ -10,7 +11,12 @@ import {
   where,
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { db } from "./firebase.js";
-import { fetchPatients } from "./user-patients-service.js";
+import { trackFirestoreListener } from "./firestore-realtime.js";
+import {
+  fetchPatients,
+  mapUserDoc,
+  USERS_COLLECTION,
+} from "./user-patients-service.js";
 
 export const CONVERSATIONS_COLLECTION = "conversations";
 export const MESSAGES_COLLECTION = "messages";
@@ -278,22 +284,21 @@ async function fetchLatestMessageByConversationIds(conversationIds) {
   return latestByConversation;
 }
 
-export async function fetchAvailableConversationsForStaff(staffId) {
-  const patients = await fetchUsersForConversation();
+function buildStaffConversationThreads(
+  staffId,
+  patients,
+  conversations,
+  latestByConversation,
+) {
   const activePatients = patients.filter(isPatientAccountActive);
   const patientNameById = buildPatientNameMap(activePatients);
   const activePatientIds = new Set(patientNameById.keys());
 
-  const conversations = await fetchAllActiveConversationsForStaff(staffId);
   const available = conversations.filter((conversation) => {
     const otherId = getOtherParticipantId(conversation, staffId);
     if (!otherId.startsWith("U")) return true;
     return activePatientIds.has(otherId);
   });
-
-  const latestByConversation = await fetchLatestMessageByConversationIds(
-    available.map((c) => c.conversationId),
-  );
 
   const threads = available.map((conversation) => {
     const patientId = getOtherParticipantId(conversation, staffId);
@@ -318,6 +323,160 @@ export async function fetchAvailableConversationsForStaff(staffId) {
 
   threads.sort((a, b) => b.lastMessageAt - a.lastMessageAt);
   return threads;
+}
+
+function filterConversationsForStaff(staffId, docs) {
+  const trimmedStaffId = String(staffId || "").trim();
+  return docs
+    .map(mapConversationDoc)
+    .filter(
+      (conversation) =>
+        isActiveConversationStatus(conversation.status) &&
+        CONVERSATION_ID_PATTERN.test(conversation.conversationId) &&
+        (conversation.participant1Id === trimmedStaffId ||
+          conversation.participant2Id === trimmedStaffId),
+    );
+}
+
+function latestMessageFromSnap(snap) {
+  const messages = snap.docs
+    .map(mapMessageDoc)
+    .filter((message) => MESSAGE_ID_PATTERN.test(message.messageId))
+    .sort(
+      (a, b) =>
+        (timestampToDate(b.timestamp)?.getTime() || 0) -
+        (timestampToDate(a.timestamp)?.getTime() || 0),
+    );
+  return messages.length > 0 ? messages[0] : null;
+}
+
+export async function fetchAvailableConversationsForStaff(staffId) {
+  const patients = await fetchUsersForConversation();
+  const conversations = await fetchAllActiveConversationsForStaff(staffId);
+  const activePatientIds = new Set(
+    patients.filter(isPatientAccountActive).map((p) => p.patientId),
+  );
+  const available = conversations.filter((conversation) => {
+    const otherId = getOtherParticipantId(conversation, staffId);
+    if (!otherId.startsWith("U")) return true;
+    return activePatientIds.has(otherId);
+  });
+  const latestByConversation = await fetchLatestMessageByConversationIds(
+    available.map((c) => c.conversationId),
+  );
+  return buildStaffConversationThreads(
+    staffId,
+    patients,
+    conversations,
+    latestByConversation,
+  );
+}
+
+/** Real-time conversation list with previews (no polling). */
+export function subscribeAvailableConversationsForStaff(staffId, onData, onError) {
+  const trimmedStaffId = String(staffId || "").trim();
+  let patients = [];
+  let conversations = [];
+  const latestByConversation = new Map();
+  const messageUnsubs = new Map();
+
+  function clearMessageListeners() {
+    for (const unsub of messageUnsubs.values()) {
+      unsub();
+    }
+    messageUnsubs.clear();
+  }
+
+  function syncMessageListeners(conversationIds) {
+    const ids = new Set(conversationIds);
+    for (const [id, unsub] of messageUnsubs) {
+      if (!ids.has(id)) {
+        unsub();
+        messageUnsubs.delete(id);
+        latestByConversation.delete(id);
+      }
+    }
+    for (const id of ids) {
+      if (messageUnsubs.has(id)) continue;
+      const q = query(
+        collection(db, MESSAGES_COLLECTION),
+        where("conversationId", "==", id),
+      );
+      const unsub = onSnapshot(
+        q,
+        (snap) => {
+          const latest = latestMessageFromSnap(snap);
+          if (latest) latestByConversation.set(id, latest);
+          else latestByConversation.delete(id);
+          emit();
+        },
+        onError,
+      );
+      messageUnsubs.set(id, unsub);
+    }
+  }
+
+  function emit() {
+    const available = conversations.filter((conversation) => {
+      const otherId = getOtherParticipantId(conversation, trimmedStaffId);
+      if (!otherId.startsWith("U")) return true;
+      const activePatientIds = new Set(
+        patients.filter(isPatientAccountActive).map((p) => p.patientId),
+      );
+      return activePatientIds.has(otherId);
+    });
+    syncMessageListeners(available.map((c) => c.conversationId));
+    onData(
+      buildStaffConversationThreads(
+        trimmedStaffId,
+        patients,
+        conversations,
+        latestByConversation,
+      ),
+    );
+  }
+
+  const conversationsQuery = query(
+    collection(db, CONVERSATIONS_COLLECTION),
+    where("status", "==", "Active"),
+  );
+
+  const unsubs = [
+    onSnapshot(
+      collection(db, USERS_COLLECTION),
+      (snap) => {
+        patients = snap.docs.map((docSnap) => {
+          const mapped = mapUserDoc(docSnap);
+          return {
+            id: mapped.id,
+            patientId: String(mapped.patientId || "").trim(),
+            name: String(mapped.name || "").trim() || "—",
+            accountStatus:
+              String(mapped.accountStatus || "Active").trim() || "Active",
+          };
+        });
+        emit();
+      },
+      onError,
+    ),
+    onSnapshot(
+      conversationsQuery,
+      (snap) => {
+        conversations = filterConversationsForStaff(trimmedStaffId, snap.docs);
+        emit();
+      },
+      onError,
+    ),
+  ];
+
+  const stopAll = () => {
+    clearMessageListeners();
+    for (const unsub of unsubs) {
+      if (typeof unsub === "function") unsub();
+    }
+  };
+  trackFirestoreListener(stopAll);
+  return stopAll;
 }
 
 export async function fetchAvailablePatientsForNewConversation(staffId) {
@@ -376,6 +535,17 @@ function isUnreadForStaff(message, staffId) {
   );
 }
 
+function textMessagesFromSnap(snap) {
+  return snap.docs
+    .map(mapMessageDoc)
+    .filter((message) => message.messageType.toLowerCase() === "text")
+    .sort(
+      (a, b) =>
+        (timestampToDate(a.timestamp)?.getTime() || 0) -
+        (timestampToDate(b.timestamp)?.getTime() || 0),
+    );
+}
+
 export async function fetchMessagesForConversation(conversationId, staffId) {
   if (!CONVERSATION_ID_PATTERN.test(conversationId)) {
     throw new Error("Invalid conversation ID.");
@@ -386,17 +556,35 @@ export async function fetchMessagesForConversation(conversationId, staffId) {
     where("conversationId", "==", conversationId),
   );
   const snap = await getDocs(q);
+  return buildMessageRenderList(textMessagesFromSnap(snap), staffId);
+}
 
-  const messages = snap.docs
-    .map(mapMessageDoc)
-    .filter((message) => message.messageType.toLowerCase() === "text")
-    .sort(
-      (a, b) =>
-        (timestampToDate(a.timestamp)?.getTime() || 0) -
-        (timestampToDate(b.timestamp)?.getTime() || 0),
-    );
+/** Real-time messages for the open conversation. */
+export function subscribeMessagesForConversation(
+  conversationId,
+  staffId,
+  onData,
+  onError,
+) {
+  if (!CONVERSATION_ID_PATTERN.test(conversationId)) {
+    onError?.(new Error("Invalid conversation ID."));
+    return () => {};
+  }
 
-  return buildMessageRenderList(messages, staffId);
+  const q = query(
+    collection(db, MESSAGES_COLLECTION),
+    where("conversationId", "==", conversationId),
+  );
+
+  const unsub = onSnapshot(
+    q,
+    (snap) => {
+      onData(buildMessageRenderList(textMessagesFromSnap(snap), staffId));
+    },
+    onError,
+  );
+  trackFirestoreListener(unsub);
+  return unsub;
 }
 
 export function buildMessageRenderList(messages, staffId) {

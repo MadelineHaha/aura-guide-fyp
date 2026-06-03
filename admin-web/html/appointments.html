@@ -71,6 +71,7 @@
       </label>
       <div class="filter-tabs" role="tablist" aria-label="Filter by status">
         <button type="button" class="filter-tab is-active" data-status="all">All</button>
+        <button type="button" class="filter-tab" data-status="pending">Pending</button>
         <button type="button" class="filter-tab" data-status="scheduled">Scheduled</button>
         <button type="button" class="filter-tab" data-status="rescheduled">Rescheduled</button>
         <button type="button" class="filter-tab" data-status="done">Done</button>
@@ -79,16 +80,25 @@
     </div>
 
     <div class="table-card">
-      <table class="data-table">
+      <table class="data-table appointments-table">
+        <colgroup>
+          <col class="appointments-col appointments-col--patient" />
+          <col class="appointments-col appointments-col--datetime" />
+          <col class="appointments-col appointments-col--type" />
+          <col class="appointments-col appointments-col--location" />
+          <col class="appointments-col appointments-col--staff" />
+          <col class="appointments-col appointments-col--status" />
+          <col class="appointments-col appointments-col--actions" />
+        </colgroup>
         <thead>
           <tr>
-            <th scope="col">Patient</th>
-            <th scope="col">Date &amp; Time</th>
-            <th scope="col">Appointment Type</th>
-            <th scope="col">Location</th>
-            <th scope="col">Staff</th>
-            <th scope="col">Status</th>
-            <th scope="col">Actions</th>
+            <th scope="col" class="appointments-th appointments-th--patient">Patient</th>
+            <th scope="col" class="appointments-th appointments-th--datetime">Date &amp; Time</th>
+            <th scope="col" class="appointments-th appointments-th--type">Appointment Type</th>
+            <th scope="col" class="appointments-th appointments-th--location">Location</th>
+            <th scope="col" class="appointments-th appointments-th--staff">Staff</th>
+            <th scope="col" class="appointments-th appointments-th--status">Status</th>
+            <th scope="col" class="appointments-th appointments-th--actions">Actions</th>
           </tr>
         </thead>
         <tbody id="appointments-tbody"></tbody>
@@ -146,6 +156,9 @@
             <span class="form-field-label">Appointment Type</span>
             <select class="form-field-input form-field-select" id="add-appointment-type" required>
               <option value="">Select type</option>
+              <option value="General Check-up">General Check-up</option>
+              <option value="Therapist Session">Therapist Session</option>
+              <option value="Urgent Consultation">Urgent Consultation</option>
               <option value="Consultation">Consultation</option>
               <option value="Follow-up">Follow-up</option>
               <option value="Therapy Session">Therapy Session</option>
@@ -177,6 +190,87 @@
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
             Add Appointment
+          </button>
+        </footer>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="accept-appointment-modal" hidden>
+    <div
+      class="add-patient-modal accept-appointment-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="accept-appointment-title"
+    >
+      <header class="modal-dialog-header">
+        <div class="modal-dialog-header-main">
+          <span class="modal-dialog-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </span>
+          <h2 class="modal-dialog-title" id="accept-appointment-title">Accept Appointment</h2>
+        </div>
+        <button type="button" class="modal-dialog-close" id="accept-appointment-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+
+      <form class="add-patient-form" id="accept-appointment-form" novalidate>
+        <div class="accept-appointment-details" id="accept-appointment-details">
+          <p class="accept-appointment-details-title">Appointment details</p>
+          <dl class="accept-appointment-details-list">
+            <div class="accept-appointment-details-row">
+              <dt>Patient</dt>
+              <dd id="accept-detail-patient">—</dd>
+            </div>
+            <div class="accept-appointment-details-row">
+              <dt>User ID</dt>
+              <dd id="accept-detail-user-id">—</dd>
+            </div>
+            <div class="accept-appointment-details-row">
+              <dt>Date &amp; time</dt>
+              <dd id="accept-detail-datetime">—</dd>
+            </div>
+            <div class="accept-appointment-details-row">
+              <dt>Appointment type</dt>
+              <dd id="accept-detail-type">—</dd>
+            </div>
+            <div class="accept-appointment-details-row">
+              <dt>Staff</dt>
+              <dd id="accept-detail-staff">—</dd>
+            </div>
+            <div class="accept-appointment-details-row">
+              <dt>Appointment ID</dt>
+              <dd id="accept-detail-id">—</dd>
+            </div>
+            <div class="accept-appointment-details-row">
+              <dt>Status</dt>
+              <dd id="accept-detail-status">—</dd>
+            </div>
+          </dl>
+        </div>
+        <label class="form-field form-field--full accept-appointment-location-field">
+          <span class="form-field-label">Location</span>
+          <input
+            class="form-field-input"
+            type="text"
+            id="accept-appointment-location"
+            placeholder="e.g. Block A, Room 204"
+            required
+          />
+        </label>
+        <p class="add-patient-error" id="accept-appointment-error" role="alert" hidden></p>
+        <footer class="add-patient-footer">
+          <button type="submit" class="btn-primary btn-add-profile" id="accept-appointment-submit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            Accept &amp; Schedule
           </button>
         </footer>
       </form>

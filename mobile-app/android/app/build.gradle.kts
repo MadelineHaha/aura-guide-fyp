@@ -47,12 +47,5 @@ flutter {
 }
 
 dependencies {
-    // Firebase BoM (VERY IMPORTANT)
-    implementation(platform("com.google.firebase:firebase-bom:34.12.0"))
-
-    // Firebase Authentication (we will use this)
-    implementation("com.google.firebase:firebase-auth")
-
-    // Firestore Database (for storing data)
-    implementation("com.google.firebase:firebase-firestore")
+    implementation("com.google.android.gms:play-services-base:18.5.0")
 }

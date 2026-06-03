@@ -2,8 +2,8 @@ import { initStaffAuth, getInitials } from "./staff-shell.js";
 import {
   createHealthRecord,
   fetchHealthRecordById,
-  fetchHealthRecordsByUserId,
   isHealthRecordsAccessError,
+  subscribeHealthRecordsByUserId,
   INLINE_FILE_MAX_BYTES,
   MAX_FILE_BYTES,
   MAX_FILE_SIZE_MESSAGE,
@@ -17,9 +17,10 @@ import {
   createPatient,
   dateToInputValue,
   deactivatePatient,
-  fetchPatients,
+  subscribePatients,
   updatePatient,
 } from "./user-patients-service.js";
+import { releaseFirestoreListener } from "./firestore-realtime.js";
 
 const PAGE_SIZE = 4;
 
@@ -180,7 +181,26 @@ function renderRecordCard(record) {
   `;
 }
 
-async function refreshHealthRecordsList(patientId) {
+let unsubscribeHealthRecords = null;
+
+function renderHealthRecordsList(records) {
+  if (records.length === 0) {
+    modalListEl.innerHTML = "";
+    modalEmptyEl.hidden = false;
+    modalEmptyEl.textContent = "No health record yet.";
+    return;
+  }
+  modalEmptyEl.hidden = true;
+  modalListEl.innerHTML = records.map(renderRecordCard).join("");
+}
+
+function stopHealthRecordsRealtime() {
+  releaseFirestoreListener(unsubscribeHealthRecords);
+  unsubscribeHealthRecords = null;
+}
+
+function startHealthRecordsRealtime(patientId) {
+  stopHealthRecordsRealtime();
   const patient = getPatientById(patientId);
   if (!patient?.patientId || patient.patientId === "—") {
     modalListEl.innerHTML = "";
@@ -192,26 +212,22 @@ async function refreshHealthRecordsList(patientId) {
   modalListEl.innerHTML = "";
   modalEmptyEl.hidden = true;
 
-  try {
-    const records = await fetchHealthRecordsByUserId(patient.patientId);
-    if (records.length === 0) {
+  unsubscribeHealthRecords = subscribeHealthRecordsByUserId(
+    patient.patientId,
+    (records) => {
+      renderHealthRecordsList(records);
+    },
+    (error) => {
       modalListEl.innerHTML = "";
       modalEmptyEl.hidden = false;
-      modalEmptyEl.textContent = "No health record yet.";
-    } else {
-      modalEmptyEl.hidden = true;
-      modalListEl.innerHTML = records.map(renderRecordCard).join("");
-    }
-  } catch (error) {
-    modalListEl.innerHTML = "";
-    modalEmptyEl.hidden = false;
-    if (isHealthRecordsAccessError(error)) {
-      modalEmptyEl.textContent = "No health record yet.";
-    } else {
-      modalEmptyEl.textContent =
-        error?.message || "Could not load health records.";
-    }
-  }
+      if (isHealthRecordsAccessError(error)) {
+        modalEmptyEl.textContent = "No health record yet.";
+      } else {
+        modalEmptyEl.textContent =
+          error?.message || "Could not load health records.";
+      }
+    },
+  );
 }
 
 async function openHealthRecordsModal(patientId) {
@@ -224,7 +240,7 @@ async function openHealthRecordsModal(patientId) {
   healthModalEl.hidden = false;
   syncBodyModalLock();
   healthModalCloseBtn.focus();
-  await refreshHealthRecordsList(patientId);
+  startHealthRecordsRealtime(patientId);
 }
 
 function syncHealthRecordTypeOtherField() {
@@ -319,6 +335,7 @@ function syncBodyModalLock() {
 
 function closeHealthRecordsModal() {
   closeAddHealthRecordModal();
+  stopHealthRecordsRealtime();
   healthModalEl.hidden = true;
   syncBodyModalLock();
   activePatientId = null;
@@ -426,8 +443,6 @@ async function handleHealthRecordFormSubmit(event) {
       );
       if (card) {
         card.outerHTML = renderRecordCard(updated);
-      } else {
-        await refreshHealthRecordsList(activePatientId);
       }
       closeAddHealthRecordModal();
     } else {
@@ -668,7 +683,6 @@ async function handleProfileSaveClick() {
 
   try {
     await updatePatient(patient.id, changes);
-    await loadPatients();
     const updated = getPatientById(patient.id);
     if (updated) {
       renderProfileView(updated);
@@ -717,7 +731,6 @@ async function handleProfileDeactivateClick() {
     await deactivatePatient(patient.id);
     closePatientProfileModal();
     setPatientStatusFilter("all");
-    await loadPatients();
   } catch (error) {
     profileErrorEl.textContent =
       error?.message || "Could not deactivate patient. Please try again.";
@@ -756,17 +769,24 @@ function closeAddPatientModal() {
   syncBodyModalLock();
 }
 
-async function loadPatients() {
-  try {
-    patients = await fetchPatients();
-    renderTable();
-  } catch (error) {
-    patients = [];
-    countEl.textContent = "Could not load patients";
-    tbodyEl.innerHTML = "";
-    emptyEl.textContent = error?.message || "Failed to load patients from Firestore.";
-    emptyEl.hidden = false;
-  }
+let unsubscribePatients = null;
+
+function startPatientsRealtime() {
+  releaseFirestoreListener(unsubscribePatients);
+  unsubscribePatients = subscribePatients(
+    (list) => {
+      patients = list;
+      renderTable();
+    },
+    (error) => {
+      patients = [];
+      countEl.textContent = "Could not load patients";
+      tbodyEl.innerHTML = "";
+      emptyEl.textContent =
+        error?.message || "Failed to load patients from Firestore.";
+      emptyEl.hidden = false;
+    },
+  );
 }
 
 function filterPatients() {
@@ -908,7 +928,6 @@ async function handleAddPatientSubmit(event) {
     await createPatient({ name, email, birthDate, address });
     closeAddPatientModal();
     currentPage = 1;
-    await loadPatients();
   } catch (error) {
     const code = error?.code;
     if (code === "permission-denied") {
@@ -1048,5 +1067,5 @@ document.getElementById("add-patient-birthdate").max = todayDateString();
 initStaffAuth((profile) => {
   if (profile?.name) loggedInStaffName = profile.name;
   if (profile?.staffID) loggedInStaffId = profile.staffID;
-  loadPatients();
+  startPatientsRealtime();
 });
