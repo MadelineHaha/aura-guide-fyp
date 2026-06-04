@@ -657,6 +657,7 @@ export async function sendTextMessage({
   const messageId = await reserveMessageId();
   const now = serverTimestamp();
 
+  // Table 4.9 Message entity — document id = messageId (G00001).
   await setDoc(doc(db, MESSAGES_COLLECTION, messageId), {
     messageId,
     conversationId,

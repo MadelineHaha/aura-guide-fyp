@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "com.example.aura_guide_fyp"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     // Align with Firebase Android plugins (cloud_firestore, firebase_auth, firebase_core).
     ndkVersion = "27.0.12077973"
 
@@ -26,8 +26,8 @@ android {
         applicationId = "com.example.aura_guide_fyp"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        // cloud_firestore requires minSdk 23+
-        minSdk = maxOf(flutter.minSdkVersion, 23)
+        // cloud_firestore 23+; flutter_tts requires 24+
+        minSdk = maxOf(flutter.minSdkVersion, 24)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

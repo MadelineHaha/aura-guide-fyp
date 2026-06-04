@@ -45,5 +45,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Microphone access is used to detect the emergency phrase &quot;Help me&quot;.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Your location is shared with healthcare staff during an emergency SOS alert.</string>
 </dict>
 </plist>

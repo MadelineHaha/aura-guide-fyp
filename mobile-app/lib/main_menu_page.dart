@@ -2,8 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'appointments_page.dart';
+import 'emergency_sos_page.dart';
 import 'auth_session.dart';
+import 'communication_page.dart';
+import 'health_records_page.dart';
 import 'my_profile_page.dart';
+import 'services/appointments_service.dart';
+import 'services/communication_service.dart';
+import 'services/health_records_service.dart';
 
 class MainMenuPage extends StatelessWidget {
   const MainMenuPage({super.key});
@@ -46,29 +52,8 @@ class MainMenuPage extends StatelessWidget {
                   crossAxisSpacing: 12,
                   childAspectRatio: 1.02,
                   children: [
-                    _MenuTile(
-                      title: 'Appointments',
-                      subtitle: 'View schedule',
-                      icon: Icons.calendar_today_outlined,
-                      border: const Color(0xFF49BFC5),
-                      tile: const Color(0xFF12363B),
-                      iconCircle: const Color(0xFF226A6C),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (context) => const AppointmentsPage(),
-                          ),
-                        );
-                      },
-                    ),
-                    const _MenuTile(
-                      title: 'Health Records',
-                      subtitle: '4 records',
-                      icon: Icons.description_outlined,
-                      border: Color(0xFF3E99F7),
-                      tile: Color(0xFF19324F),
-                      iconCircle: Color(0xFF2C4F7F),
-                    ),
+                    const _AppointmentsMenuTile(),
+                    const _HealthRecordsMenuTile(),
                     const _MenuTile(
                       title: 'Medications',
                       subtitle: '3 remaining today',
@@ -77,13 +62,20 @@ class MainMenuPage extends StatelessWidget {
                       tile: Color(0xFF263913),
                       iconCircle: Color(0xFF5C8D29),
                     ),
-                    const _MenuTile(
+                    _MenuTile(
                       title: 'Emergency SOS',
                       subtitle: 'Tap for help',
                       icon: Icons.info_outline,
-                      border: Color(0xFFE13636),
-                      tile: Color(0xFF3C1111),
-                      iconCircle: Color(0xFF8E2626),
+                      border: const Color(0xFFE13636),
+                      tile: const Color(0xFF3C1111),
+                      iconCircle: const Color(0xFF8E2626),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (context) => const EmergencySosPage(),
+                          ),
+                        );
+                      },
                     ),
                     const _MenuTile(
                       title: 'Navigation',
@@ -93,14 +85,7 @@ class MainMenuPage extends StatelessWidget {
                       tile: Color(0xFF3D2A10),
                       iconCircle: Color(0xFF885B1F),
                     ),
-                    const _MenuTile(
-                      title: 'Communication',
-                      subtitle: '1 new message',
-                      icon: Icons.forum_outlined,
-                      border: Color(0xFF59C6D1),
-                      tile: Color(0xFF19393D),
-                      iconCircle: Color(0xFF3D8E96),
-                    ),
+                    const _CommunicationMenuTile(),
                   ],
                 ),
               ),
@@ -206,6 +191,148 @@ class _ReminderCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _AppointmentsMenuTile extends StatefulWidget {
+  const _AppointmentsMenuTile();
+
+  @override
+  State<_AppointmentsMenuTile> createState() => _AppointmentsMenuTileState();
+}
+
+class _AppointmentsMenuTileState extends State<_AppointmentsMenuTile> {
+  final _service = AppointmentsService();
+  late final Stream<int> _countStream = _service.watchUpcomingAppointmentCount();
+
+  static String _subtitleForCount(int count) {
+    if (count <= 0) return 'No appointments upcoming';
+    if (count == 1) return '1 appointment upcoming';
+    return '$count appointments upcoming';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<int>(
+      stream: _countStream,
+      builder: (context, snapshot) {
+        final count = snapshot.data ?? 0;
+        final subtitle = snapshot.hasError
+            ? 'No appointments upcoming'
+            : _subtitleForCount(count);
+
+        return _MenuTile(
+          title: 'Appointments',
+          subtitle: subtitle,
+          icon: Icons.calendar_today_outlined,
+          border: const Color(0xFF49BFC5),
+          tile: const Color(0xFF12363B),
+          iconCircle: const Color(0xFF226A6C),
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (context) => const AppointmentsPage(),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _HealthRecordsMenuTile extends StatefulWidget {
+  const _HealthRecordsMenuTile();
+
+  @override
+  State<_HealthRecordsMenuTile> createState() => _HealthRecordsMenuTileState();
+}
+
+class _HealthRecordsMenuTileState extends State<_HealthRecordsMenuTile> {
+  final _service = HealthRecordsService();
+  late final Stream<int> _countStream =
+      _service.watchForCurrentPatient().map((records) => records.length);
+
+  static String _subtitleForCount(int count) {
+    if (count <= 0) return 'No health record';
+    if (count == 1) return '1 record';
+    return '$count records';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<int>(
+      stream: _countStream,
+      builder: (context, snapshot) {
+        final count = snapshot.data ?? 0;
+        final subtitle = snapshot.hasError
+            ? 'No health record'
+            : _subtitleForCount(count);
+
+        return _MenuTile(
+          title: 'Health Records',
+          subtitle: subtitle,
+          icon: Icons.description_outlined,
+          border: const Color(0xFF3E99F7),
+          tile: const Color(0xFF19324F),
+          iconCircle: const Color(0xFF2C4F7F),
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (context) => const HealthRecordsPage(),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _CommunicationMenuTile extends StatefulWidget {
+  const _CommunicationMenuTile();
+
+  @override
+  State<_CommunicationMenuTile> createState() => _CommunicationMenuTileState();
+}
+
+class _CommunicationMenuTileState extends State<_CommunicationMenuTile> {
+  final _service = CommunicationService();
+  late final Stream<int> _unreadStream = _service.watchUnreadMessageCount();
+
+  static String _subtitleForCount(int count) {
+    if (count <= 0) return 'No messages upcoming';
+    if (count == 1) return '1 message upcoming';
+    return '$count messages upcoming';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<int>(
+      stream: _unreadStream,
+      builder: (context, snapshot) {
+        final count = snapshot.data ?? 0;
+        final subtitle = snapshot.hasError
+            ? 'No messages upcoming'
+            : _subtitleForCount(count);
+
+        return _MenuTile(
+          title: 'Communication',
+          subtitle: subtitle,
+          icon: Icons.forum_outlined,
+          border: const Color(0xFF59C6D1),
+          tile: const Color(0xFF19393D),
+          iconCircle: const Color(0xFF3D8E96),
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (context) => const CommunicationPage(),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
