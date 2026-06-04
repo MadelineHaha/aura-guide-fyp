@@ -95,19 +95,211 @@ service cloud.firestore {
                 .hasOnly(['status', 'updatedAt']));
     }
 
+    function isOwnPatientHealthRecord() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && (resource.data.userId == patientUserId()
+            || resource.data.userID == patientUserId());
+    }
+
+    function isOwnPatientEmergencyAlert() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && (resource.data.userId == patientUserId()
+            || resource.data.userID == patientUserId());
+    }
+
+    function isPatientEmergencyAlertCreate() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && request.resource.data.alertId is string
+        && request.resource.data.userId == patientUserId()
+        && request.resource.data.alertType is string
+        && request.resource.data.status == 'Active'
+        && request.resource.data.dateTime is timestamp
+        && request.resource.data.location is string;
+    }
+
+    match /emergencyalerts/{alertId} {
+      allow get: if isActiveStaff() || isOwnPatientEmergencyAlert();
+
+      allow list: if isActiveStaff();
+
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.userId == patientUserId();
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.userID == patientUserId();
+
+      allow create: if isActiveStaff() || isPatientEmergencyAlertCreate();
+      allow update, delete: if isActiveStaff();
+    }
+
     match /healthrecords/{recordId} {
-      allow read: if request.auth != null && isActiveStaff();
+      allow get: if isActiveStaff() || isOwnPatientHealthRecord();
+
+      allow list: if isActiveStaff();
+
+      // Patient app: .where('userId', '==', patientUserId)
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.userId == patientUserId();
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.userID == patientUserId();
+
       allow create, update, delete: if isActiveStaff();
+    }
+
+    function hasPatientProfile() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isPatientConversationParticipant() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && (resource.data.participant1Id == patientUserId()
+            || resource.data.participant1ID == patientUserId()
+            || resource.data.participant2Id == patientUserId()
+            || resource.data.participant2ID == patientUserId());
+    }
+
+    function isPatientMessageParty() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && (resource.data.senderId == patientUserId()
+            || resource.data.senderID == patientUserId()
+            || resource.data.receiverId == patientUserId()
+            || resource.data.receiverID == patientUserId());
+    }
+
+    function conversationData(conversationId) {
+      return get(/databases/$(database)/documents/conversations/$(conversationId)).data;
+    }
+
+    function isPatientInConversationId(conversationId) {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && exists(/databases/$(database)/documents/conversations/$(conversationId))
+        && (
+          conversationData(conversationId).participant1Id == patientUserId()
+          || conversationData(conversationId).participant1ID == patientUserId()
+          || conversationData(conversationId).participant2Id == patientUserId()
+          || conversationData(conversationId).participant2ID == patientUserId()
+        );
+    }
+
+    function isPatientMessageInOwnedConversation() {
+      return resource.data.conversationId is string
+        && isPatientInConversationId(resource.data.conversationId);
+    }
+
+    function isPatientConversationCreate() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && request.resource.data.status == 'Active'
+        && request.resource.data.conversationId is string
+        && (request.resource.data.participant1Id == patientUserId()
+            || request.resource.data.participant1ID == patientUserId()
+            || request.resource.data.participant2Id == patientUserId()
+            || request.resource.data.participant2ID == patientUserId());
+    }
+
+    function isPatientMessageCreate() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && request.resource.data.messageId is string
+        && request.resource.data.conversationId is string
+        && request.resource.data.senderId == patientUserId()
+        && request.resource.data.receiverId is string
+        && request.resource.data.messageType is string
+        && request.resource.data.timestamp is timestamp
+        && request.resource.data.deliveryStatus is string
+        && (
+          (request.resource.data.messageType == 'Text'
+            && request.resource.data.content is string)
+          || request.resource.data.messageType == 'Voice'
+          || request.resource.data.messageType == 'Call'
+        );
+    }
+
+    function isPatientMessageReceiver() {
+      return resource.data.receiverId == patientUserId()
+        || resource.data.receiverID == patientUserId();
+    }
+
+    function isPatientMarkMessageRead() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && isPatientMessageReceiver()
+        && request.resource.data.deliveryStatus == 'Read'
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['deliveryStatus']);
+    }
+
+    function isPatientArchiveConversation() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && isPatientConversationParticipant()
+        && request.resource.data.status == 'Archived'
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'updatedAt']);
+    }
+
+    function conversationStatusIsArchived() {
+      return resource.data.status is string
+        && resource.data.status.lower() == 'archived';
+    }
+
+    function isPatientUnarchiveConversation() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && isPatientConversationParticipant()
+        && conversationStatusIsArchived()
+        && request.resource.data.status == 'Active'
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'updatedAt']);
     }
 
     match /conversations/{conversationId} {
-      allow read: if request.auth != null && isActiveStaff();
-      allow create, update, delete: if isActiveStaff();
+      allow get: if isActiveStaff() || isPatientConversationParticipant();
+
+      // Staff lists Active conversations (filtered client-side).
+      allow list: if isActiveStaff();
+
+      // Patient: .where('participant1Id' | 'participant2Id', '==', userId)
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.participant1Id == patientUserId();
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.participant1ID == patientUserId();
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.participant2Id == patientUserId();
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.participant2ID == patientUserId();
+
+      allow create: if isActiveStaff() || isPatientConversationCreate();
+      allow update: if isActiveStaff()
+        || isPatientArchiveConversation()
+        || isPatientUnarchiveConversation();
+      allow delete: if isActiveStaff();
     }
 
     match /messages/{messageId} {
-      allow read: if request.auth != null && isActiveStaff();
-      allow create, update, delete: if isActiveStaff();
+      allow get: if isActiveStaff()
+        || isPatientMessageParty()
+        || isPatientMessageInOwnedConversation();
+
+      allow list: if isActiveStaff() || isPatientMessageInOwnedConversation();
+
+      allow create: if isActiveStaff() || isPatientMessageCreate();
+      allow update: if isActiveStaff() || isPatientMarkMessageRead();
+      allow delete: if isActiveStaff();
     }
 
     // Patients book appointments: query with .where('status', '==', 'Active').

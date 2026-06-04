@@ -60,4 +60,17 @@ class ClinicDateTime {
   static bool isBeforeNow(DateTime clinicLocal) {
     return toTimestamp(clinicLocal).compareTo(Timestamp.now()) < 0;
   }
+
+  /// Current time as clinic-local wall clock (for UI labels).
+  static DateTime nowClinic() {
+    final shifted = DateTime.now().toUtc().add(_offset);
+    return DateTime(
+      shifted.year,
+      shifted.month,
+      shifted.day,
+      shifted.hour,
+      shifted.minute,
+      shifted.second,
+    );
+  }
 }

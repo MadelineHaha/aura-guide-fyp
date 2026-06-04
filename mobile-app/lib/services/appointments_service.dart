@@ -303,6 +303,27 @@ class AppointmentsService {
     }
   }
 
+  static int countUpcoming(List<AppointmentItem> items) =>
+      items.where((a) => !a.isPast).length;
+
+  /// Live upcoming count for the main menu Appointments tile.
+  Stream<int> watchUpcomingAppointmentCount() async* {
+    final patientId = await _patientUserId();
+    if (patientId == null) {
+      yield 0;
+      return;
+    }
+
+    yield countUpcoming(await fetchForCurrentPatient());
+
+    await for (final _ in _firestore
+        .collection(_appointments)
+        .where('userId', isEqualTo: patientId)
+        .snapshots()) {
+      yield countUpcoming(await fetchForCurrentPatient());
+    }
+  }
+
   Future<List<AppointmentItem>> fetchForCurrentPatient() async {
     final patientId = await _patientUserId();
     if (patientId == null) return [];
