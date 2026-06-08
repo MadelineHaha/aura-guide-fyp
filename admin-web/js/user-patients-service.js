@@ -53,7 +53,7 @@ export function mapUserDoc(docSnap) {
   return {
     id: docSnap.id,
     name: data.name || "—",
-    patientId: data.userId || "—",
+    patientId: data.userId || data.userID || "—",
     age: birthDate ? computeAge(birthDate) : "—",
     condition: data.condition || "—",
     lastVisit: formatLastVisit(data.lastVisit || data.createdAt),

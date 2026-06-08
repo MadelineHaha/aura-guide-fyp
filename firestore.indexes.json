@@ -81,6 +81,14 @@
       ]
     },
     {
+      "collectionGroup": "medicationreminders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "emergencyalerts",
       "queryScope": "COLLECTION",
       "fields": [

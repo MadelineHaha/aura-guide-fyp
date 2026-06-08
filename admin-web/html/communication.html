@@ -109,13 +109,83 @@
 
         <div class="communication-messages" id="chat-messages" role="log" aria-live="polite"></div>
 
-        <form class="communication-compose" id="chat-compose-form" hidden>
-          <button type="button" class="btn-chat-compose-icon" aria-label="Add attachment">
+        <div class="chat-reply-strip" id="chat-reply-strip" hidden>
+          <div class="chat-reply-strip-body">
+            <span class="chat-reply-strip-label">Replying to</span>
+            <span class="chat-reply-strip-text" id="chat-reply-strip-text"></span>
+          </div>
+          <button type="button" class="chat-reply-strip-cancel" id="chat-reply-cancel" aria-label="Cancel reply">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
+        </div>
+
+        <div class="chat-selection-toolbar" id="chat-selection-toolbar" hidden>
+          <span class="chat-selection-count" id="chat-selection-count">0 selected</span>
+          <div class="chat-selection-actions">
+            <button type="button" class="chat-selection-btn" id="btn-selection-copy">Copy</button>
+            <button type="button" class="chat-selection-btn" id="btn-selection-forward">Forward</button>
+            <button type="button" class="chat-selection-btn chat-selection-btn--danger" id="btn-selection-delete">Delete</button>
+            <button type="button" class="chat-selection-btn chat-selection-btn--ghost" id="btn-selection-cancel">Cancel</button>
+          </div>
+        </div>
+
+        <form class="communication-compose" id="chat-compose-form" hidden>
+          <div class="chat-attach-wrap">
+            <button
+              type="button"
+              class="btn-chat-compose-icon"
+              id="btn-chat-attach"
+              aria-label="Add attachment"
+              aria-expanded="false"
+              aria-haspopup="menu"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            </button>
+            <div class="chat-attach-menu" id="chat-attach-menu" role="menu" hidden>
+              <button type="button" class="chat-attach-menu-item" data-attach-kind="document" role="menuitem">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                Document
+              </button>
+              <button type="button" class="chat-attach-menu-item" data-attach-kind="media" role="menuitem">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <rect x="3" y="5" width="18" height="14" rx="2" />
+                  <circle cx="8.5" cy="10.5" r="1.5" />
+                  <polyline points="21 15 16 10 5 21" />
+                </svg>
+                Photo &amp; Videos
+              </button>
+              <button type="button" class="chat-attach-menu-item" data-attach-kind="camera" role="menuitem">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                  <circle cx="12" cy="13" r="4" />
+                </svg>
+                Camera
+              </button>
+            </div>
+            <input
+              type="file"
+              id="chat-attach-document"
+              class="chat-attach-file-input"
+              accept=".pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx,.rtf,.odt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,application/rtf"
+              hidden
+            />
+            <input
+              type="file"
+              id="chat-attach-media"
+              class="chat-attach-file-input"
+              accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,video/mp4,video/webm,video/quicktime,.jpg,.jpeg,.png,.webp,.gif,.heic,.mp4,.mov,.webm"
+              hidden
+            />
+          </div>
           <input
             type="text"
             class="communication-compose-input"
@@ -135,6 +205,169 @@
       </section>
     </div>
   </main>
+
+  <div class="modal-backdrop modal-backdrop--stacked" id="chat-camera-modal" hidden>
+    <div
+      class="chat-camera-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="chat-camera-title"
+    >
+      <header class="chat-camera-header">
+        <div class="chat-camera-header-text">
+          <h2 class="chat-camera-title" id="chat-camera-title">Take Photo</h2>
+          <p class="chat-camera-subtitle" id="chat-camera-subtitle" hidden>Review your photo before sending.</p>
+        </div>
+        <button type="button" class="modal-dialog-close" id="chat-camera-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+      <div class="chat-camera-preview-wrap">
+        <video
+          class="chat-camera-preview"
+          id="chat-camera-preview"
+          autoplay
+          playsinline
+          muted
+        ></video>
+        <img
+          class="chat-camera-still"
+          id="chat-camera-still"
+          alt="Captured photo preview"
+          hidden
+        />
+        <p class="chat-camera-hint" id="chat-camera-hint" hidden>Starting camera…</p>
+      </div>
+      <canvas id="chat-camera-canvas" class="chat-camera-canvas" hidden></canvas>
+      <footer class="chat-camera-footer" id="chat-camera-footer-capture">
+        <button type="button" class="btn-profile-action btn-profile-action--secondary chat-camera-cancel" id="chat-camera-cancel">
+          Cancel
+        </button>
+        <button type="button" class="btn-primary chat-camera-capture" id="chat-camera-capture">
+          Capture Photo
+        </button>
+      </footer>
+      <footer class="chat-camera-footer" id="chat-camera-footer-preview" hidden>
+        <button type="button" class="btn-profile-action btn-profile-action--secondary" id="chat-camera-retake">
+          Retake
+        </button>
+        <button type="button" class="btn-primary" id="chat-camera-send">
+          Send Photo
+        </button>
+      </footer>
+    </div>
+  </div>
+
+  <div class="modal-backdrop modal-backdrop--stacked" id="message-info-modal" hidden>
+    <div class="message-action-modal" role="dialog" aria-modal="true" aria-labelledby="message-info-title">
+      <header class="modal-dialog-header">
+        <div class="modal-dialog-header-main">
+          <span class="modal-dialog-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+          </span>
+          <h2 class="modal-dialog-title" id="message-info-title">Message info</h2>
+        </div>
+        <button type="button" class="modal-dialog-close" id="message-info-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+      <div class="message-info-body" id="message-info-body"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop modal-backdrop--stacked" id="forward-message-modal" hidden>
+    <div class="message-action-modal message-action-modal--wide" role="dialog" aria-modal="true" aria-labelledby="forward-message-title">
+      <header class="modal-dialog-header">
+        <div class="modal-dialog-header-main">
+          <span class="modal-dialog-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="15 14 20 9 15 4" />
+              <path d="M4 20v-7a4 4 0 0 1 4-4h12" />
+            </svg>
+          </span>
+          <h2 class="modal-dialog-title" id="forward-message-title">Forward message</h2>
+        </div>
+        <button type="button" class="modal-dialog-close" id="forward-message-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+      <div class="message-forward-body">
+        <p class="message-forward-hint">Choose patients to forward this message to.</p>
+        <div class="message-forward-list" id="forward-message-list" role="listbox" aria-label="Forward targets"></div>
+        <p class="add-patient-error" id="forward-message-error" role="alert" hidden></p>
+      </div>
+      <footer class="add-patient-footer">
+        <button type="button" class="btn-primary" id="forward-message-submit">Forward</button>
+      </footer>
+    </div>
+  </div>
+
+  <div class="modal-backdrop modal-backdrop--stacked" id="delete-message-modal" hidden>
+    <div class="message-action-modal" role="dialog" aria-modal="true" aria-labelledby="delete-message-title">
+      <header class="modal-dialog-header">
+        <div class="modal-dialog-header-main">
+          <span class="modal-dialog-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            </svg>
+          </span>
+          <h2 class="modal-dialog-title" id="delete-message-title">Delete message</h2>
+        </div>
+        <button type="button" class="modal-dialog-close" id="delete-message-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+      <div class="message-delete-body">
+        <p class="message-delete-hint">Choose how you want to delete the selected message(s).</p>
+        <button type="button" class="message-delete-option" id="delete-message-for-me">
+          <span class="message-delete-option-title">Delete for me</span>
+          <span class="message-delete-option-desc">Hide from your chat. The patient can still see it.</span>
+        </button>
+        <button type="button" class="message-delete-option message-delete-option--danger" id="delete-message-for-everyone">
+          <span class="message-delete-option-title">Delete for everyone</span>
+          <span class="message-delete-option-desc">Mark as deleted for all participants. The record stays in Firestore.</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop modal-backdrop--stacked chat-photo-preview-backdrop" id="chat-photo-preview-modal" hidden>
+    <div
+      class="chat-photo-preview-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Photo preview"
+    >
+      <button type="button" class="chat-photo-preview-close" id="chat-photo-preview-close" aria-label="Close preview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+      <img
+        class="chat-photo-preview-image"
+        id="chat-photo-preview-image"
+        alt=""
+      />
+    </div>
+  </div>
 
   <div class="modal-backdrop modal-backdrop--stacked" id="add-contact-modal" hidden>
     <div

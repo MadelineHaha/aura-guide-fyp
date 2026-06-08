@@ -1,4 +1,5 @@
 import {
+  arrayUnion,
   collection,
   doc,
   getDoc,
@@ -8,9 +9,15 @@ import {
   runTransaction,
   serverTimestamp,
   setDoc,
+  updateDoc,
   where,
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
-import { db } from "./firebase.js";
+import {
+  getDownloadURL,
+  ref,
+  uploadBytes,
+} from "https://www.gstatic.com/firebasejs/11.6.0/firebase-storage.js";
+import { db, storage } from "./firebase.js";
 import { trackFirestoreListener } from "./firestore-realtime.js";
 import {
   fetchPatients,
@@ -28,6 +35,51 @@ const MESSAGE_ID_PATTERN = /^G\d{5}$/;
 const PARTICIPANT_ID_PATTERN = /^(U|S)\d{5}$/;
 
 const AVATAR_COLORS = ["teal", "purple", "green", "pink", "orange"];
+
+export const MESSAGE_MEDIA_MAX_BYTES = 10 * 1024 * 1024;
+export const MESSAGE_MEDIA_MAX_SIZE_MESSAGE =
+  "Attachments must be 10 MB or smaller.";
+/** Keeps base64 photo payloads within Firestore document size limits. */
+export const INLINE_PHOTO_MAX_BYTES = 500 * 1024;
+
+const PHOTO_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
+const VIDEO_MIME_TYPES = new Set([
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+]);
+const DOCUMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+]);
+const DOCUMENT_EXTENSIONS = new Set([
+  "pdf",
+  "doc",
+  "docx",
+  "txt",
+  "xls",
+  "xlsx",
+  "ppt",
+  "pptx",
+]);
+
+const DISPLAYABLE_MESSAGE_TYPES = new Set([
+  "text",
+  "photo",
+  "video",
+  "document",
+]);
 
 function timestampToDate(value) {
   if (!value) return null;
@@ -74,6 +126,9 @@ export function mapConversationDoc(docSnap) {
 
 export function mapMessageDoc(docSnap) {
   const data = docSnap.data();
+  const hiddenFor = Array.isArray(data.hiddenFor)
+    ? data.hiddenFor.map((id) => String(id || "").trim()).filter(Boolean)
+    : [];
   return {
     messageId: data.messageId || docSnap.id,
     conversationId:
@@ -86,9 +141,68 @@ export function mapMessageDoc(docSnap) {
     callDuration: data.callDuration ?? null,
     timestamp: data.timestamp ?? data.Timestamp ?? null,
     deliveryStatus: normalizeStatus(data.deliveryStatus) || "Sent",
+    deliveredAt: data.deliveredAt ?? null,
+    readAt: data.readAt ?? null,
     senderId: pickParticipantId(data, ["senderId", "senderID", "SenderID"]),
     receiverId: pickParticipantId(data, ["receiverId", "receiverID", "ReceiverID"]),
+    hiddenFor,
+    deletedForEveryone: Boolean(data.deletedForEveryone),
+    deletedAt: data.deletedAt ?? null,
+    deletedBy: pickParticipantId(data, ["deletedBy", "deletedBY"]) || "",
+    replyToMessageId: String(data.replyToMessageId || "").trim(),
+    replyPreview: String(data.replyPreview || "").trim(),
+    forwardedFromMessageId: String(data.forwardedFromMessageId || "").trim(),
+    forwardedFromConversationId: String(data.forwardedFromConversationId || "").trim(),
+    filePath: String(data.filePath || "").trim(),
   };
+}
+
+export function isMessageHiddenForUser(message, userId) {
+  const viewerId = String(userId || "").trim();
+  if (!viewerId) return false;
+  return (message.hiddenFor || []).includes(viewerId);
+}
+
+export function formatMessageDateTimeFull(value) {
+  const date = timestampToDate(value);
+  if (!date) return "Not available";
+  return date.toLocaleString("en-US", {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  });
+}
+
+export function buildMessageCopyText(message) {
+  if (!message || message.deletedForEveryone) return "";
+  const kind = resolveMessageKind(message);
+  if (kind === "text") return String(message.content || "").trim();
+  const media = parseMediaMessageContent(message.content);
+  if (!media) {
+    if (kind === "photo") return "Photo";
+    if (kind === "video") return "Video";
+    return media?.fileName || "Document";
+  }
+  if (kind === "document") return media.fileName || "Document";
+  return media.url || media.fileName || "Attachment";
+}
+
+export function buildReplyPreview(message) {
+  if (!message) return "";
+  if (message.deletedForEveryone) return "Deleted message";
+  const parsed = parseMessageForRender(message);
+  if (parsed.kind === "text") {
+    const text = String(parsed.text || "").trim();
+    return text.length > 80 ? `${text.slice(0, 80)}…` : text || "Message";
+  }
+  if (parsed.kind === "photo") return "Photo";
+  if (parsed.kind === "video") return "Video";
+  return parsed.fileName || "Document";
 }
 
 function avatarColorForId(id) {
@@ -196,7 +310,7 @@ function mapUserForConversation(docSnap) {
   const data = docSnap.data();
   return {
     id: docSnap.id,
-    patientId: String(data.userId || "").trim(),
+    patientId: String(data.userId || data.userID || "").trim(),
     name: String(data.name || "").trim() || "—",
     accountStatus: String(data.status || "Active").trim() || "Active",
   };
@@ -517,12 +631,225 @@ export async function fetchAvailablePatientsForNewConversation(staffId) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function fileExtension(fileName) {
+  const parts = String(fileName || "").split(".");
+  return parts.length > 1 ? parts.pop().toLowerCase() : "";
+}
+
+function sanitizeStorageFileName(fileName) {
+  const trimmed = String(fileName || "file").trim() || "file";
+  return trimmed.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+}
+
+function buildChatMediaStoragePath(conversationId, messageId, fileName) {
+  return `chatmedia/${conversationId}/${messageId}/${sanitizeStorageFileName(fileName)}`;
+}
+
+function encodeMediaContent({ url, fileName, mimeType }) {
+  return JSON.stringify({
+    url,
+    fileName: String(fileName || "Attachment").trim() || "Attachment",
+    mimeType: String(mimeType || "").trim(),
+  });
+}
+
+function encodeInlineMediaContent({ fileData, fileName, mimeType }) {
+  return JSON.stringify({
+    fileData: String(fileData || "").trim(),
+    fileName: String(fileName || "Attachment").trim() || "Attachment",
+    mimeType: String(mimeType || "").trim(),
+  });
+}
+
+const INLINE_PHOTO_MAX_DIMENSION = 1280;
+
+function loadImageElement(file) {
+  const url = URL.createObjectURL(file);
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not read photo data."));
+    };
+    image.src = url;
+  });
+}
+
+/** Shrinks camera/gallery photos so they can be stored inline in Firestore. */
+async function compressPhotoForInlineStorage(file) {
+  if (!(file instanceof Blob) || file.size <= INLINE_PHOTO_MAX_BYTES) {
+    return file;
+  }
+
+  let image;
+  try {
+    image = await loadImageElement(file);
+  } catch {
+    return file;
+  }
+
+  let width = image.naturalWidth || image.width;
+  let height = image.naturalHeight || image.height;
+  if (!width || !height) return file;
+
+  const scale = Math.min(1, INLINE_PHOTO_MAX_DIMENSION / Math.max(width, height));
+  width = Math.max(1, Math.round(width * scale));
+  height = Math.max(1, Math.round(height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return file;
+  context.drawImage(image, 0, 0, width, height);
+
+  const baseName =
+    String(file.name || "photo.jpg").replace(/\.[^.]+$/, "") || "photo";
+  let smallestBlob = null;
+
+  for (const quality of [0.85, 0.75, 0.65, 0.55, 0.45, 0.35]) {
+    const blob = await new Promise((resolve) => {
+      canvas.toBlob(resolve, "image/jpeg", quality);
+    });
+    if (!blob) continue;
+    smallestBlob = blob;
+    if (blob.size <= INLINE_PHOTO_MAX_BYTES) {
+      return new File([blob], `${baseName}.jpg`, { type: "image/jpeg" });
+    }
+  }
+
+  if (smallestBlob) {
+    return new File([smallestBlob], `${baseName}.jpg`, { type: "image/jpeg" });
+  }
+  return file;
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Could not read photo data."));
+    reader.readAsDataURL(file);
+  });
+}
+
+export function parseMediaMessageContent(content) {
+  const raw = String(content || "").trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.fileData === "string" && parsed.fileData.trim()) {
+      return {
+        url: parsed.fileData.trim(),
+        fileName: String(parsed.fileName || "Attachment").trim() || "Attachment",
+        mimeType: String(parsed.mimeType || "").trim(),
+      };
+    }
+    if (parsed && typeof parsed.url === "string" && parsed.url.trim()) {
+      return {
+        url: parsed.url.trim(),
+        fileName: String(parsed.fileName || "Attachment").trim() || "Attachment",
+        mimeType: String(parsed.mimeType || "").trim(),
+      };
+    }
+  } catch {
+    /* plain URL fallback */
+  }
+  if (/^https?:\/\//i.test(raw) || raw.startsWith("data:")) {
+    return { url: raw, fileName: "Attachment", mimeType: "" };
+  }
+  return null;
+}
+
+function resolveMessageKind(message) {
+  const type = String(message.messageType || "Text").trim().toLowerCase();
+  if (type === "photo" || type === "video" || type === "document") return type;
+  return "text";
+}
+
+function parseMessageForRender(message) {
+  const kind = resolveMessageKind(message);
+  if (kind === "text") {
+    return {
+      kind: "text",
+      text: String(message.content || "").trim() || "—",
+    };
+  }
+  const media = parseMediaMessageContent(message.content);
+  if (!media) {
+    return {
+      kind: "text",
+      text: kind === "photo" ? "Photo" : kind === "video" ? "Video" : "Document",
+    };
+  }
+  return {
+    kind,
+    url: media.url,
+    fileName: media.fileName,
+    mimeType: media.mimeType,
+  };
+}
+
+export function inferMessageTypeForFile(file, intent = "media") {
+  const mime = String(file?.type || "").trim().toLowerCase();
+  const ext = fileExtension(file?.name);
+
+  if (intent === "document") {
+    if (DOCUMENT_MIME_TYPES.has(mime) || DOCUMENT_EXTENSIONS.has(ext)) {
+      return "Document";
+    }
+    return null;
+  }
+
+  if (intent === "camera") {
+    if (mime.startsWith("image/") || PHOTO_MIME_TYPES.has(mime)) return "Photo";
+    return null;
+  }
+
+  if (mime.startsWith("image/") || PHOTO_MIME_TYPES.has(mime)) return "Photo";
+  if (mime.startsWith("video/") || VIDEO_MIME_TYPES.has(mime)) return "Video";
+  return null;
+}
+
+export function validateMediaMessageFile(file, messageType) {
+  if (!file) return "Please choose a file to send.";
+  if (file.size > MESSAGE_MEDIA_MAX_BYTES) return MESSAGE_MEDIA_MAX_SIZE_MESSAGE;
+
+  const type = String(messageType || "").trim();
+  const mime = String(file.type || "").trim().toLowerCase();
+  const ext = fileExtension(file.name);
+
+  if (type === "Photo") {
+    if (mime.startsWith("image/") || PHOTO_MIME_TYPES.has(mime)) return null;
+    return "Please choose a photo file (JPEG, PNG, WebP, or GIF).";
+  }
+  if (type === "Video") {
+    if (mime.startsWith("video/") || VIDEO_MIME_TYPES.has(mime)) return null;
+    return "Please choose a video file (MP4, WebM, or MOV).";
+  }
+  if (type === "Document") {
+    if (DOCUMENT_MIME_TYPES.has(mime) || DOCUMENT_EXTENSIONS.has(ext)) return null;
+    return "Please choose a document (PDF, Word, Excel, PowerPoint, or TXT).";
+  }
+  return "Unsupported attachment type.";
+}
+
 function formatMessagePreview(message) {
   const type = message.messageType.toLowerCase();
   if (type === "voice") return "Voice message";
   if (type === "call") {
     const duration = message.callDuration;
     return duration ? `Call · ${duration} min` : "Call";
+  }
+  if (type === "photo") return "Photo";
+  if (type === "video") return "Video";
+  if (type === "document") {
+    const media = parseMediaMessageContent(message.content);
+    return media?.fileName || "Document";
   }
   return message.content || "—";
 }
@@ -535,10 +862,15 @@ function isUnreadForStaff(message, staffId) {
   );
 }
 
-function textMessagesFromSnap(snap) {
+function conversationMessagesFromSnap(snap, staffId = "") {
   return snap.docs
     .map(mapMessageDoc)
-    .filter((message) => message.messageType.toLowerCase() === "text")
+    .filter((message) =>
+      DISPLAYABLE_MESSAGE_TYPES.has(
+        String(message.messageType || "Text").trim().toLowerCase(),
+      ),
+    )
+    .filter((message) => !isMessageHiddenForUser(message, staffId))
     .sort(
       (a, b) =>
         (timestampToDate(a.timestamp)?.getTime() || 0) -
@@ -556,7 +888,7 @@ export async function fetchMessagesForConversation(conversationId, staffId) {
     where("conversationId", "==", conversationId),
   );
   const snap = await getDocs(q);
-  return buildMessageRenderList(textMessagesFromSnap(snap), staffId);
+  return buildMessageRenderList(conversationMessagesFromSnap(snap, staffId), staffId);
 }
 
 /** Real-time messages for the open conversation. */
@@ -579,7 +911,9 @@ export function subscribeMessagesForConversation(
   const unsub = onSnapshot(
     q,
     (snap) => {
-      onData(buildMessageRenderList(textMessagesFromSnap(snap), staffId));
+      onData(
+        buildMessageRenderList(conversationMessagesFromSnap(snap, staffId), staffId),
+      );
     },
     onError,
   );
@@ -599,14 +933,78 @@ export function buildMessageRenderList(messages, staffId) {
     }
 
     const isStaffSender = message.senderId === staffId;
-    items.push({
+    const isDeleted = Boolean(message.deletedForEveryone);
+    const parsed = isDeleted
+      ? { kind: "deleted", text: "This message was deleted" }
+      : parseMessageForRender(message);
+    const base = {
       type: isStaffSender ? "out" : "in",
-      text: message.content || "—",
       time: formatMessageClock(message.timestamp),
-    });
+      kind: parsed.kind,
+      messageId: message.messageId,
+      sentAt: formatMessageDateTimeFull(message.timestamp),
+      deliveredAt: message.deliveredAt
+        ? formatMessageDateTimeFull(message.deliveredAt)
+        : "",
+      readAt: message.readAt ? formatMessageDateTimeFull(message.readAt) : "",
+      deliveryStatus: message.deliveryStatus || "Sent",
+      copyText: buildMessageCopyText(message),
+      replyPreview: message.replyPreview || "",
+      forwardedFromMessageId: message.forwardedFromMessageId || "",
+      isDeleted,
+    };
+    if (parsed.kind === "text" || parsed.kind === "deleted") {
+      items.push({ ...base, text: parsed.text });
+    } else {
+      items.push({
+        ...base,
+        url: parsed.url,
+        fileName: parsed.fileName,
+        mimeType: parsed.mimeType,
+      });
+    }
   });
 
   return items;
+}
+
+export function buildOptimisticOutgoingItem({
+  messageType,
+  content,
+  staffId,
+  timestamp = new Date(),
+  messageId = "",
+  replyPreview = "",
+}) {
+  const parsed = parseMessageForRender({
+    messageType,
+    content,
+    senderId: staffId,
+    timestamp,
+  });
+  const base = {
+    type: "out",
+    time: formatMessageClock(timestamp),
+    kind: parsed.kind,
+    messageId: messageId || `temp-${Date.now()}`,
+    sentAt: formatMessageDateTimeFull(timestamp),
+    deliveredAt: "",
+    readAt: "",
+    deliveryStatus: "Sent",
+    copyText: buildMessageCopyText({ messageType, content, deletedForEveryone: false }),
+    replyPreview: String(replyPreview || "").trim(),
+    forwardedFromMessageId: "",
+    isDeleted: false,
+  };
+  if (parsed.kind === "text") {
+    return { ...base, text: parsed.text };
+  }
+  return {
+    ...base,
+    url: parsed.url,
+    fileName: parsed.fileName,
+    mimeType: parsed.mimeType,
+  };
 }
 
 async function reserveMessageId() {
@@ -620,11 +1018,22 @@ async function reserveMessageId() {
   });
 }
 
+async function appendReplyFields(payload, { replyToMessageId, replyPreview } = {}) {
+  const replyId = String(replyToMessageId || "").trim();
+  const preview = String(replyPreview || "").trim();
+  if (replyId && MESSAGE_ID_PATTERN.test(replyId)) {
+    payload.replyToMessageId = replyId;
+    if (preview) payload.replyPreview = preview.slice(0, 120);
+  }
+}
+
 export async function sendTextMessage({
   conversationId,
   staffId,
   patientId,
   content,
+  replyToMessageId = "",
+  replyPreview = "",
 }) {
   const trimmedContent = String(content || "").trim();
   if (!trimmedContent) {
@@ -657,8 +1066,7 @@ export async function sendTextMessage({
   const messageId = await reserveMessageId();
   const now = serverTimestamp();
 
-  // Table 4.9 Message entity — document id = messageId (G00001).
-  await setDoc(doc(db, MESSAGES_COLLECTION, messageId), {
+  const messagePayload = {
     messageId,
     conversationId,
     messageType: "Text",
@@ -668,14 +1076,294 @@ export async function sendTextMessage({
     deliveryStatus: "Sent",
     senderId: staffId,
     receiverId: patientId,
-  });
+    hiddenFor: [],
+    deletedForEveryone: false,
+  };
+  await appendReplyFields(messagePayload, { replyToMessageId, replyPreview });
+
+  await setDoc(doc(db, MESSAGES_COLLECTION, messageId), messagePayload);
 
   return {
     messageId,
     preview: trimmedContent,
     time: formatChatListTime(new Date()),
-    messages: [{ type: "out", text: trimmedContent, time: formatMessageClock(new Date()) }],
+    messageType: "Text",
+    content: trimmedContent,
+    replyPreview: messagePayload.replyPreview || "",
   };
+}
+
+async function assertConversationReady(conversationId) {
+  if (!CONVERSATION_ID_PATTERN.test(conversationId)) {
+    throw new Error("Invalid conversation ID.");
+  }
+
+  const conversationSnap = await getDoc(
+    doc(db, CONVERSATIONS_COLLECTION, conversationId),
+  );
+  if (!conversationSnap.exists()) {
+    throw new Error("Conversation not found.");
+  }
+  const conversation = mapConversationDoc(conversationSnap);
+  if (!isActiveConversationStatus(conversation.status)) {
+    throw new Error("This conversation is no longer available.");
+  }
+  return conversation;
+}
+
+export async function sendMediaMessage({
+  conversationId,
+  staffId,
+  patientId,
+  file,
+  messageType,
+  replyToMessageId = "",
+  replyPreview = "",
+}) {
+  const trimmedType = String(messageType || "").trim();
+  if (!["Photo", "Video", "Document"].includes(trimmedType)) {
+    throw new Error("Unsupported attachment type.");
+  }
+  if (!PARTICIPANT_ID_PATTERN.test(staffId)) {
+    throw new Error("Staff ID is missing or invalid.");
+  }
+  if (!/^U\d{5}$/.test(patientId)) {
+    throw new Error("Patient ID is missing or invalid.");
+  }
+
+  const validationError = validateMediaMessageFile(file, trimmedType);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  await assertConversationReady(conversationId);
+
+  const messageId = await reserveMessageId();
+  const now = serverTimestamp();
+  let content = "";
+  let filePath = "";
+
+  let uploadFile = file;
+  if (trimmedType === "Photo") {
+    uploadFile = await compressPhotoForInlineStorage(file);
+  }
+
+  const canStorePhotoInline =
+    trimmedType === "Photo" && uploadFile.size <= INLINE_PHOTO_MAX_BYTES;
+
+  if (canStorePhotoInline) {
+    const fileData = await readFileAsDataUrl(uploadFile);
+    if (!fileData.startsWith("data:")) {
+      throw new Error("Could not prepare photo for sending.");
+    }
+    content = encodeInlineMediaContent({
+      fileData,
+      fileName: uploadFile.name,
+      mimeType: uploadFile.type || "image/jpeg",
+    });
+  } else {
+    filePath = buildChatMediaStoragePath(
+      conversationId,
+      messageId,
+      uploadFile.name,
+    );
+    const storageRef = ref(storage, filePath);
+
+    try {
+      await uploadBytes(storageRef, uploadFile, {
+        contentType: uploadFile.type || "application/octet-stream",
+      });
+    } catch (error) {
+      const code = error?.code || "";
+      if (code === "storage/unauthorized" || code === "storage/unauthenticated") {
+        throw new Error(
+          "Upload blocked. Enable Firebase Storage and deploy storage.rules.",
+        );
+      }
+      throw error;
+    }
+
+    let downloadUrl = "";
+    try {
+      downloadUrl = await getDownloadURL(storageRef);
+    } catch (error) {
+      throw new Error(error?.message || "Could not get a download link for the file.");
+    }
+
+    content = encodeMediaContent({
+      url: downloadUrl,
+      fileName: uploadFile.name,
+      mimeType: uploadFile.type || "",
+    });
+  }
+
+  const messagePayload = {
+    messageId,
+    conversationId,
+    messageType: trimmedType,
+    content,
+    callDuration: null,
+    timestamp: now,
+    deliveryStatus: "Sent",
+    senderId: staffId,
+    receiverId: patientId,
+    hiddenFor: [],
+    deletedForEveryone: false,
+  };
+  if (filePath) {
+    messagePayload.filePath = filePath;
+  }
+  await appendReplyFields(messagePayload, { replyToMessageId, replyPreview });
+
+  await setDoc(doc(db, MESSAGES_COLLECTION, messageId), messagePayload);
+
+  const preview = formatMessagePreview({
+    messageType: trimmedType,
+    content,
+  });
+
+  return {
+    messageId,
+    preview,
+    time: formatChatListTime(new Date()),
+    messageType: trimmedType,
+    content,
+  };
+}
+
+export async function fetchMessageById(messageId) {
+  const trimmedId = String(messageId || "").trim();
+  if (!MESSAGE_ID_PATTERN.test(trimmedId)) {
+    throw new Error("Invalid message ID.");
+  }
+  const snap = await getDoc(doc(db, MESSAGES_COLLECTION, trimmedId));
+  if (!snap.exists()) {
+    throw new Error("Message not found.");
+  }
+  return mapMessageDoc(snap);
+}
+
+export async function fetchForwardTargets(staffId) {
+  const trimmedStaffId = String(staffId || "").trim();
+  if (!PARTICIPANT_ID_PATTERN.test(trimmedStaffId)) {
+    throw new Error("Staff ID is missing or invalid.");
+  }
+  const patients = await fetchUsersForConversation();
+  return patients
+    .filter(
+      (patient) =>
+        isPatientAccountActive(patient) && patient.patientId && patient.patientId !== "—",
+    )
+    .map((patient) => ({
+      patientId: patient.patientId,
+      name: patient.name || patient.patientId,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function hideMessageForUser(messageId, userId) {
+  const trimmedId = String(messageId || "").trim();
+  const viewerId = String(userId || "").trim();
+  if (!MESSAGE_ID_PATTERN.test(trimmedId)) {
+    throw new Error("Invalid message ID.");
+  }
+  if (!PARTICIPANT_ID_PATTERN.test(viewerId)) {
+    throw new Error("User ID is missing or invalid.");
+  }
+  await updateDoc(doc(db, MESSAGES_COLLECTION, trimmedId), {
+    hiddenFor: arrayUnion(viewerId),
+  });
+}
+
+export async function deleteMessageForEveryone(messageId, staffId) {
+  const trimmedId = String(messageId || "").trim();
+  const actorId = String(staffId || "").trim();
+  if (!MESSAGE_ID_PATTERN.test(trimmedId)) {
+    throw new Error("Invalid message ID.");
+  }
+  if (!PARTICIPANT_ID_PATTERN.test(actorId)) {
+    throw new Error("Staff ID is missing or invalid.");
+  }
+  await updateDoc(doc(db, MESSAGES_COLLECTION, trimmedId), {
+    deletedForEveryone: true,
+    deletedAt: serverTimestamp(),
+    deletedBy: actorId,
+  });
+}
+
+async function persistForwardedMessage({
+  staffId,
+  targetPatientId,
+  sourceMessage,
+}) {
+  const thread = await createConversationForStaffPatient({
+    staffId,
+    patientId: targetPatientId,
+  });
+  const messageId = await reserveMessageId();
+  const now = serverTimestamp();
+  const payload = {
+    messageId,
+    conversationId: thread.conversationId,
+    messageType: sourceMessage.messageType,
+    content: sourceMessage.content,
+    callDuration: sourceMessage.callDuration ?? null,
+    timestamp: now,
+    deliveryStatus: "Sent",
+    senderId: staffId,
+    receiverId: targetPatientId,
+    hiddenFor: [],
+    deletedForEveryone: false,
+    forwardedFromMessageId: sourceMessage.messageId,
+    forwardedFromConversationId: sourceMessage.conversationId,
+  };
+  if (sourceMessage.filePath) {
+    payload.filePath = sourceMessage.filePath;
+  }
+  await setDoc(doc(db, MESSAGES_COLLECTION, messageId), payload);
+  return {
+    messageId,
+    conversationId: thread.conversationId,
+    patientName: thread.name,
+  };
+}
+
+export async function forwardMessageToPatients({
+  messageId,
+  staffId,
+  patientIds,
+}) {
+  const trimmedId = String(messageId || "").trim();
+  const actorId = String(staffId || "").trim();
+  const targets = [...new Set((patientIds || []).map((id) => String(id || "").trim()))].filter(
+    (id) => /^U\d{5}$/.test(id),
+  );
+  if (!MESSAGE_ID_PATTERN.test(trimmedId)) {
+    throw new Error("Invalid message ID.");
+  }
+  if (!PARTICIPANT_ID_PATTERN.test(actorId)) {
+    throw new Error("Staff ID is missing or invalid.");
+  }
+  if (targets.length === 0) {
+    throw new Error("Select at least one patient to forward to.");
+  }
+
+  const sourceMessage = await fetchMessageById(trimmedId);
+  if (sourceMessage.deletedForEveryone) {
+    throw new Error("Deleted messages cannot be forwarded.");
+  }
+
+  const results = [];
+  for (const targetPatientId of targets) {
+    results.push(
+      await persistForwardedMessage({
+        staffId: actorId,
+        targetPatientId,
+        sourceMessage,
+      }),
+    );
+  }
+  return results;
 }
 
 export async function createConversationForStaffPatient({ staffId, patientId }) {

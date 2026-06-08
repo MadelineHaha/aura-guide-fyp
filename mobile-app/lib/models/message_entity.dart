@@ -12,6 +12,12 @@ class MessageEntity {
     required this.senderId,
     required this.receiverId,
     this.callDuration,
+    this.deliveredAt,
+    this.readAt,
+    this.hiddenFor = const [],
+    this.deletedForEveryone = false,
+    this.replyPreview,
+    this.forwardedFromMessageId,
   });
 
   static final RegExp messageIdPattern = RegExp(r'^G\d{5}$');
@@ -34,6 +40,12 @@ class MessageEntity {
   final String senderId;
   final String receiverId;
   final int? callDuration;
+  final dynamic deliveredAt;
+  final dynamic readAt;
+  final List<String> hiddenFor;
+  final bool deletedForEveryone;
+  final String? replyPreview;
+  final String? forwardedFromMessageId;
 
   bool get isValidMessageId => messageIdPattern.hasMatch(messageId);
 
@@ -48,6 +60,15 @@ class MessageEntity {
       'deliveryStatus': deliveryStatus,
       'senderId': senderId,
       'receiverId': receiverId,
+      if (deliveredAt != null) 'deliveredAt': deliveredAt,
+      if (readAt != null) 'readAt': readAt,
+      if (hiddenFor.isNotEmpty) 'hiddenFor': hiddenFor,
+      if (deletedForEveryone) 'deletedForEveryone': deletedForEveryone,
+      if (replyPreview != null && replyPreview!.isNotEmpty)
+        'replyPreview': replyPreview,
+      if (forwardedFromMessageId != null &&
+          forwardedFromMessageId!.isNotEmpty)
+        'forwardedFromMessageId': forwardedFromMessageId,
     };
   }
 
@@ -78,6 +99,11 @@ class MessageEntity {
       callDuration = rawDuration.toInt();
     }
 
+    final hiddenRaw = data['hiddenFor'];
+    final hiddenFor = hiddenRaw is List
+        ? hiddenRaw.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList()
+        : <String>[];
+
     return MessageEntity(
       messageId: messageId,
       conversationId: conversationId,
@@ -89,6 +115,13 @@ class MessageEntity {
       senderId: senderId,
       receiverId: receiverId,
       callDuration: callDuration,
+      deliveredAt: data['deliveredAt'],
+      readAt: data['readAt'],
+      hiddenFor: hiddenFor,
+      deletedForEveryone: data['deletedForEveryone'] == true,
+      replyPreview: (data['replyPreview'] as String?)?.trim(),
+      forwardedFromMessageId:
+          (data['forwardedFromMessageId'] as String?)?.trim(),
     );
   }
 

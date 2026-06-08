@@ -2,6 +2,7 @@ import { initStaffAuth } from "./staff-shell.js";
 import { subscribePatients } from "./user-patients-service.js";
 import {
   createAppointment,
+  completeAppointment,
   dateToInputValue,
   subscribeAppointments,
   timeToInputValue,
@@ -10,6 +11,10 @@ import {
   updateAppointment,
   updateAppointmentStatus,
 } from "./appointments-service.js";
+import {
+  defaultMedicationEndDate,
+  reminderCountForFrequency,
+} from "./medications-service.js";
 import { releaseFirestoreListener } from "./firestore-realtime.js";
 
 const PAGE_SIZE = 4;
@@ -18,6 +23,7 @@ const tbodyEl = document.getElementById("appointments-tbody");
 const emptyEl = document.getElementById("appointments-empty");
 const countEl = document.getElementById("appointments-count");
 const paginationEl = document.getElementById("appointments-pagination");
+const actionsHeaderEl = document.getElementById("appointments-actions-header");
 const searchEl = document.getElementById("appointment-search");
 const filterTabs = document.querySelectorAll(".filter-tab");
 
@@ -55,6 +61,7 @@ let currentPage = 1;
 let isSaving = false;
 let editingAppointmentId = null;
 let acceptingAppointmentId = null;
+let completingAppointmentId = null;
 
 const acceptModalEl = document.getElementById("accept-appointment-modal");
 const acceptFormEl = document.getElementById("accept-appointment-form");
@@ -69,6 +76,38 @@ const acceptDetailStatusEl = document.getElementById("accept-detail-status");
 const acceptLocationEl = document.getElementById("accept-appointment-location");
 const acceptErrorEl = document.getElementById("accept-appointment-error");
 const acceptSubmitBtn = document.getElementById("accept-appointment-submit");
+
+const completeModalEl = document.getElementById("complete-appointment-modal");
+const completeFormEl = document.getElementById("complete-appointment-form");
+const completeCloseBtn = document.getElementById("complete-appointment-close");
+const completeDetailPatientEl = document.getElementById("complete-detail-patient");
+const completeDetailDatetimeEl = document.getElementById("complete-detail-datetime");
+const completeDetailTypeEl = document.getElementById("complete-detail-type");
+const completeClinicalSummaryEl = document.getElementById("complete-clinical-summary");
+const completeRecommendationEl = document.getElementById("complete-recommendation");
+const completeFollowUpDateEl = document.getElementById("complete-follow-up-date");
+const completeAddMedicationEl = document.getElementById("complete-add-medication");
+const completeMedicationFieldsEl = document.getElementById("complete-medication-fields");
+const completeMedicationsListEl = document.getElementById("complete-medications-list");
+const completeAddMedRowBtn = document.getElementById("complete-add-med-row");
+const completeErrorEl = document.getElementById("complete-appointment-error");
+const completeSubmitBtn = document.getElementById("complete-appointment-submit");
+
+const viewModalEl = document.getElementById("view-appointment-modal");
+const viewCloseBtn = document.getElementById("view-appointment-close");
+const viewDoneBtn = document.getElementById("view-appointment-done");
+const viewDetailPatientEl = document.getElementById("view-detail-patient");
+const viewDetailDatetimeEl = document.getElementById("view-detail-datetime");
+const viewDetailTypeEl = document.getElementById("view-detail-type");
+const viewDetailLocationEl = document.getElementById("view-detail-location");
+const viewClinicalSummaryEl = document.getElementById("view-clinical-summary");
+const viewRecommendationEl = document.getElementById("view-recommendation");
+const viewFollowUpDateEl = document.getElementById("view-follow-up-date");
+
+function formatFollowUpDateDisplay(value) {
+  const trimmed = String(value || "").trim();
+  return trimmed || "No follow-up date";
+}
 
 function statusLabel(status) {
   if (status === "done") return "Done";
@@ -201,6 +240,20 @@ function renderPendingActions(apt) {
 function renderScheduledActions(apt) {
   const markDoneEnabled = canMarkDone(apt.status);
   const isCancelled = apt.status === "cancelled";
+  const isDone = apt.status === "done";
+
+  if (isDone) {
+    return `
+      <div class="row-actions">
+        <button type="button" class="row-action row-action--edit" data-action="details" data-id="${apt.id}" aria-label="View appointment details">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        </button>
+      </div>
+    `;
+  }
 
   return `
     <div class="row-actions">
@@ -276,6 +329,10 @@ function renderTable() {
 
   const start = (currentPage - 1) * PAGE_SIZE;
   const pageItems = filtered.slice(start, start + PAGE_SIZE);
+
+  if (actionsHeaderEl) {
+    actionsHeaderEl.textContent = statusFilter === "done" ? "Details" : "Actions";
+  }
 
   countEl.textContent = `${total} appointment${total === 1 ? "" : "s"}`;
   emptyEl.textContent = "No appointments match your search.";
@@ -371,14 +428,439 @@ function openEditAppointmentModal(appointmentId) {
   document.getElementById("add-appointment-type").focus();
 }
 
-async function handleMarkDone(appointmentId) {
+function defaultReminderTimesForFrequency(frequency) {
+  switch (frequency) {
+    case "Twice daily":
+      return ["08:00", "20:00"];
+    case "Three times daily":
+      return ["08:00", "14:00", "20:00"];
+    case "Weekly":
+      return ["09:00"];
+    default:
+      return ["08:00"];
+  }
+}
+
+function defaultMedicationRowValues() {
+  const today = todayDateString();
+  const frequency = "Once daily";
+  return {
+    name: "",
+    dosage: "",
+    frequency,
+    instructions: "",
+    startDate: today,
+    endDate: defaultMedicationEndDate(today),
+    reminderTimes: defaultReminderTimesForFrequency(frequency),
+  };
+}
+
+function reminderTimesLabelForFrequency(frequency) {
+  const count = reminderCountForFrequency(frequency);
+  if (frequency === "Weekly") return "Weekly reminder time";
+  if (count === 1) return "Reminder time";
+  return `Reminder times (${count} per day)`;
+}
+
+function syncMedicationReminderTimes(
+  card,
+  preserveExisting = true,
+  initialTimes = null,
+) {
+  if (!card) return;
+
+  const frequencyEl = card.querySelector(".complete-med-frequency");
+  const container = card.querySelector(".complete-med-reminder-times");
+  const labelEl = card.querySelector(".complete-med-reminder-times-label");
+  if (!frequencyEl || !container) return;
+
+  const frequency = frequencyEl.value;
+  const count = reminderCountForFrequency(frequency);
+  const defaults = defaultReminderTimesForFrequency(frequency);
+  const existing = preserveExisting
+    ? [...container.querySelectorAll(".complete-med-reminder-time")].map(
+        (el) => el.value,
+      )
+    : initialTimes || defaults;
+
+  if (labelEl) {
+    labelEl.textContent = reminderTimesLabelForFrequency(frequency);
+  }
+
+  container.innerHTML = "";
+  for (let i = 0; i < count; i += 1) {
+    const value = existing[i] || defaults[i] || "08:00";
+    container.insertAdjacentHTML(
+      "beforeend",
+      `
+        <label class="complete-med-reminder-time-row">
+          <span class="complete-med-reminder-time-label">Time ${i + 1}</span>
+          <input
+            class="form-field-input complete-med-reminder-time"
+            type="time"
+            value="${escapeHtml(value)}"
+            required
+          />
+        </label>
+      `,
+    );
+  }
+}
+
+function medicationFrequencyOptions(selected = "") {
+  const options = [
+    { value: "", label: "Select frequency" },
+    { value: "Once daily", label: "Once daily" },
+    { value: "Twice daily", label: "Twice daily" },
+    { value: "Three times daily", label: "Three times daily" },
+    { value: "Weekly", label: "Weekly" },
+  ];
+  return options
+    .map(
+      (opt) =>
+        `<option value="${escapeHtml(opt.value)}"${opt.value === selected ? " selected" : ""}>${escapeHtml(opt.label)}</option>`,
+    )
+    .join("");
+}
+
+function medicationEndMinDate(startValue, today = todayDateString()) {
+  if (startValue && startValue > today) return startValue;
+  return today;
+}
+
+function syncMedicationDateConstraints(card) {
+  if (!card) return;
+
+  const today = todayDateString();
+  const startEl = card.querySelector(".complete-med-start");
+  const endEl = card.querySelector(".complete-med-end");
+  if (!startEl || !endEl) return;
+
+  startEl.min = today;
+  startEl.setAttribute("min", today);
+  if (startEl.value && startEl.value < today) {
+    startEl.value = today;
+  }
+
+  const endMin = medicationEndMinDate(startEl.value, today);
+  endEl.min = endMin;
+  endEl.setAttribute("min", endMin);
+  if (endEl.value && endEl.value < endMin) {
+    endEl.value = endMin;
+  }
+}
+
+function syncAllMedicationDateConstraints() {
+  for (const card of completeMedicationsListEl.querySelectorAll(
+    ".complete-med-card",
+  )) {
+    syncMedicationDateConstraints(card);
+  }
+}
+
+function createMedicationRowHtml(index, values = defaultMedicationRowValues()) {
+  const showRemove = completeMedicationsListEl.children.length > 0;
+  const today = todayDateString();
+  return `
+    <article class="complete-med-card" data-med-index="${index}">
+      <div class="complete-med-card-header">
+        <h3 class="complete-med-card-title">Medication ${index + 1}</h3>
+        <button
+          type="button"
+          class="complete-med-remove-btn"
+          data-action="remove-med"
+          aria-label="Remove medication ${index + 1}"
+          ${showRemove ? "" : "hidden"}
+        >
+          Remove
+        </button>
+      </div>
+      <div class="add-patient-grid">
+        <label class="form-field form-field--full">
+          <span class="form-field-label">Medication Name</span>
+          <input
+            class="form-field-input complete-med-name"
+            type="text"
+            placeholder="e.g. Vitamin D 1000IU"
+            value="${escapeHtml(values.name)}"
+            required
+          />
+        </label>
+        <label class="form-field">
+          <span class="form-field-label">Dosage</span>
+          <input
+            class="form-field-input complete-med-dosage"
+            type="text"
+            placeholder="e.g. 1 capsule"
+            value="${escapeHtml(values.dosage)}"
+            required
+          />
+        </label>
+        <label class="form-field">
+          <span class="form-field-label">Frequency</span>
+          <select class="form-field-input form-field-select complete-med-frequency" required>
+            ${medicationFrequencyOptions(values.frequency)}
+          </select>
+        </label>
+        <label class="form-field form-field--full">
+          <span class="form-field-label">Instructions</span>
+          <textarea
+            class="form-field-input form-field-textarea complete-med-instructions"
+            rows="2"
+            placeholder="How the patient should take it"
+            required
+          >${escapeHtml(values.instructions)}</textarea>
+        </label>
+        <label class="form-field">
+          <span class="form-field-label">Start Date</span>
+          <input
+            class="form-field-input complete-med-start"
+            type="date"
+            min="${escapeHtml(today)}"
+            value="${escapeHtml(values.startDate)}"
+            required
+          />
+        </label>
+        <label class="form-field">
+          <span class="form-field-label">End Date</span>
+          <input
+            class="form-field-input complete-med-end"
+            type="date"
+            min="${escapeHtml(today)}"
+            value="${escapeHtml(values.endDate)}"
+            required
+          />
+          <span class="form-field-hint">Cannot be before today or the start date.</span>
+        </label>
+        <div class="form-field form-field--full complete-med-reminder-times-field">
+          <span class="form-field-label complete-med-reminder-times-label">${escapeHtml(reminderTimesLabelForFrequency(values.frequency || "Once daily"))}</span>
+          <div class="complete-med-reminder-times"></div>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function refreshMedicationRowLabels() {
+  const cards = [...completeMedicationsListEl.querySelectorAll(".complete-med-card")];
+  cards.forEach((card, index) => {
+    card.dataset.medIndex = String(index);
+    const title = card.querySelector(".complete-med-card-title");
+    if (title) title.textContent = `Medication ${index + 1}`;
+    const removeBtn = card.querySelector('[data-action="remove-med"]');
+    if (removeBtn) removeBtn.hidden = cards.length <= 1;
+  });
+}
+
+function addMedicationRow(values = defaultMedicationRowValues()) {
+  const index = completeMedicationsListEl.children.length;
+  completeMedicationsListEl.insertAdjacentHTML(
+    "beforeend",
+    createMedicationRowHtml(index, values),
+  );
+  const card = completeMedicationsListEl.lastElementChild;
+  syncMedicationDateConstraints(card);
+  syncMedicationReminderTimes(card, false, values.reminderTimes);
+  refreshMedicationRowLabels();
+}
+
+function resetMedicationRows() {
+  completeMedicationsListEl.innerHTML = "";
+  addMedicationRow();
+}
+
+function setMedicationFieldsVisible(visible) {
+  completeMedicationFieldsEl.hidden = !visible;
+  if (visible && completeMedicationsListEl.children.length === 0) {
+    resetMedicationRows();
+  }
+  if (visible) {
+    syncAllMedicationDateConstraints();
+  }
+}
+
+function readMedicationFromCard(card) {
+  return {
+    name: card.querySelector(".complete-med-name")?.value.trim() || "",
+    dosage: card.querySelector(".complete-med-dosage")?.value.trim() || "",
+    frequency: card.querySelector(".complete-med-frequency")?.value || "",
+    instructions: card.querySelector(".complete-med-instructions")?.value.trim() || "",
+    startDate: card.querySelector(".complete-med-start")?.value || "",
+    endDate: card.querySelector(".complete-med-end")?.value || "",
+    reminderTimes: [
+      ...card.querySelectorAll(".complete-med-reminder-time"),
+    ].map((el) => el.value.trim()),
+  };
+}
+
+function collectMedicationsFromForm() {
+  const cards = [...completeMedicationsListEl.querySelectorAll(".complete-med-card")];
+  return cards.map((card, index) => {
+    const med = readMedicationFromCard(card);
+    return { index, ...med };
+  });
+}
+
+function validateMedicationRows(rows) {
+  const today = todayDateString();
+
+  for (const row of rows) {
+    const label = `Medication ${row.index + 1}`;
+    if (!row.name) return `${label}: name is required.`;
+    if (!row.dosage) return `${label}: dosage is required.`;
+    if (!row.frequency) return `${label}: frequency is required.`;
+    if (!row.instructions) return `${label}: instructions are required.`;
+    if (!row.startDate) return `${label}: start date is required.`;
+    if (!row.endDate) return `${label}: end date is required.`;
+    const expectedTimes = reminderCountForFrequency(row.frequency);
+    if (row.reminderTimes.length !== expectedTimes) {
+      return `${label}: provide ${expectedTimes} reminder time(s) for ${row.frequency}.`;
+    }
+    if (row.reminderTimes.some((time) => !time)) {
+      return `${label}: all reminder times are required.`;
+    }
+    if (new Set(row.reminderTimes).size !== row.reminderTimes.length) {
+      return `${label}: reminder times must be different from each other.`;
+    }
+    if (row.startDate < today) {
+      return `${label}: start date cannot be in the past.`;
+    }
+    const minEndDate = medicationEndMinDate(row.startDate, today);
+    if (row.endDate < minEndDate) {
+      return row.endDate < today
+        ? `${label}: end date cannot be in the past.`
+        : `${label}: end date must be on or after the start date.`;
+    }
+  }
+  return null;
+}
+
+function closeCompleteModal() {
+  completeModalEl.hidden = true;
+  document.body.classList.remove("modal-open");
+  completingAppointmentId = null;
+  completeAddMedicationEl.checked = false;
+  completeMedicationsListEl.innerHTML = "";
+  setMedicationFieldsVisible(false);
+}
+
+function openCompleteModal(appointmentId) {
   const apt = getAppointmentById(appointmentId);
   if (!apt || !canMarkDone(apt.status)) return;
 
+  completingAppointmentId = appointmentId;
+  completeErrorEl.hidden = true;
+  completeErrorEl.textContent = "";
+  completeFormEl.reset();
+  completeAddMedicationEl.checked = false;
+  completeMedicationsListEl.innerHTML = "";
+  setMedicationFieldsVisible(false);
+
+  completeDetailPatientEl.textContent = apt.patientName || "—";
+  completeDetailDatetimeEl.textContent = apt.datetime || "—";
+  completeDetailTypeEl.textContent = apt.appointmentType || "—";
+  completeFollowUpDateEl.value = "";
+  completeFollowUpDateEl.min = todayDateString();
+
+  completeModalEl.hidden = false;
+  document.body.classList.add("modal-open");
+  completeClinicalSummaryEl.focus();
+}
+
+function closeViewModal() {
+  viewModalEl.hidden = true;
+  document.body.classList.remove("modal-open");
+}
+
+function openViewModal(appointmentId) {
+  const apt = getAppointmentById(appointmentId);
+  if (!apt || apt.status !== "done") return;
+
+  viewDetailPatientEl.textContent = `${apt.patientName} (${apt.patientId})`;
+  viewDetailDatetimeEl.textContent = apt.datetime || "—";
+  viewDetailTypeEl.textContent = apt.appointmentType || "—";
+  viewDetailLocationEl.textContent = apt.location || "—";
+  viewClinicalSummaryEl.textContent = apt.clinicalSummary || "—";
+  viewRecommendationEl.textContent = apt.recommendation || "—";
+  viewFollowUpDateEl.textContent = formatFollowUpDateDisplay(apt.followUpDate);
+
+  viewModalEl.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+async function handleCompleteSubmit(event) {
+  event.preventDefault();
+  if (!completingAppointmentId || isSaving) return;
+
+  const apt = getAppointmentById(completingAppointmentId);
+  if (!apt) return;
+
+  const staffId = staffProfile?.staffID?.trim() || apt.staffId || "";
+  const userId = apt.patientId;
+  const clinicalSummary = completeClinicalSummaryEl.value.trim();
+  const recommendation = completeRecommendationEl.value.trim();
+  const followUpDate = completeFollowUpDateEl.value.trim();
+  const addMedications = completeAddMedicationEl.checked;
+
+  if (!clinicalSummary) {
+    completeErrorEl.textContent = "Clinical summary is required.";
+    completeErrorEl.hidden = false;
+    return;
+  }
+
+  let medications = [];
+  if (addMedications) {
+    syncAllMedicationDateConstraints();
+    const rows = collectMedicationsFromForm();
+    const validationError = validateMedicationRows(rows);
+    if (validationError) {
+      completeErrorEl.textContent = validationError;
+      completeErrorEl.hidden = false;
+      return;
+    }
+
+    medications = rows.map((row) => ({
+      name: row.name,
+      dosage: row.dosage,
+      frequency: row.frequency,
+      instructions: row.instructions,
+      startDate: row.startDate,
+      endDate: row.endDate,
+      reminderDate: row.startDate,
+      reminderTimes: row.reminderTimes,
+    }));
+  }
+
+  isSaving = true;
+  completeSubmitBtn.disabled = true;
+  const originalLabel = completeSubmitBtn.innerHTML;
+  completeSubmitBtn.textContent = "Saving…";
+
   try {
-    await updateAppointmentStatus(appointmentId, "Done");
+    await completeAppointment({
+      appointmentId: completingAppointmentId,
+      clinicalSummary,
+      recommendation,
+      followUpDate,
+      staffId,
+      userId,
+      medications,
+    });
+    closeCompleteModal();
   } catch (error) {
-    alert(error?.message || "Could not mark appointment as done.");
+    const code = error?.code;
+    if (code === "permission-denied") {
+      completeErrorEl.textContent =
+        "Permission denied. Deploy Firestore rules for appointments and medications.";
+    } else {
+      completeErrorEl.textContent =
+        error?.message || "Could not complete appointment. Please try again.";
+    }
+    completeErrorEl.hidden = false;
+  } finally {
+    isSaving = false;
+    completeSubmitBtn.disabled = false;
+    completeSubmitBtn.innerHTML = originalLabel;
   }
 }
 
@@ -543,7 +1025,9 @@ tbodyEl.addEventListener("click", (event) => {
   } else if (action === "edit") {
     openEditAppointmentModal(appointmentId);
   } else if (action === "done") {
-    handleMarkDone(appointmentId);
+    openCompleteModal(appointmentId);
+  } else if (action === "details") {
+    openViewModal(appointmentId);
   } else if (action === "cancel") {
     handleCancel(appointmentId);
   }
@@ -580,9 +1064,62 @@ acceptModalEl.addEventListener("click", (event) => {
   if (event.target === acceptModalEl) closeAcceptModal();
 });
 
+completeCloseBtn.addEventListener("click", closeCompleteModal);
+completeFormEl.addEventListener("submit", handleCompleteSubmit);
+completeAddMedicationEl.addEventListener("change", () => {
+  setMedicationFieldsVisible(completeAddMedicationEl.checked);
+});
+
+completeAddMedRowBtn.addEventListener("click", () => {
+  addMedicationRow();
+});
+
+completeMedicationsListEl.addEventListener("click", (event) => {
+  const removeBtn = event.target.closest('[data-action="remove-med"]');
+  if (!removeBtn) return;
+  const card = removeBtn.closest(".complete-med-card");
+  if (!card || completeMedicationsListEl.children.length <= 1) return;
+  card.remove();
+  refreshMedicationRowLabels();
+});
+
+function handleMedicationDateFieldEvent(event) {
+  const target = event.target;
+  const card = target.closest(".complete-med-card");
+  if (!card) return;
+
+  if (target.classList.contains("complete-med-frequency")) {
+    syncMedicationReminderTimes(card, true);
+    return;
+  }
+
+  if (
+    target.classList.contains("complete-med-start") ||
+    target.classList.contains("complete-med-end")
+  ) {
+    syncMedicationDateConstraints(card);
+  }
+}
+
+completeMedicationsListEl.addEventListener("change", handleMedicationDateFieldEvent);
+completeMedicationsListEl.addEventListener("input", handleMedicationDateFieldEvent);
+completeMedicationsListEl.addEventListener("blur", handleMedicationDateFieldEvent, true);
+
+completeModalEl.addEventListener("click", (event) => {
+  if (event.target === completeModalEl) closeCompleteModal();
+});
+
+viewCloseBtn.addEventListener("click", closeViewModal);
+viewDoneBtn.addEventListener("click", closeViewModal);
+viewModalEl.addEventListener("click", (event) => {
+  if (event.target === viewModalEl) closeViewModal();
+});
+
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !formModalEl.hidden) closeFormModal();
   if (event.key === "Escape" && !acceptModalEl.hidden) closeAcceptModal();
+  if (event.key === "Escape" && !completeModalEl.hidden) closeCompleteModal();
+  if (event.key === "Escape" && !viewModalEl.hidden) closeViewModal();
 });
 
 dateInputEl.min = todayDateString();

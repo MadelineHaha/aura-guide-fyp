@@ -20,6 +20,15 @@ import {
   subscribePatients,
   updatePatient,
 } from "./user-patients-service.js";
+import {
+  createMedicationWithReminder,
+  defaultMedicationEndDate,
+  fetchMedicationWithReminders,
+  isMedicationsAccessError,
+  reminderCountForFrequency,
+  subscribeMedicationsByUserId,
+  updateMedicationWithReminder,
+} from "./medications-service.js";
 import { releaseFirestoreListener } from "./firestore-realtime.js";
 
 const PAGE_SIZE = 4;
@@ -36,6 +45,30 @@ const modalPatientEl = document.getElementById("health-records-patient");
 const modalListEl = document.getElementById("health-records-list");
 const modalEmptyEl = document.getElementById("health-records-empty");
 const healthModalCloseBtn = document.getElementById("health-records-close");
+
+const medicationsModalEl = document.getElementById("medications-modal");
+const medicationsPatientEl = document.getElementById("medications-patient");
+const medicationsListEl = document.getElementById("medications-list");
+const medicationsEmptyEl = document.getElementById("medications-empty");
+const medicationsCloseBtn = document.getElementById("medications-close");
+const addMedicationModalEl = document.getElementById("add-medication-modal");
+const addMedicationFormEl = document.getElementById("add-medication-form");
+const addMedicationPatientEl = document.getElementById("add-medication-patient");
+const addMedicationCloseBtn = document.getElementById("add-medication-close");
+const addMedicationNameEl = document.getElementById("add-medication-name");
+const addMedicationDosageEl = document.getElementById("add-medication-dosage");
+const addMedicationFrequencyEl = document.getElementById("add-medication-frequency");
+const addMedicationInstructionsEl = document.getElementById("add-medication-instructions");
+const addMedicationStartEl = document.getElementById("add-medication-start");
+const addMedicationEndEl = document.getElementById("add-medication-end");
+const addMedicationReminderTimesLabelEl = document.getElementById(
+  "add-medication-reminder-times-label",
+);
+const addMedicationReminderTimesEl = document.getElementById("add-medication-reminder-times");
+const addMedicationErrorEl = document.getElementById("add-medication-error");
+const addMedicationSubmitBtn = document.getElementById("add-medication-submit");
+const addMedicationSaveLabelEl = document.getElementById("add-medication-save-label");
+const addMedicationTitleEl = document.getElementById("add-medication-title");
 const addHealthRecordModalEl = document.getElementById("add-health-record-modal");
 const addHealthRecordFormEl = document.getElementById("add-health-record-form");
 const addHealthRecordPatientEl = document.getElementById("add-health-record-patient");
@@ -102,9 +135,12 @@ let statusFilter = "all";
 let searchQuery = "";
 let currentPage = 1;
 let activePatientId = null;
+let activeMedicationsPatientId = null;
 let isSavingPatient = false;
 let isSavingHealthRecord = false;
+let isSavingMedication = false;
 let editingHealthRecordId = null;
+let editingMedicationId = null;
 let loggedInStaffName = "Staff";
 let loggedInStaffId = "";
 
@@ -161,6 +197,44 @@ function populateHealthRecordFormFromRecord(record) {
   addHealthRecordFileNameEl.classList.add("has-file");
 }
 
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/"/g, "&quot;");
+}
+
+function renderMedicationCard(medication) {
+  const statusTag = medication.active ? "ACTIVE" : "ENDED";
+  const statusClass = medication.active
+    ? "medication-tag--active"
+    : "medication-tag--ended";
+
+  return `
+    <article class="health-record-card medication-card" data-medication-id="${escapeHtml(medication.medicationId)}">
+      <span class="health-record-tag ${statusClass}">${statusTag}</span>
+      <p class="health-record-description">${escapeHtml(medication.name)}</p>
+      <p class="medication-meta">${escapeHtml(medication.dosage)} · ${escapeHtml(medication.frequency)}</p>
+      <p class="medication-dates">${escapeHtml(medication.startDate)} → ${escapeHtml(medication.endDate)}</p>
+      ${
+        medication.instructions
+          ? `<p class="medication-instructions">${escapeHtml(medication.instructions)}</p>`
+          : ""
+      }
+      <footer class="health-record-footer">
+        <span class="health-record-doctor">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+            <circle cx="12" cy="7" r="4" />
+          </svg>
+          ${escapeHtml(medication.doctor)}
+        </span>
+        <button type="button" class="btn-record-edit btn-medication-edit" data-medication-id="${escapeHtml(medication.medicationId)}">Edit</button>
+      </footer>
+    </article>
+  `;
+}
+
 function renderRecordCard(record) {
   const recordId = record.recordId || "";
   return `
@@ -182,6 +256,323 @@ function renderRecordCard(record) {
 }
 
 let unsubscribeHealthRecords = null;
+let unsubscribeMedications = null;
+
+function renderMedicationsList(medications) {
+  if (medications.length === 0) {
+    medicationsListEl.innerHTML = "";
+    medicationsEmptyEl.hidden = false;
+    medicationsEmptyEl.textContent = "No medication yet.";
+    return;
+  }
+  medicationsEmptyEl.hidden = true;
+  medicationsListEl.innerHTML = medications.map(renderMedicationCard).join("");
+}
+
+function stopMedicationsRealtime() {
+  releaseFirestoreListener(unsubscribeMedications);
+  unsubscribeMedications = null;
+}
+
+function startMedicationsRealtime(patientId) {
+  stopMedicationsRealtime();
+  const patient = getPatientById(patientId);
+  if (!patient?.patientId || patient.patientId === "—") {
+    medicationsListEl.innerHTML = "";
+    medicationsEmptyEl.hidden = false;
+    medicationsEmptyEl.textContent = "Patient User ID is missing.";
+    return;
+  }
+
+  medicationsListEl.innerHTML = "";
+  medicationsEmptyEl.hidden = true;
+
+  unsubscribeMedications = subscribeMedicationsByUserId(
+    patient.patientId,
+    (medications) => {
+      renderMedicationsList(medications);
+    },
+    (error) => {
+      medicationsListEl.innerHTML = "";
+      medicationsEmptyEl.hidden = false;
+      if (isMedicationsAccessError(error)) {
+        medicationsEmptyEl.textContent = "No medication yet.";
+      } else {
+        medicationsEmptyEl.textContent =
+          error?.message || "Could not load medications.";
+      }
+    },
+  );
+}
+
+function openMedicationsModal(patientId) {
+  const patient = getPatientById(patientId);
+  if (!patient) return;
+
+  activeMedicationsPatientId = patientId;
+  medicationsPatientEl.textContent = `Patient: ${patient.name}`;
+  medicationsModalEl.hidden = false;
+  syncBodyModalLock();
+  medicationsCloseBtn.focus();
+  startMedicationsRealtime(patientId);
+}
+
+function closeMedicationsModal() {
+  closeAddMedicationModal();
+  stopMedicationsRealtime();
+  medicationsModalEl.hidden = true;
+  syncBodyModalLock();
+  activeMedicationsPatientId = null;
+}
+
+function defaultReminderTimesForFrequency(frequency) {
+  switch (frequency) {
+    case "Twice daily":
+      return ["08:00", "20:00"];
+    case "Three times daily":
+      return ["08:00", "14:00", "20:00"];
+    case "Weekly":
+      return ["09:00"];
+    default:
+      return ["08:00"];
+  }
+}
+
+function reminderTimesLabelForFrequency(frequency) {
+  const count = reminderCountForFrequency(frequency);
+  if (frequency === "Weekly") return "Weekly reminder time";
+  if (count === 1) return "Reminder time";
+  return `Reminder times (${count} per day)`;
+}
+
+function medicationEndMinDate(startValue, today = todayDateString()) {
+  if (startValue && startValue > today) return startValue;
+  return today;
+}
+
+function syncAddMedicationReminderTimes(preserveExisting = true, initialTimes = null) {
+  const frequency = addMedicationFrequencyEl.value || "Once daily";
+  const count = reminderCountForFrequency(frequency);
+  const defaults = defaultReminderTimesForFrequency(frequency);
+  const existing = preserveExisting
+    ? [...addMedicationReminderTimesEl.querySelectorAll(".complete-med-reminder-time")].map(
+        (el) => el.value,
+      )
+    : initialTimes || defaults;
+
+  addMedicationReminderTimesLabelEl.textContent =
+    reminderTimesLabelForFrequency(frequency);
+
+  addMedicationReminderTimesEl.innerHTML = "";
+  for (let i = 0; i < count; i += 1) {
+    const value = existing[i] || defaults[i] || "08:00";
+    addMedicationReminderTimesEl.insertAdjacentHTML(
+      "beforeend",
+      `
+        <label class="complete-med-reminder-time-row">
+          <span class="complete-med-reminder-time-label">Time ${i + 1}</span>
+          <input
+            class="form-field-input complete-med-reminder-time"
+            type="time"
+            value="${escapeHtml(value)}"
+            required
+          />
+        </label>
+      `,
+    );
+  }
+}
+
+function syncAddMedicationDateConstraints(isEdit = Boolean(editingMedicationId)) {
+  const today = todayDateString();
+
+  if (isEdit) {
+    addMedicationStartEl.removeAttribute("min");
+    const endMin = addMedicationStartEl.value || today;
+    addMedicationEndEl.min = endMin;
+    addMedicationEndEl.setAttribute("min", endMin);
+    if (addMedicationEndEl.value && addMedicationEndEl.value < endMin) {
+      addMedicationEndEl.value = endMin;
+    }
+    return;
+  }
+
+  addMedicationStartEl.min = today;
+  addMedicationStartEl.setAttribute("min", today);
+  if (addMedicationStartEl.value && addMedicationStartEl.value < today) {
+    addMedicationStartEl.value = today;
+  }
+
+  const endMin = medicationEndMinDate(addMedicationStartEl.value, today);
+  addMedicationEndEl.min = endMin;
+  addMedicationEndEl.setAttribute("min", endMin);
+  if (addMedicationEndEl.value && addMedicationEndEl.value < endMin) {
+    addMedicationEndEl.value = endMin;
+  }
+}
+
+function setMedicationFormMode(mode) {
+  const isEdit = mode === "edit";
+  addMedicationTitleEl.textContent = isEdit ? "Edit Medication" : "Add Medication";
+  addMedicationSaveLabelEl.textContent = isEdit ? "Save Changes" : "Add Medication";
+}
+
+function populateMedicationFormFromRecord(medication) {
+  const frequency = medication.frequency || "Once daily";
+  const reminderTimes =
+    medication.reminderTimes?.length > 0
+      ? medication.reminderTimes
+      : defaultReminderTimesForFrequency(frequency);
+
+  addMedicationNameEl.value = medication.name || "";
+  addMedicationDosageEl.value = medication.dosage || "";
+  addMedicationFrequencyEl.value = frequency;
+  addMedicationInstructionsEl.value = medication.instructions || "";
+  addMedicationStartEl.value = medication.startDate || "";
+  addMedicationEndEl.value = medication.endDate || "";
+  syncAddMedicationDateConstraints(true);
+  syncAddMedicationReminderTimes(false, reminderTimes);
+}
+
+function resetAddMedicationForm() {
+  const today = todayDateString();
+  const frequency = "Once daily";
+  addMedicationFormEl.reset();
+  addMedicationFrequencyEl.value = frequency;
+  addMedicationStartEl.value = today;
+  addMedicationEndEl.value = defaultMedicationEndDate(today);
+  addMedicationErrorEl.hidden = true;
+  addMedicationErrorEl.textContent = "";
+  syncAddMedicationDateConstraints(false);
+  syncAddMedicationReminderTimes(false, defaultReminderTimesForFrequency(frequency));
+}
+
+function openAddMedicationModal() {
+  if (!activeMedicationsPatientId) return;
+  const patient = getPatientById(activeMedicationsPatientId);
+  if (!patient) return;
+
+  editingMedicationId = null;
+  resetAddMedicationForm();
+  setMedicationFormMode("add");
+  addMedicationPatientEl.textContent = `Patient: ${patient.name}`;
+  addMedicationModalEl.hidden = false;
+  syncBodyModalLock();
+  addMedicationNameEl.focus();
+}
+
+async function openEditMedicationModal(medicationId) {
+  if (!activeMedicationsPatientId) return;
+  const patient = getPatientById(activeMedicationsPatientId);
+  if (!patient) return;
+
+  addMedicationErrorEl.hidden = true;
+  addMedicationErrorEl.textContent = "";
+  addMedicationPatientEl.textContent = `Patient: ${patient.name}`;
+
+  let medication;
+  try {
+    medication = await fetchMedicationWithReminders(medicationId);
+  } catch (error) {
+    window.alert(error?.message || "Could not load medication.");
+    return;
+  }
+
+  if (!medication) {
+    window.alert("Medication not found.");
+    return;
+  }
+
+  if (medication.userId && medication.userId !== patient.patientId) {
+    window.alert("This medication does not belong to the selected patient.");
+    return;
+  }
+
+  editingMedicationId = medication.medicationId;
+  addMedicationFormEl.reset();
+  populateMedicationFormFromRecord(medication);
+  setMedicationFormMode("edit");
+  addMedicationModalEl.hidden = false;
+  syncBodyModalLock();
+  addMedicationNameEl.focus();
+}
+
+function closeAddMedicationModal() {
+  editingMedicationId = null;
+  setMedicationFormMode("add");
+  addMedicationModalEl.hidden = true;
+  syncBodyModalLock();
+  if (!medicationsModalEl.hidden) {
+    medicationsCloseBtn.focus();
+  }
+}
+
+async function handleAddMedicationSubmit(event) {
+  event.preventDefault();
+  if (!activeMedicationsPatientId || isSavingMedication) return;
+
+  const patient = getPatientById(activeMedicationsPatientId);
+  if (!patient?.patientId || patient.patientId === "—") {
+    addMedicationErrorEl.textContent = "Patient User ID is missing.";
+    addMedicationErrorEl.hidden = false;
+    return;
+  }
+
+  if (!loggedInStaffId) {
+    addMedicationErrorEl.textContent = "Staff ID is missing. Please sign in again.";
+    addMedicationErrorEl.hidden = false;
+    return;
+  }
+
+  syncAddMedicationDateConstraints(Boolean(editingMedicationId));
+  addMedicationErrorEl.hidden = true;
+
+  const reminderTimes = [
+    ...addMedicationReminderTimesEl.querySelectorAll(".complete-med-reminder-time"),
+  ].map((el) => el.value.trim());
+
+  const isEdit = Boolean(editingMedicationId);
+  const saveLabelDefault = isEdit ? "Save Changes" : "Add Medication";
+  const payload = {
+    name: addMedicationNameEl.value.trim(),
+    dosage: addMedicationDosageEl.value.trim(),
+    frequency: addMedicationFrequencyEl.value,
+    instructions: addMedicationInstructionsEl.value.trim(),
+    startDate: addMedicationStartEl.value,
+    endDate: addMedicationEndEl.value,
+    reminderDate: addMedicationStartEl.value,
+    reminderTimes,
+    userId: patient.patientId,
+    staffId: loggedInStaffId,
+  };
+
+  isSavingMedication = true;
+  addMedicationSubmitBtn.disabled = true;
+  addMedicationSaveLabelEl.textContent = "Saving…";
+
+  try {
+    if (isEdit) {
+      await updateMedicationWithReminder({
+        medicationId: editingMedicationId,
+        ...payload,
+      });
+    } else {
+      await createMedicationWithReminder(payload);
+    }
+    closeAddMedicationModal();
+  } catch (error) {
+    addMedicationErrorEl.textContent =
+      error?.message ||
+      (isEdit
+        ? "Could not update medication. Please try again."
+        : "Could not add medication. Please try again.");
+    addMedicationErrorEl.hidden = false;
+  } finally {
+    isSavingMedication = false;
+    addMedicationSubmitBtn.disabled = false;
+    addMedicationSaveLabelEl.textContent = saveLabelDefault;
+  }
+}
 
 function renderHealthRecordsList(records) {
   if (records.length === 0) {
@@ -327,6 +718,8 @@ function closeAddHealthRecordModal() {
 function syncBodyModalLock() {
   const anyOpen =
     !healthModalEl.hidden ||
+    !medicationsModalEl.hidden ||
+    !addMedicationModalEl.hidden ||
     !addHealthRecordModalEl.hidden ||
     !addPatientModalEl.hidden ||
     !profileModalEl.hidden;
@@ -824,6 +1217,15 @@ function renderRow(patient) {
         </button>
       </td>
       <td>
+        <button type="button" class="btn-view-records btn-view-medications" data-patient-id="${patient.id}" aria-label="View medications for ${patient.name}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.5 20.5l10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7z" />
+            <line x1="8.5" y1="8.5" x2="15.5" y2="15.5" />
+          </svg>
+          View
+        </button>
+      </td>
+      <td>
         <button type="button" class="btn-profile-menu" data-patient-id="${patient.id}" aria-label="View profile for ${patient.name}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="6 9 12 15 18 9" />
@@ -970,6 +1372,12 @@ tbodyEl.addEventListener("click", (event) => {
     return;
   }
 
+  const medicationsBtn = event.target.closest(".btn-view-medications");
+  if (medicationsBtn) {
+    openMedicationsModal(medicationsBtn.dataset.patientId);
+    return;
+  }
+
   const recordsBtn = event.target.closest(".btn-view-records");
   if (recordsBtn) {
     openHealthRecordsModal(recordsBtn.dataset.patientId);
@@ -977,6 +1385,31 @@ tbodyEl.addEventListener("click", (event) => {
 });
 
 healthModalCloseBtn.addEventListener("click", closeHealthRecordsModal);
+medicationsCloseBtn.addEventListener("click", closeMedicationsModal);
+medicationsListEl.addEventListener("click", (event) => {
+  const editBtn = event.target.closest(".btn-medication-edit");
+  if (!editBtn?.dataset.medicationId) return;
+  openEditMedicationModal(editBtn.dataset.medicationId);
+});
+document.getElementById("btn-add-medication").addEventListener("click", openAddMedicationModal);
+addMedicationCloseBtn.addEventListener("click", closeAddMedicationModal);
+addMedicationFormEl.addEventListener("submit", handleAddMedicationSubmit);
+addMedicationFrequencyEl.addEventListener("change", () => {
+  syncAddMedicationReminderTimes();
+});
+addMedicationStartEl.addEventListener("change", () => {
+  syncAddMedicationDateConstraints(Boolean(editingMedicationId));
+  if (
+    addMedicationEndEl.value &&
+    addMedicationEndEl.min &&
+    addMedicationEndEl.value < addMedicationEndEl.min
+  ) {
+    addMedicationEndEl.value = addMedicationEndEl.min;
+  }
+});
+addMedicationModalEl.addEventListener("click", (event) => {
+  if (event.target === addMedicationModalEl) closeAddMedicationModal();
+});
 modalListEl.addEventListener("click", (event) => {
   const editBtn = event.target.closest(".btn-record-edit");
   if (!editBtn?.dataset.recordId) return;
@@ -1026,6 +1459,10 @@ healthModalEl.addEventListener("click", (event) => {
   if (event.target === healthModalEl) closeHealthRecordsModal();
 });
 
+medicationsModalEl.addEventListener("click", (event) => {
+  if (event.target === medicationsModalEl) closeMedicationsModal();
+});
+
 addHealthRecordModalEl.addEventListener("click", (event) => {
   if (event.target === addHealthRecordModalEl) closeAddHealthRecordModal();
 });
@@ -1044,11 +1481,13 @@ addPatientModalEl.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
-  if (!addHealthRecordModalEl.hidden) closeAddHealthRecordModal();
+  if (!addMedicationModalEl.hidden) closeAddMedicationModal();
+  else if (!addHealthRecordModalEl.hidden) closeAddHealthRecordModal();
   else if (!profileModalEl.hidden) {
     if (isProfileEditing) handleProfileCancelEdit();
     else closePatientProfileModal();
   } else if (!healthModalEl.hidden) closeHealthRecordsModal();
+  else if (!medicationsModalEl.hidden) closeMedicationsModal();
   else if (!addPatientModalEl.hidden) closeAddPatientModal();
 });
 
@@ -1056,8 +1495,16 @@ profileUpdateBtn.addEventListener("click", handleProfileUpdateClick);
 profileSaveBtn.addEventListener("click", handleProfileSaveClick);
 profileCancelBtn.addEventListener("click", handleProfileCancelEdit);
 
+const OPEN_COMMUNICATION_PATIENT_KEY = "auraOpenCommunicationPatientId";
+
 document.getElementById("patient-profile-message").addEventListener("click", () => {
-  window.location.href = "communication.html";
+  const patient = getPatientById(activePatientId);
+  if (!patient?.patientId || patient.patientId === "—") {
+    window.alert("Patient User ID is missing.");
+    return;
+  }
+  sessionStorage.setItem(OPEN_COMMUNICATION_PATIENT_KEY, patient.patientId);
+  window.location.href = `communication.html?patient=${encodeURIComponent(patient.patientId)}`;
 });
 
 profileDeactivateBtn.addEventListener("click", handleProfileDeactivateClick);
