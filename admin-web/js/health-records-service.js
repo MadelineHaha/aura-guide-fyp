@@ -24,6 +24,7 @@ import {
 import { db, storage } from "./firebase.js";
 
 import { todayDateString } from "./appointments-service.js";
+import { formatTypedSentence } from "./text-format.js";
 
 import { fetchActiveStaff } from "./staff-list-service.js";
 import { HEALTHCARE_STAFF_COLLECTION } from "./staff-auth.js";
@@ -89,13 +90,9 @@ export const PRESET_RECORD_TYPES = [
   "Prescription Update",
 ];
 
-/** e.g. "the record is good" → "The record is good" */
+/** e.g. "the record is good" → "The record is good." */
 export function capitalizeClinicalSummary(text) {
-  const trimmed = String(text || "").trim();
-  if (!trimmed) return trimmed;
-  return trimmed
-    .toLowerCase()
-    .replace(/(^\w|[.!?]\s+\w)/g, (match) => match.toUpperCase());
+  return formatTypedSentence(text);
 }
 
 /** e.g. "lab report" → "Lab Report" */
@@ -776,7 +773,7 @@ export async function createHealthRecord({
 
   const trimmedType = recordType.trim();
 
-  const trimmedTitle = title.trim();
+  const trimmedTitle = formatTypedSentence(title);
 
 
 
@@ -947,7 +944,7 @@ export async function updateHealthRecord({
   }
 
   const trimmedType = recordType.trim();
-  const trimmedTitle = title.trim();
+  const trimmedTitle = formatTypedSentence(title);
   const payload = {
     recordType: trimmedType,
     title: trimmedTitle,

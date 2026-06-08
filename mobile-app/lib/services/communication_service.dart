@@ -152,7 +152,24 @@ class CommunicationService {
       'senderId': message.senderId,
       'receiverId': message.receiverId,
       'callDuration': message.callDuration,
+      'deliveredAt': message.deliveredAt,
+      'readAt': message.readAt,
+      'hiddenFor': message.hiddenFor,
+      'deletedForEveryone': message.deletedForEveryone,
+      'replyPreview': message.replyPreview,
+      'forwardedFromMessageId': message.forwardedFromMessageId,
     };
+  }
+
+  bool _isMessageVisibleForPatient(
+    Map<String, dynamic> message,
+    String patientId,
+  ) {
+    final hiddenFor = message['hiddenFor'];
+    if (hiddenFor is List && hiddenFor.map((e) => e.toString()).contains(patientId)) {
+      return false;
+    }
+    return true;
   }
 
   String _otherParticipantId(Map<String, dynamic> conversation, String patientId) {
@@ -483,6 +500,7 @@ class CommunicationService {
   ) {
     final textMessages = messages
         .where((m) => (m['messageType'] as String).toLowerCase() == 'text')
+        .where((m) => _isMessageVisibleForPatient(m, patientId))
         .toList()
       ..sort(
         (a, b) => _timestampMs(a['timestamp']).compareTo(
@@ -500,7 +518,19 @@ class CommunicationService {
       }
       final isOutgoing = message['senderId'] == patientId;
       final clock = ChatTimeFormat.messageClock(message['timestamp']);
-      final text = message['content'] as String;
+      final deleted = message['deletedForEveryone'] == true;
+      final replyPreview = (message['replyPreview'] as String?)?.trim();
+      final forwarded =
+          (message['forwardedFromMessageId'] as String?)?.trim().isNotEmpty ==
+              true;
+      var text = deleted
+          ? 'This message was deleted'
+          : message['content'] as String;
+      if (!deleted && replyPreview != null && replyPreview.isNotEmpty) {
+        text = '↩ $replyPreview\n$text';
+      } else if (!deleted && forwarded) {
+        text = 'Forwarded\n$text';
+      }
       if (isOutgoing) {
         items.add(ChatListItem.outgoing(text: text, time: clock));
       } else {
@@ -627,9 +657,15 @@ class CommunicationService {
       if (msg == null) continue;
       if (msg.receiverId != patientId) continue;
       if (msg.deliveryStatus.toLowerCase() == 'read') continue;
-      batch.update(doc.reference, {
+      final data = doc.data();
+      final updates = <String, dynamic>{
         'deliveryStatus': MessageEntity.deliveryRead,
-      });
+        'readAt': FieldValue.serverTimestamp(),
+      };
+      if (data['deliveredAt'] == null) {
+        updates['deliveredAt'] = FieldValue.serverTimestamp();
+      }
+      batch.update(doc.reference, updates);
       count++;
       if (count >= 400) break;
     }

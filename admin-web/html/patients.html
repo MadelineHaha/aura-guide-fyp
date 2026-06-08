@@ -87,6 +87,7 @@
             <th scope="col">Last Visit</th>
             <th scope="col">Status</th>
             <th scope="col">Health Records</th>
+            <th scope="col">Medications</th>
             <th scope="col">Profile</th>
           </tr>
         </thead>
@@ -139,6 +140,146 @@
           Add New Record
         </button>
       </footer>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="medications-modal" hidden>
+    <div
+      class="health-records-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="medications-title"
+    >
+      <header class="health-records-header">
+        <div class="health-records-header-main">
+          <span class="health-records-icon medications-modal-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.5 20.5l10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7z" />
+              <line x1="8.5" y1="8.5" x2="15.5" y2="15.5" />
+            </svg>
+          </span>
+          <div>
+            <h2 class="health-records-title" id="medications-title">Medications</h2>
+            <p class="health-records-patient" id="medications-patient">Patient: —</p>
+          </div>
+        </div>
+        <button type="button" class="health-records-close" id="medications-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+
+      <div class="health-records-body" id="medications-list"></div>
+      <p class="health-records-empty" id="medications-empty" hidden>No medication yet.</p>
+
+      <footer class="health-records-footer medications-modal-footer">
+        <button type="button" class="btn-primary btn-add-record" id="btn-add-medication">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          Add Medication
+        </button>
+      </footer>
+    </div>
+  </div>
+
+  <div class="modal-backdrop modal-backdrop--stacked" id="add-medication-modal" hidden>
+    <div
+      class="add-health-record-modal add-medication-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-medication-title"
+    >
+      <header class="health-records-header">
+        <div class="health-records-header-main">
+          <span class="health-records-icon medications-modal-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.5 20.5l10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7z" />
+              <line x1="8.5" y1="8.5" x2="15.5" y2="15.5" />
+            </svg>
+          </span>
+          <div>
+            <h2 class="health-records-title" id="add-medication-title">Add Medication</h2>
+            <p class="health-records-patient" id="add-medication-patient">Patient: —</p>
+          </div>
+        </div>
+        <button type="button" class="health-records-close" id="add-medication-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+
+      <form class="add-health-record-form" id="add-medication-form" novalidate>
+        <div class="add-health-record-body">
+          <label class="form-field form-field--full">
+            <span class="form-field-label">Medication Name</span>
+            <input
+              class="form-field-input"
+              type="text"
+              id="add-medication-name"
+              placeholder="e.g. Vitamin D 1000IU"
+              required
+            />
+          </label>
+          <label class="form-field">
+            <span class="form-field-label">Dosage</span>
+            <input
+              class="form-field-input"
+              type="text"
+              id="add-medication-dosage"
+              placeholder="e.g. 1 capsule"
+              required
+            />
+          </label>
+          <label class="form-field">
+            <span class="form-field-label">Frequency</span>
+            <select class="form-field-input form-field-select" id="add-medication-frequency" required>
+              <option value="">Select frequency</option>
+              <option value="Once daily">Once daily</option>
+              <option value="Twice daily">Twice daily</option>
+              <option value="Three times daily">Three times daily</option>
+              <option value="Weekly">Weekly</option>
+            </select>
+          </label>
+          <label class="form-field form-field--full">
+            <span class="form-field-label">Instructions</span>
+            <textarea
+              class="form-field-input form-field-textarea"
+              id="add-medication-instructions"
+              rows="2"
+              placeholder="How the patient should take it"
+              required
+            ></textarea>
+          </label>
+          <label class="form-field">
+            <span class="form-field-label">Start Date</span>
+            <input class="form-field-input" type="date" id="add-medication-start" required />
+          </label>
+          <label class="form-field">
+            <span class="form-field-label">End Date</span>
+            <input class="form-field-input" type="date" id="add-medication-end" required />
+            <span class="form-field-hint">Cannot be before today or the start date.</span>
+          </label>
+          <div class="form-field form-field--full complete-med-reminder-times-field">
+            <span class="form-field-label" id="add-medication-reminder-times-label">Reminder time</span>
+            <div class="complete-med-reminder-times" id="add-medication-reminder-times"></div>
+          </div>
+        </div>
+        <p class="add-patient-error" id="add-medication-error" role="alert" hidden></p>
+        <footer class="add-health-record-footer">
+          <button type="submit" class="btn-primary btn-save-health-record" id="add-medication-submit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            <span id="add-medication-save-label">Add Medication</span>
+          </button>
+        </footer>
+      </form>
     </div>
   </div>
 

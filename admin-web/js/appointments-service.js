@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteField,
   doc,
   getDocs,
   onSnapshot,
@@ -11,6 +12,8 @@ import {
   updateDoc,
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { db } from "./firebase.js";
+import { createMedicationWithReminder } from "./medications-service.js";
+import { formatTypedSentence } from "./text-format.js";
 import { trackFirestoreListener } from "./firestore-realtime.js";
 import {
   fetchPatients,
@@ -152,6 +155,9 @@ export function mapAppointmentDoc(docSnap, lookups) {
     staff: staff ? staffDisplayName(staff) : staffId || "—",
     staffId,
     notes: data.notes || "",
+    clinicalSummary: (data.clinicalSummary || "").trim(),
+    recommendation: (data.recommendation || "").trim(),
+    followUpDate: (data.followUpDate || "").trim(),
     status: normalizeStatus(data.status),
   };
 }
@@ -276,7 +282,7 @@ export async function createAppointment({
       appointmentId,
       dateTime: Timestamp.fromDate(dateTime),
       status: "Scheduled",
-      notes: (notes || "").trim(),
+      notes: formatOptionalTypedSentence(notes),
       location: location.trim(),
       appointmentType,
       userId,
@@ -284,6 +290,11 @@ export async function createAppointment({
       createdAt: serverTimestamp(),
     });
   });
+}
+
+function formatOptionalTypedSentence(text) {
+  const trimmed = String(text || "").trim();
+  return trimmed ? formatTypedSentence(trimmed) : "";
 }
 
 function appointmentRef(appointmentId) {
@@ -343,7 +354,7 @@ export async function updateAppointment({
     dateTime: Timestamp.fromDate(dateTime),
     appointmentType,
     location: location.trim(),
-    notes: (notes || "").trim(),
+    notes: formatOptionalTypedSentence(notes),
     updatedAt: serverTimestamp(),
   };
 
@@ -357,4 +368,69 @@ export async function updateAppointment({
   }
 
   await updateDoc(appointmentRef(appointmentId), payload);
+}
+
+const CLINICAL_SUMMARY_MAX = 500;
+const RECOMMENDATION_MAX = 500;
+
+/**
+ * Marks appointment Done and saves visit notes. Optionally prescribes medications.
+ */
+export async function completeAppointment({
+  appointmentId,
+  clinicalSummary,
+  recommendation,
+  followUpDate,
+  staffId,
+  userId,
+  medications = [],
+}) {
+  const summary = formatTypedSentence(clinicalSummary);
+  const rec = formatOptionalTypedSentence(recommendation);
+  const followUp = String(followUpDate || "").trim();
+
+  if (!summary) {
+    throw new Error("Clinical summary is required.");
+  }
+  if (summary.length > CLINICAL_SUMMARY_MAX) {
+    throw new Error(
+      `Clinical summary must be ${CLINICAL_SUMMARY_MAX} characters or less.`,
+    );
+  }
+  if (rec.length > RECOMMENDATION_MAX) {
+    throw new Error(
+      `Recommendation must be ${RECOMMENDATION_MAX} characters or less.`,
+    );
+  }
+  if (!appointmentId) {
+    throw new Error("Appointment is required.");
+  }
+
+  const payload = {
+    status: "Done",
+    clinicalSummary: summary,
+    recommendation: rec,
+    completedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  // No date selected = no follow-up scheduled.
+  payload.followUpDate = followUp ? followUp : deleteField();
+
+  await updateDoc(appointmentRef(appointmentId), payload);
+
+  for (const medication of medications) {
+    await createMedicationWithReminder({
+      userId,
+      staffId,
+      name: medication.name,
+      dosage: medication.dosage,
+      frequency: medication.frequency,
+      instructions: medication.instructions,
+      startDate: medication.startDate,
+      endDate: medication.endDate,
+      reminderDate: medication.reminderDate,
+      reminderTimes: medication.reminderTimes,
+    });
+  }
 }

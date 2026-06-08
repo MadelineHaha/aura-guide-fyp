@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import 'appointments_page.dart';
 import 'emergency_sos_page.dart';
+import 'medications_page.dart';
 import 'auth_session.dart';
 import 'communication_page.dart';
 import 'health_records_page.dart';
@@ -10,6 +11,7 @@ import 'my_profile_page.dart';
 import 'services/appointments_service.dart';
 import 'services/communication_service.dart';
 import 'services/health_records_service.dart';
+import 'services/medications_service.dart';
 
 class MainMenuPage extends StatelessWidget {
   const MainMenuPage({super.key});
@@ -54,14 +56,7 @@ class MainMenuPage extends StatelessWidget {
                   children: [
                     const _AppointmentsMenuTile(),
                     const _HealthRecordsMenuTile(),
-                    const _MenuTile(
-                      title: 'Medications',
-                      subtitle: '3 remaining today',
-                      icon: Icons.link_outlined,
-                      border: Color(0xFF9DDC3D),
-                      tile: Color(0xFF263913),
-                      iconCircle: Color(0xFF5C8D29),
-                    ),
+                    const _MedicationsMenuTile(),
                     _MenuTile(
                       title: 'Emergency SOS',
                       subtitle: 'Tap for help',
@@ -233,6 +228,54 @@ class _AppointmentsMenuTileState extends State<_AppointmentsMenuTile> {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (context) => const AppointmentsPage(),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _MedicationsMenuTile extends StatefulWidget {
+  const _MedicationsMenuTile();
+
+  @override
+  State<_MedicationsMenuTile> createState() => _MedicationsMenuTileState();
+}
+
+class _MedicationsMenuTileState extends State<_MedicationsMenuTile> {
+  final _service = MedicationsService();
+  late final Stream<int> _remainingStream =
+      _service.watchRemainingTodayCount();
+
+  static String _subtitleForCount(int remaining) {
+    if (remaining <= 0) return 'All taken today';
+    if (remaining == 1) return '1 remaining today';
+    return '$remaining remaining today';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<int>(
+      stream: _remainingStream,
+      builder: (context, snapshot) {
+        final remaining = snapshot.data ?? 0;
+        final subtitle = snapshot.hasError
+            ? 'No medications'
+            : _subtitleForCount(remaining);
+
+        return _MenuTile(
+          title: 'Medications',
+          subtitle: subtitle,
+          icon: Icons.link_outlined,
+          border: const Color(0xFF9DDC3D),
+          tile: const Color(0xFF263913),
+          iconCircle: const Color(0xFF5C8D29),
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (context) => const MedicationsPage(),
               ),
             );
           },

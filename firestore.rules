@@ -120,6 +120,61 @@ service cloud.firestore {
         && request.resource.data.location is string;
     }
 
+    function isOwnPatientMedication() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && (resource.data.userId == patientUserId()
+            || resource.data.userID == patientUserId());
+    }
+
+    function isOwnPatientMedicationReminder() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && (resource.data.userId == patientUserId()
+            || resource.data.userID == patientUserId());
+    }
+
+    function isPatientMedicationReminderStatusUpdate() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && isOwnPatientMedicationReminder()
+        && request.resource.data.status in ['Pending', 'Completed']
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'completedDate', 'updatedAt']);
+    }
+
+    match /medications/{medicationId} {
+      allow get: if isActiveStaff() || isOwnPatientMedication();
+
+      allow list: if isActiveStaff();
+
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.userId == patientUserId();
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.userID == patientUserId();
+
+      allow create, update, delete: if isActiveStaff();
+    }
+
+    match /medicationreminders/{reminderId} {
+      allow get: if isActiveStaff() || isOwnPatientMedicationReminder();
+
+      allow list: if isActiveStaff();
+
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.userId == patientUserId();
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.userID == patientUserId();
+
+      allow create: if isActiveStaff();
+      allow delete: if isActiveStaff();
+      allow update: if isActiveStaff() || isPatientMedicationReminderStatusUpdate();
+    }
+
     match /emergencyalerts/{alertId} {
       allow get: if isActiveStaff() || isOwnPatientEmergencyAlert();
 
@@ -236,7 +291,13 @@ service cloud.firestore {
         && isPatientMessageReceiver()
         && request.resource.data.deliveryStatus == 'Read'
         && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['deliveryStatus']);
+            .hasOnly(['deliveryStatus', 'readAt', 'deliveredAt']);
+    }
+
+    function isStaffMessageSoftDelete() {
+      return isActiveStaff()
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['hiddenFor', 'deletedForEveryone', 'deletedAt', 'deletedBy']);
     }
 
     function isPatientArchiveConversation() {
@@ -298,7 +359,9 @@ service cloud.firestore {
       allow list: if isActiveStaff() || isPatientMessageInOwnedConversation();
 
       allow create: if isActiveStaff() || isPatientMessageCreate();
-      allow update: if isActiveStaff() || isPatientMarkMessageRead();
+      allow update: if isActiveStaff()
+        || isPatientMarkMessageRead()
+        || isStaffMessageSoftDelete();
       allow delete: if isActiveStaff();
     }
 
