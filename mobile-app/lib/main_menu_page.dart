@@ -6,12 +6,15 @@ import 'emergency_sos_page.dart';
 import 'medications_page.dart';
 import 'auth_session.dart';
 import 'communication_page.dart';
+import 'navigation_page.dart';
+import 'settings_page.dart';
 import 'health_records_page.dart';
 import 'my_profile_page.dart';
 import 'services/appointments_service.dart';
 import 'services/communication_service.dart';
 import 'services/health_records_service.dart';
 import 'services/medications_service.dart';
+import 'widgets/accessible_focus_region.dart';
 
 class MainMenuPage extends StatelessWidget {
   const MainMenuPage({super.key});
@@ -37,12 +40,15 @@ class MainMenuPage extends StatelessWidget {
               const SizedBox(height: 14),
               const _ReminderCard(),
               const SizedBox(height: 18),
-              const Text(
-                'MAIN MENU',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 24,
+              const AccessibleFocusRegion(
+                label: 'Main menu',
+                child: Text(
+                  'MAIN MENU',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 24,
+                  ),
                 ),
               ),
               const SizedBox(height: 10),
@@ -72,13 +78,20 @@ class MainMenuPage extends StatelessWidget {
                         );
                       },
                     ),
-                    const _MenuTile(
+                    _MenuTile(
                       title: 'Navigation',
                       subtitle: 'AI obstacle detection\nand AR guidance',
                       icon: Icons.near_me_outlined,
-                      border: Color(0xFFC88423),
-                      tile: Color(0xFF3D2A10),
-                      iconCircle: Color(0xFF885B1F),
+                      border: const Color(0xFFC88423),
+                      tile: const Color(0xFF3D2A10),
+                      iconCircle: const Color(0xFF885B1F),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (context) => const NavigationPage(),
+                          ),
+                        );
+                      },
                     ),
                     const _CommunicationMenuTile(),
                   ],
@@ -98,46 +111,61 @@ class _HeaderSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Good morning,',
-                style: TextStyle(color: MainMenuPage._subtext, fontSize: 15),
-              ),
-              SizedBox(height: 2),
-              Text(
-                'Madeline',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 24,
+          child: AccessibleFocusRegion(
+            label:
+                'Good morning, Madeline. Monday, 16 March 2026.',
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Good morning,',
+                  style: TextStyle(color: MainMenuPage._subtext, fontSize: 15),
                 ),
-              ),
-              SizedBox(height: 2),
-              Text(
-                'Monday, 16 March 2026',
-                style: TextStyle(color: MainMenuPage._subtext, fontSize: 15),
-              ),
-            ],
+                SizedBox(height: 2),
+                Text(
+                  'Madeline',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 24,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Monday, 16 March 2026',
+                  style: TextStyle(color: MainMenuPage._subtext, fontSize: 15),
+                ),
+              ],
+            ),
           ),
         ),
-        Container(
-          width: 68,
-          height: 68,
-          decoration: const BoxDecoration(
-            color: Color(0xFF50BDC5),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(
-            Icons.notifications_none_rounded,
-            color: Colors.white,
-            size: 30,
-          ),
-        ),
+        const ExcludeSemantics(child: _NotificationButton()),
       ],
+    );
+  }
+}
+
+class _NotificationButton extends StatelessWidget {
+  const _NotificationButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 68,
+      height: 68,
+      decoration: const BoxDecoration(
+        color: Color(0xFF50BDC5),
+        shape: BoxShape.circle,
+      ),
+      child: const Icon(
+        Icons.notifications_none_rounded,
+        color: Colors.white,
+        size: 30,
+      ),
     );
   }
 }
@@ -147,44 +175,47 @@ class _ReminderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10),
-        color: const Color(0xFF203536),
-        border: Border.all(color: const Color(0xFF40595B), width: 1.1),
-      ),
-      child: const Row(
-        children: [
-          _IconCircle(
-            bg: Color(0xFF2A666A),
-            icon: Icons.medication_outlined,
-          ),
-          SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Medication reminder',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  'Vitamin D due at 12:00 PM',
-                  style: TextStyle(
-                    color: MainMenuPage._subtext,
-                    fontSize: 14,
-                  ),
-                ),
-              ],
+    return AccessibleFocusRegion(
+      label: 'Medication reminder. Vitamin D due at 12:00 PM.',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          color: const Color(0xFF203536),
+          border: Border.all(color: const Color(0xFF40595B), width: 1.1),
+        ),
+        child: const Row(
+          children: [
+            _IconCircle(
+              bg: Color(0xFF2A666A),
+              icon: Icons.medication_outlined,
             ),
-          ),
-        ],
+            SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Medication reminder',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'Vitamin D due at 12:00 PM',
+                    style: TextStyle(
+                      color: MainMenuPage._subtext,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -401,47 +432,56 @@ class _MenuTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: onTap ??
-          () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('$title is coming soon.')),
-            );
-          },
-      child: Ink(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          color: tile,
-          border: Border.all(color: border, width: 1.4),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 10, 8, 8),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _IconCircle(bg: iconCircle, icon: icon),
-              const SizedBox(height: 10),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: MainMenuPage._text,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
+    void onActivate() {
+      if (onTap != null) {
+        onTap!();
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$title is coming soon.')),
+      );
+    }
+
+    return AccessibleFocusRegion(
+      label: '$title. $subtitle',
+      onActivate: onActivate,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onActivate,
+        child: Ink(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            color: tile,
+            border: Border.all(color: border, width: 1.4),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 10, 8, 8),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _IconCircle(bg: iconCircle, icon: icon),
+                const SizedBox(height: 10),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: MainMenuPage._text,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                subtitle,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: MainMenuPage._subtext,
-                  fontSize: 14,
-                  height: 1.2,
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: MainMenuPage._subtext,
+                    fontSize: 14,
+                    height: 1.2,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -569,9 +609,12 @@ class _MainMenuDrawer extends StatelessWidget {
                   width: 120,
                   child: FilledButton.icon(
                     onPressed: () {
-                      Navigator.of(context).pop();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Settings is coming soon.')),
+                      final navigator = Navigator.of(context);
+                      navigator.pop();
+                      navigator.push(
+                        MaterialPageRoute<void>(
+                          builder: (context) => const SettingsPage(),
+                        ),
                       );
                     },
                     icon: const Icon(Icons.settings_outlined, size: 20),

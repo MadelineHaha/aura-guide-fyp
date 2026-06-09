@@ -8,7 +8,9 @@ import 'auth_session.dart';
 import 'firebase_auth_helper.dart';
 import 'firebase_options.dart';
 import 'main_menu_page.dart';
+import 'services/app_settings_service.dart';
 import 'start_page.dart';
+import 'widgets/audio_feedback_overlay.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,6 +18,7 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
   await configureFirebaseAuth();
+  await AppSettingsService.instance.load();
   runApp(const MyApp());
 }
 
@@ -24,11 +27,27 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Aura Guide',
-      navigatorObservers: [appRouteObserver],
-      home: const _AuthGate(),
+    final settings = AppSettingsService.instance;
+    return AnimatedBuilder(
+      animation: settings,
+      builder: (context, child) {
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Aura Guide',
+          navigatorObservers: [appRouteObserver],
+          builder: (context, child) {
+            final scaled = MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(settings.settings.fontScale),
+              ),
+              child: child ?? const SizedBox.shrink(),
+            );
+            return AudioFeedbackOverlay(child: scaled);
+          },
+          home: child,
+        );
+      },
+      child: const _AuthGate(),
     );
   }
 }

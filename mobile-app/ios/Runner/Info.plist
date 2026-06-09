@@ -49,5 +49,7 @@
 	<string>Microphone access is used to detect the emergency phrase &quot;Help me&quot;.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Your location is shared with healthcare staff during an emergency SOS alert.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Camera access is used for AR navigation and AI obstacle detection.</string>
 </dict>
 </plist>
