@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/audio_feedback_registry.dart';
+import '../services/audio_feedback_route_notifier.dart';
 
 /// Groups on-screen content into one audio-feedback focus target.
 ///
@@ -24,11 +25,26 @@ class AccessibleFocusRegion extends StatefulWidget {
 class _AccessibleFocusRegionState extends State<AccessibleFocusRegion> {
   final _boundsKey = GlobalKey();
   late final String _id = UniqueKey().toString();
+  bool _registered = false;
 
   @override
-  void initState() {
-    super.initState();
-    _register();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route =
+        ModalRoute.of(context) ?? AudioFeedbackRouteNotifier.instance.topRoute;
+    if (!_registered) {
+      AudioFeedbackRegistry.instance.register(
+        id: _id,
+        label: widget.label,
+        key: _boundsKey,
+        routeScope: route,
+        onActivate: widget.onActivate,
+      );
+      _registered = true;
+      return;
+    }
+
+    AudioFeedbackRegistry.instance.updateRouteScope(_id, route);
   }
 
   @override
@@ -46,15 +62,6 @@ class _AccessibleFocusRegionState extends State<AccessibleFocusRegion> {
   void dispose() {
     AudioFeedbackRegistry.instance.unregister(_id);
     super.dispose();
-  }
-
-  void _register() {
-    AudioFeedbackRegistry.instance.register(
-      id: _id,
-      label: widget.label,
-      key: _boundsKey,
-      onActivate: widget.onActivate,
-    );
   }
 
   @override

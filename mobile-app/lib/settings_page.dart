@@ -5,6 +5,9 @@ import 'auth_session.dart';
 import 'password_recovery_page.dart';
 import 'services/app_settings_service.dart';
 import 'services/user_profile_service.dart';
+import 'widgets/accessible_focus_region.dart';
+import 'widgets/app_back_button.dart';
+import 'widgets/audio_feedback_title.dart';
 import 'voice_login_page.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -139,9 +142,15 @@ class _SettingsPageState extends State<SettingsPage> {
         foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          'Settings',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        automaticallyImplyLeading: false,
+        leadingWidth: AppBackButton.appBarLeadingWidth,
+        leading: const AppBackButton(),
+        title: AudioFeedbackTitle(
+          label: 'Settings',
+          child: const Text(
+            'Settings',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
         ),
       ),
       body: ListView(
@@ -262,59 +271,63 @@ class _SettingsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Material(
-        color: _card,
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
-          onTap: onTap,
+      child: AccessibleFocusRegion(
+        label: '$title. $subtitle',
+        onActivate: onTap,
+        child: Material(
+          color: _card,
           borderRadius: BorderRadius.circular(16),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-            child: Row(
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: const BoxDecoration(
-                    color: _accent,
-                    shape: BoxShape.circle,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: const BoxDecoration(
+                      color: _accent,
+                      shape: BoxShape.circle,
+                    ),
+                    alignment: Alignment.center,
+                    child: iconLabel != null
+                        ? Text(
+                            iconLabel!,
+                            style: const TextStyle(
+                              color: Colors.black,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          )
+                        : Icon(icon, color: Colors.black, size: 22),
                   ),
-                  alignment: Alignment.center,
-                  child: iconLabel != null
-                      ? Text(
-                          iconLabel!,
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
                           style: const TextStyle(
-                            color: Colors.black,
+                            color: Colors.white,
                             fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                            fontSize: 13,
+                            letterSpacing: 0.4,
                           ),
-                        )
-                      : Icon(icon, color: Colors.black, size: 22),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                          letterSpacing: 0.4,
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle,
-                        style: const TextStyle(color: _subtext, fontSize: 13),
-                      ),
-                    ],
+                        const SizedBox(height: 4),
+                        Text(
+                          subtitle,
+                          style: const TextStyle(color: _subtext, fontSize: 13),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                if (trailing != null) trailing!,
-              ],
+                  if (trailing != null) trailing!,
+                ],
+              ),
             ),
           ),
         ),

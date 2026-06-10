@@ -1,9 +1,10 @@
-import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import 'main_menu_page.dart';
 import 'services/voice_profile_service.dart';
+import 'widgets/app_back_button.dart';
 
 class VoiceLoginPage extends StatefulWidget {
   const VoiceLoginPage({super.key});
@@ -140,6 +141,9 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
         foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
+        automaticallyImplyLeading: false,
+        leadingWidth: AppBackButton.appBarLeadingWidth,
+        leading: const AppBackButton(),
         title: const Text(
           'Login Account',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 24),

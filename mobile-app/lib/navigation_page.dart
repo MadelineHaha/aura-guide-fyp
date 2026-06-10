@@ -7,6 +7,9 @@ import 'models/navigation_destination.dart' show NavDestination;
 import 'navigation_ar_page.dart';
 import 'services/navigation_guidance_controller.dart';
 import 'services/navigation_service.dart';
+import 'widgets/accessible_focus_region.dart';
+import 'widgets/app_back_button.dart';
+import 'widgets/audio_feedback_title.dart';
 
 class NavigationPage extends StatefulWidget {
   const NavigationPage({super.key});
@@ -116,9 +119,15 @@ class _NavigationPageState extends State<NavigationPage> {
         backgroundColor: _bg,
         foregroundColor: Colors.white,
         elevation: 0,
-        title: const Text(
-          'Navigation',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        automaticallyImplyLeading: false,
+        leadingWidth: AppBackButton.appBarLeadingWidth,
+        leading: const AppBackButton(),
+        title: AudioFeedbackTitle(
+          label: 'Navigation',
+          child: const Text(
+            'Navigation',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
         ),
       ),
       body: Stack(
@@ -126,49 +135,74 @@ class _NavigationPageState extends State<NavigationPage> {
           ListView(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
             children: [
-              _SearchBar(
-                controller: _searchController,
-                listening: _listening,
-                enabled: !_loadingDestination,
-                onSubmitted: (_) => _submitSearch(),
-                onMicTap: _startVoiceSearch,
+              AccessibleFocusRegion(
+                label: 'Where to? Search for a destination.',
+                child: _SearchBar(
+                  controller: _searchController,
+                  listening: _listening,
+                  enabled: !_loadingDestination,
+                  onSubmitted: (_) => _submitSearch(),
+                  onMicTap: _startVoiceSearch,
+                ),
               ),
               const SizedBox(height: 18),
               Row(
                 children: [
                   Expanded(
-                    child: _QuickPlaceCard(
-                      title: 'HOME',
-                      subtitle: home?.address ?? 'Set now',
-                      icon: Icons.home_outlined,
-                      onTap: home == null ? null : () => _startNavigation(home),
+                    child: AccessibleFocusRegion(
+                      label:
+                          'Home. ${home?.address ?? 'Set now'}. Double tap to navigate.',
+                      onActivate:
+                          home == null ? null : () => _startNavigation(home),
+                      child: _QuickPlaceCard(
+                        title: 'HOME',
+                        subtitle: home?.address ?? 'Set now',
+                        icon: Icons.home_outlined,
+                        onTap:
+                            home == null ? null : () => _startNavigation(home),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: _QuickPlaceCard(
-                      title: 'WORK',
-                      subtitle: work?.address ?? 'Set now',
-                      icon: Icons.work_outline,
-                      onTap: work == null ? null : () => _startNavigation(work),
+                    child: AccessibleFocusRegion(
+                      label:
+                          'Work. ${work?.address ?? 'Set now'}. Double tap to navigate.',
+                      onActivate:
+                          work == null ? null : () => _startNavigation(work),
+                      child: _QuickPlaceCard(
+                        title: 'WORK',
+                        subtitle: work?.address ?? 'Set now',
+                        icon: Icons.work_outline,
+                        onTap:
+                            work == null ? null : () => _startNavigation(work),
+                      ),
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 24),
-              const Text(
-                'Recent',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
+              const AccessibleFocusRegion(
+                label: 'Recent destinations',
+                child: Text(
+                  'Recent',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
               ...recents.map(
-                (item) => _RecentTile(
-                  destination: item,
-                  onTap: () => _startNavigation(item),
+                (item) => AccessibleFocusRegion(
+                  label:
+                      '${item.label}. ${item.address}. Double tap to navigate.',
+                  onActivate: () => _startNavigation(item),
+                  child: _RecentTile(
+                    destination: item,
+                    onTap: () => _startNavigation(item),
+                  ),
                 ),
               ),
             ],

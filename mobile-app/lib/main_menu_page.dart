@@ -13,32 +13,89 @@ import 'my_profile_page.dart';
 import 'services/appointments_service.dart';
 import 'services/communication_service.dart';
 import 'services/health_records_service.dart';
+import 'services/app_settings_service.dart';
+import 'services/audio_feedback_scaffold_registry.dart';
 import 'services/medications_service.dart';
 import 'widgets/accessible_focus_region.dart';
+import 'widgets/app_back_button.dart';
+import 'widgets/audio_feedback_overlay.dart';
 
-class MainMenuPage extends StatelessWidget {
+class MainMenuPage extends StatefulWidget {
   const MainMenuPage({super.key});
 
+  static final scaffoldKey = GlobalKey<ScaffoldState>();
+
+  @override
+  State<MainMenuPage> createState() => _MainMenuPageState();
+}
+
+class _MainMenuPageState extends State<MainMenuPage> {
   static const Color _bg = Color(0xFF000000);
   static const Color _subtext = Color(0xFFB0B0B0);
   static const Color _text = Color(0xFFEFEFEF);
 
   @override
+  void initState() {
+    super.initState();
+    AudioFeedbackScaffoldRegistry.mainMenuScaffoldKey = MainMenuPage.scaffoldKey;
+  }
+
+  @override
+  void dispose() {
+    if (AudioFeedbackScaffoldRegistry.mainMenuScaffoldKey ==
+        MainMenuPage.scaffoldKey) {
+      AudioFeedbackScaffoldRegistry.mainMenuScaffoldKey = null;
+    }
+    super.dispose();
+  }
+
+  void _openDrawer() {
+    MainMenuPage.scaffoldKey.currentState?.openDrawer();
+    AudioFeedbackHost.notifyDrawerChanged();
+    _watchDrawerUntilClosed();
+  }
+
+  void _watchDrawerUntilClosed() {
+    void tick() {
+      if (!mounted) return;
+      if (AudioFeedbackScaffoldRegistry.isMainMenuDrawerOpen) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => tick());
+        return;
+      }
+      AudioFeedbackHost.notifyDrawerChanged();
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => tick());
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _bg,
-      drawer: const _MainMenuDrawer(),
-      drawerEnableOpenDragGesture: true,
-      drawerEdgeDragWidth: 96,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const _HeaderSection(),
-              const SizedBox(height: 14),
-              const _ReminderCard(),
+    return ListenableBuilder(
+      listenable: AppSettingsService.instance,
+      builder: (context, _) {
+        final audioFeedbackOn =
+            AppSettingsService.instance.settings.audioFeedbackEnabled;
+        return Scaffold(
+          key: MainMenuPage.scaffoldKey,
+          backgroundColor: _bg,
+          drawer: _MainMenuDrawer(
+            onClose: AudioFeedbackHost.notifyDrawerChanged,
+          ),
+          drawerEnableOpenDragGesture: !audioFeedbackOn,
+          drawerEdgeDragWidth: audioFeedbackOn ? 0 : 96,
+          body: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const _HeaderSection(),
+                  if (audioFeedbackOn) ...[
+                    const SizedBox(height: 10),
+                    _OpenMenuDrawerButton(onOpenDrawer: _openDrawer),
+                  ],
+                  const SizedBox(height: 14),
+                  const _ReminderCard(),
               const SizedBox(height: 18),
               const AccessibleFocusRegion(
                 label: 'Main menu',
@@ -97,10 +154,12 @@ class MainMenuPage extends StatelessWidget {
                   ],
                 ),
               ),
-            ],
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -113,20 +172,22 @@ class _HeaderSection extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Expanded(
+        Expanded(
           child: AccessibleFocusRegion(
-            label:
-                'Good morning, Madeline. Monday, 16 March 2026.',
+            label: 'Good morning, Madeline. Monday, 16 March 2026.',
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Good morning,',
-                  style: TextStyle(color: MainMenuPage._subtext, fontSize: 15),
+                  style: TextStyle(
+                    color: _MainMenuPageState._subtext,
+                    fontSize: 15,
+                  ),
                 ),
-                SizedBox(height: 2),
-                Text(
+                const SizedBox(height: 2),
+                const Text(
                   'Madeline',
                   style: TextStyle(
                     color: Colors.white,
@@ -134,16 +195,20 @@ class _HeaderSection extends StatelessWidget {
                     fontSize: 24,
                   ),
                 ),
-                SizedBox(height: 2),
+                const SizedBox(height: 2),
                 Text(
                   'Monday, 16 March 2026',
-                  style: TextStyle(color: MainMenuPage._subtext, fontSize: 15),
+                  style: TextStyle(
+                    color: _MainMenuPageState._subtext,
+                    fontSize: 15,
+                  ),
                 ),
               ],
             ),
           ),
         ),
-        const ExcludeSemantics(child: _NotificationButton()),
+        const SizedBox(width: 10),
+        _NotificationButton(),
       ],
     );
   }
@@ -154,17 +219,76 @@ class _NotificationButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 68,
-      height: 68,
-      decoration: const BoxDecoration(
-        color: Color(0xFF50BDC5),
-        shape: BoxShape.circle,
+    return AccessibleFocusRegion(
+      label: 'Notification',
+      onActivate: () => _showComingSoon(context),
+      child: Material(
+        color: const Color(0xFF50BDC5),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: () => _showComingSoon(context),
+          borderRadius: BorderRadius.circular(12),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Text(
+              'Notification',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ),
       ),
-      child: const Icon(
-        Icons.notifications_none_rounded,
-        color: Colors.white,
-        size: 30,
+    );
+  }
+
+  static void _showComingSoon(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Notifications are coming soon.')),
+    );
+  }
+}
+
+class _OpenMenuDrawerButton extends StatelessWidget {
+  const _OpenMenuDrawerButton({required this.onOpenDrawer});
+
+  final VoidCallback onOpenDrawer;
+
+  @override
+  Widget build(BuildContext context) {
+    return AccessibleFocusRegion(
+      label: 'Menu. Double tap to open the side menu.',
+      onActivate: onOpenDrawer,
+      child: Material(
+        color: const Color(0xFF1A1A1A),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: Color(0xFF63C3C4), width: 1.2),
+        ),
+        child: InkWell(
+          onTap: onOpenDrawer,
+          borderRadius: BorderRadius.circular(12),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.menu, color: Color(0xFF63C3C4), size: 22),
+                SizedBox(width: 10),
+                Text(
+                  'Menu',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -177,6 +301,13 @@ class _ReminderCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return AccessibleFocusRegion(
       label: 'Medication reminder. Vitamin D due at 12:00 PM.',
+      onActivate: () {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (context) => const MedicationsPage(),
+          ),
+        );
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
@@ -207,7 +338,7 @@ class _ReminderCard extends StatelessWidget {
                   Text(
                     'Vitamin D due at 12:00 PM',
                     style: TextStyle(
-                      color: MainMenuPage._subtext,
+                      color: _MainMenuPageState._subtext,
                       fontSize: 14,
                     ),
                   ),
@@ -465,7 +596,7 @@ class _MenuTile extends StatelessWidget {
                   title,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                    color: MainMenuPage._text,
+                    color: _MainMenuPageState._text,
                     fontWeight: FontWeight.bold,
                     fontSize: 15,
                   ),
@@ -475,7 +606,7 @@ class _MenuTile extends StatelessWidget {
                   subtitle,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                    color: MainMenuPage._subtext,
+                    color: _MainMenuPageState._subtext,
                     fontSize: 14,
                     height: 1.2,
                   ),
@@ -507,7 +638,14 @@ class _IconCircle extends StatelessWidget {
 }
 
 class _MainMenuDrawer extends StatelessWidget {
-  const _MainMenuDrawer();
+  const _MainMenuDrawer({this.onClose});
+
+  final VoidCallback? onClose;
+
+  void _closeDrawer(BuildContext context) {
+    Navigator.of(context).pop();
+    onClose?.call();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -543,31 +681,37 @@ class _MainMenuDrawer extends StatelessWidget {
                     ),
                   ),
                   const Spacer(),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close, color: Colors.white70),
-                    style: IconButton.styleFrom(
-                      backgroundColor: const Color(0xFF3B3B3B),
-                    ),
+                  AppBackButton(
+                    style: AppBackButtonStyle.filled,
+                    color: Colors.white70,
+                    onPressed: () => _closeDrawer(context),
                   ),
                 ],
               ),
               const SizedBox(height: 18),
-              const Text(
-                'Hello, Madeline!',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 17,
-                ),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Patient ID: U00001',
-                style: TextStyle(
-                  color: Color(0xFFD0D0D0),
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
+              const AccessibleFocusRegion(
+                label: 'Hello, Madeline. Patient ID U00001.',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Hello, Madeline!',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 17,
+                      ),
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      'Patient ID: U00001',
+                      style: TextStyle(
+                        color: Color(0xFFD0D0D0),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 12),
@@ -580,7 +724,7 @@ class _MainMenuDrawer extends StatelessWidget {
                 icon: Icons.person_outline,
                 onTap: () {
                   final navigator = Navigator.of(context);
-                  navigator.pop();
+                  _closeDrawer(context);
                   navigator.push(
                     MaterialPageRoute<void>(
                       builder: (context) => const MyProfilePage(),
@@ -595,7 +739,7 @@ class _MainMenuDrawer extends StatelessWidget {
                 iconColor: const Color(0xFFE34848),
                 icon: Icons.phone_in_talk_outlined,
                 onTap: () {
-                  Navigator.of(context).pop();
+                  _closeDrawer(context);
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('Emergency Contacts is coming soon.'),
@@ -607,22 +751,34 @@ class _MainMenuDrawer extends StatelessWidget {
               Center(
                 child: SizedBox(
                   width: 120,
-                  child: FilledButton.icon(
-                    onPressed: () {
+                  child: AccessibleFocusRegion(
+                    label: 'Setting',
+                    onActivate: () {
                       final navigator = Navigator.of(context);
-                      navigator.pop();
+                      _closeDrawer(context);
                       navigator.push(
                         MaterialPageRoute<void>(
                           builder: (context) => const SettingsPage(),
                         ),
                       );
                     },
-                    icon: const Icon(Icons.settings_outlined, size: 20),
-                    label: const Text('Setting'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF656565),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: FilledButton.icon(
+                      onPressed: () {
+                        final navigator = Navigator.of(context);
+                        _closeDrawer(context);
+                        navigator.push(
+                          MaterialPageRoute<void>(
+                            builder: (context) => const SettingsPage(),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.settings_outlined, size: 20),
+                      label: const Text('Setting'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF656565),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                      ),
                     ),
                   ),
                 ),
@@ -631,17 +787,24 @@ class _MainMenuDrawer extends StatelessWidget {
               Center(
                 child: SizedBox(
                   width: 120,
-                  child: FilledButton.icon(
-                    onPressed: () async {
+                  child: AccessibleFocusRegion(
+                    label: 'Log Out',
+                    onActivate: () async {
                       AuthSession.markExplicitSignOut();
                       await FirebaseAuth.instance.signOut();
                     },
-                    icon: const Icon(Icons.logout, size: 20),
-                    label: const Text('Log Out'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFFE84343),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: FilledButton.icon(
+                      onPressed: () async {
+                        AuthSession.markExplicitSignOut();
+                        await FirebaseAuth.instance.signOut();
+                      },
+                      icon: const Icon(Icons.logout, size: 20),
+                      label: const Text('Log Out'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFE84343),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                      ),
                     ),
                   ),
                 ),
@@ -671,27 +834,31 @@ class _DrawerAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Row(
-        children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
-            child: Icon(icon, color: iconColor, size: 24),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Color(0xFFE6E6E6),
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
+    return AccessibleFocusRegion(
+      label: label,
+      onActivate: onTap,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Row(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
+              child: Icon(icon, color: iconColor, size: 24),
             ),
-          ),
-        ],
+            const SizedBox(width: 12),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFFE6E6E6),
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

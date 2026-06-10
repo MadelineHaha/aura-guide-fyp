@@ -21,7 +21,7 @@ class UserRegistrationService {
     required String email,
     String voiceProfile = '',
     String emergencyContact = '',
-    String accessibilityPreferences = '',
+    Map<String, dynamic>? accessibilityPreferences,
     UserStatus status = UserStatus.active,
   }) async {
     final userRef = _firestore.collection(UserEntity.collection).doc(uid);

@@ -5,6 +5,9 @@ import 'package:speech_to_text/speech_to_text.dart';
 
 import 'models/emergency_alert_entity.dart';
 import 'services/emergency_alert_service.dart';
+import 'widgets/accessible_focus_region.dart';
+import 'widgets/app_back_button.dart';
+import 'widgets/audio_feedback_title.dart';
 
 class EmergencySosPage extends StatefulWidget {
   const EmergencySosPage({super.key});
@@ -174,9 +177,15 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
             backgroundColor: _bg,
             foregroundColor: Colors.white,
             elevation: 0,
-            title: const Text(
-              'Emergency SOS',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+            automaticallyImplyLeading: false,
+            leadingWidth: AppBackButton.appBarLeadingWidth,
+            leading: const AppBackButton(),
+            title: AudioFeedbackTitle(
+              label: 'Emergency SOS',
+              child: const Text(
+                'Emergency SOS',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+              ),
             ),
             centerTitle: true,
           ),
@@ -186,15 +195,20 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
               child: Column(
                 children: [
                   const SizedBox(height: 8),
-                  Text(
-                    _sosActive
+                  AccessibleFocusRegion(
+                    label: _sosActive
                         ? 'Emergency alert is active. Healthcare staff have been notified.'
-                        : 'In an emergency, press and hold the SOS button or say \'Help me\'',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      height: 1.4,
+                        : 'In an emergency, press and hold the SOS button or say Help me',
+                    child: Text(
+                      _sosActive
+                          ? 'Emergency alert is active. Healthcare staff have been notified.'
+                          : 'In an emergency, press and hold the SOS button or say \'Help me\'',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        height: 1.4,
+                      ),
                     ),
                   ),
                   if (_activeAlert != null) ...[
