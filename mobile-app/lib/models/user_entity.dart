@@ -14,9 +14,17 @@ class UserEntity {
     required this.email,
     this.voiceProfile = '',
     this.emergencyContact = '',
-    this.accessibilityPreferences = '',
+    Map<String, dynamic>? accessibilityPreferences,
     this.status = UserStatus.active,
-  });
+  }) : accessibilityPreferences =
+            accessibilityPreferences ?? _defaultAccessibilityPreferences();
+
+  static Map<String, dynamic> _defaultAccessibilityPreferences() => {
+        'audioFeedbackEnabled': false,
+        'fontScale': 1.0,
+        'notificationsEnabled': true,
+        'languageCode': 'en',
+      };
 
   /// Format `UNNNNN` (e.g. U00001), max length 6.
   final String userId;
@@ -27,7 +35,7 @@ class UserEntity {
   final String email;
   final String voiceProfile;
   final String emergencyContact;
-  final String accessibilityPreferences;
+  final Map<String, dynamic> accessibilityPreferences;
   final UserStatus status;
 
   static const String collection = 'users';

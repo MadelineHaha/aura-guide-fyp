@@ -7,6 +7,7 @@ import 'dart:async';
 import 'app_route_observer.dart';
 import 'auth_session.dart';
 import 'services/user_profile_service.dart';
+import 'widgets/app_back_button.dart';
 
 class MyProfilePage extends StatefulWidget {
   const MyProfilePage({super.key});
@@ -846,14 +847,9 @@ class _MyProfilePageState extends State<MyProfilePage>
         foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            if (Navigator.of(context).canPop()) {
-              Navigator.of(context).pop();
-            }
-          },
-        ),
+        automaticallyImplyLeading: false,
+        leadingWidth: AppBackButton.appBarLeadingWidth,
+        leading: const AppBackButton(),
         title: const Text(
           'My Profile',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 24),

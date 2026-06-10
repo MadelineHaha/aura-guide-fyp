@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../auth_session.dart';
+import '../models/accessibility_preferences.dart';
 
 /// Loads and saves `users/{uid}` — document id must match Firebase Auth uid.
 class UserProfileService {
@@ -91,6 +92,17 @@ class UserProfileService {
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
     return true;
+  }
+
+  Future<void> saveAccessibilityPreferences({
+    required String uid,
+    required Map<String, dynamic> preferences,
+  }) async {
+    await doc(uid).set({
+      'authUid': uid,
+      AccessibilityPreferences.fieldName: preferences,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   Future<void> saveProfileFields({

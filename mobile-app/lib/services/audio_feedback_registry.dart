@@ -3,12 +3,17 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/widgets.dart';
 
+import 'audio_feedback_bounds.dart';
+import 'audio_feedback_route_notifier.dart';
+import 'audio_feedback_scaffold_registry.dart';
+
 class RegisteredFocusTarget {
   RegisteredFocusTarget({
     required this.id,
     required this.label,
     required this.key,
     required this.order,
+    this.routeScope,
     this.onActivate,
   });
 
@@ -16,6 +21,7 @@ class RegisteredFocusTarget {
   String label;
   final GlobalKey key;
   final int order;
+  Route<dynamic>? routeScope;
   VoidCallback? onActivate;
 }
 
@@ -27,11 +33,22 @@ class AudioFeedbackRegistry extends ChangeNotifier {
 
   int _nextOrder = 0;
   final Map<String, RegisteredFocusTarget> _targets = {};
+  bool _notifyPending = false;
+
+  void _scheduleNotify() {
+    if (_notifyPending) return;
+    _notifyPending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _notifyPending = false;
+      notifyListeners();
+    });
+  }
 
   void register({
     required String id,
     required String label,
     required GlobalKey key,
+    Route<dynamic>? routeScope,
     VoidCallback? onActivate,
   }) {
     _targets[id] = RegisteredFocusTarget(
@@ -39,9 +56,17 @@ class AudioFeedbackRegistry extends ChangeNotifier {
       label: label,
       key: key,
       order: _nextOrder++,
+      routeScope: routeScope,
       onActivate: onActivate,
     );
-    notifyListeners();
+    _scheduleNotify();
+  }
+
+  void updateRouteScope(String id, Route<dynamic>? routeScope) {
+    final target = _targets[id];
+    if (target == null || target.routeScope == routeScope) return;
+    target.routeScope = routeScope;
+    _scheduleNotify();
   }
 
   void updateOnActivate(String id, VoidCallback? onActivate) {
@@ -50,10 +75,9 @@ class AudioFeedbackRegistry extends ChangeNotifier {
     target.onActivate = onActivate;
   }
 
-  /// Activates the focused target (button press / navigation).
   bool activateForId(String id) {
     final target = _targets[id];
-    if (target == null) return false;
+    if (target == null || !_isOnVisibleRoute(target)) return false;
 
     if (target.onActivate != null) {
       target.onActivate!();
@@ -67,22 +91,67 @@ class AudioFeedbackRegistry extends ChangeNotifier {
     final target = _targets[id];
     if (target == null || target.label == label) return;
     target.label = label;
-    notifyListeners();
+    _scheduleNotify();
   }
 
   void unregister(String id) {
     if (_targets.remove(id) != null) {
-      notifyListeners();
+      _scheduleNotify();
     }
+  }
+
+  /// True when the target belongs to the route the user is actually viewing.
+  bool isTargetOnVisibleRoute(String id) {
+    final target = _targets[id];
+    if (target == null) return false;
+    return _isOnVisibleRoute(target);
+  }
+
+  bool _isOnVisibleRoute(RegisteredFocusTarget target) {
+    final context = target.key.currentContext;
+    if (context == null || !context.mounted) return false;
+    if (!AudioFeedbackScaffoldRegistry.shouldIncludeForDrawerState(context)) {
+      return false;
+    }
+
+    final route = target.routeScope;
+    final topRoute = AudioFeedbackRouteNotifier.instance.topRoute;
+
+    if (topRoute != null) {
+      return route != null && identical(route, topRoute);
+    }
+
+    return route?.isCurrent ?? false;
+  }
+
+  List<({String id, String label, VoidCallback? onActivate})>
+      registeredOnVisibleRoute() {
+    final items = <({String id, String label, VoidCallback? onActivate})>[];
+
+    for (final target in _targets.values) {
+      if (!_isOnVisibleRoute(target)) continue;
+      final label = target.label.trim();
+      if (label.isEmpty) continue;
+      if (boundsForId(target.id, checkRoute: false) == null) continue;
+      items.add((
+        id: target.id,
+        label: label,
+        onActivate: target.onActivate,
+      ));
+    }
+
+    return items;
   }
 
   List<({String id, String text})> collectTargets() {
     final items = <({String id, String text, int order})>[];
 
     for (final target in _targets.values) {
+      if (!_isOnVisibleRoute(target)) continue;
+
       final text = target.label.trim();
       if (text.isEmpty) continue;
-      if (boundsForId(target.id) == null) continue;
+      if (boundsForId(target.id, checkRoute: false) == null) continue;
       items.add((id: target.id, text: text, order: target.order));
     }
 
@@ -102,9 +171,10 @@ class AudioFeedbackRegistry extends ChangeNotifier {
         .toList(growable: false);
   }
 
-  Rect? boundsForId(String id) {
+  Rect? boundsForId(String id, {bool checkRoute = true}) {
     final target = _targets[id];
     if (target == null) return null;
+    if (checkRoute && !_isOnVisibleRoute(target)) return null;
 
     final context = target.key.currentContext;
     if (context == null) return null;
@@ -116,58 +186,8 @@ class AudioFeedbackRegistry extends ChangeNotifier {
       return null;
     }
 
-    final screenSize = _screenSizeFor(context);
-    return _focusBounds(renderObject, screenSize);
-  }
-
-  Size _screenSizeFor(BuildContext context) {
-    final view = View.maybeOf(context);
-    if (view != null) {
-      return view.physicalSize / view.devicePixelRatio;
-    }
-    final platformView = WidgetsBinding.instance.platformDispatcher.views.first;
-    return platformView.physicalSize / platformView.devicePixelRatio;
-  }
-
-  bool _isTooLarge(Rect rect, Size screenSize) {
-    if (screenSize.width <= 0 || screenSize.height <= 0) return false;
-    final widthRatio = rect.width / screenSize.width;
-    final heightRatio = rect.height / screenSize.height;
-    return widthRatio > 0.82 ||
-        heightRatio > 0.82 ||
-        (widthRatio > 0.65 && heightRatio > 0.45);
-  }
-
-  Rect? _focusBounds(RenderBox box, Size screenSize) {
-    final inner =
-        _unionVisibleDescendants(box) ?? _unionParagraphs(box);
-    if (inner != null && !_isTooLarge(inner, screenSize)) {
-      return inner;
-    }
-
-    final outer = box.localToGlobal(Offset.zero) & box.size;
-    if (!_isTooLarge(outer, screenSize)) {
-      return outer;
-    }
-
-    return null;
-  }
-
-  Rect? _unionParagraphs(RenderBox root) {
-    Rect? union;
-
-    void visit(RenderObject object) {
-      if (object is RenderParagraph && object.hasSize) {
-        final rect = object.localToGlobal(Offset.zero) & object.size;
-        if (rect.width >= 4 && rect.height >= 4) {
-          union = union == null ? rect : union!.expandToInclude(rect);
-        }
-      }
-      object.visitChildren(visit);
-    }
-
-    visit(root);
-    return union;
+    final screenSize = AudioFeedbackBounds.screenSizeFor(context);
+    return AudioFeedbackBounds.registeredTargetBounds(renderObject, screenSize);
   }
 
   bool _performSemanticsTap(BuildContext? context) {
@@ -201,42 +221,5 @@ class AudioFeedbackRegistry extends ChangeNotifier {
     if (tapNode == null) return false;
     owner.performAction(tapNode!.id, SemanticsAction.tap);
     return true;
-  }
-
-  Rect? _unionVisibleDescendants(RenderBox root) {
-    final rootRect = root.localToGlobal(Offset.zero) & root.size;
-    final rootArea = rootRect.width * rootRect.height;
-    if (rootArea <= 0) return null;
-
-    Rect? union;
-
-    void visit(RenderObject object) {
-      if (identical(object, root)) {
-        object.visitChildren(visit);
-        return;
-      }
-
-      if (object is! RenderBox || !object.hasSize) {
-        object.visitChildren(visit);
-        return;
-      }
-
-      final rect = object.localToGlobal(Offset.zero) & object.size;
-      final area = rect.width * rect.height;
-
-      if (area >= rootArea * 0.88) {
-        object.visitChildren(visit);
-        return;
-      }
-
-      if (rect.width >= 4 && rect.height >= 4) {
-        union = union == null ? rect : union!.expandToInclude(rect);
-      }
-
-      object.visitChildren(visit);
-    }
-
-    visit(root);
-    return union;
   }
 }

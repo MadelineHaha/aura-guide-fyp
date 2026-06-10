@@ -4,6 +4,9 @@ import 'package:flutter/services.dart';
 import 'models/health_record_item.dart';
 import 'services/health_record_audio_service.dart';
 import 'services/health_records_service.dart';
+import 'widgets/accessible_focus_region.dart';
+import 'widgets/app_back_button.dart';
+import 'widgets/audio_feedback_title.dart';
 
 class HealthRecordsPage extends StatefulWidget {
   const HealthRecordsPage({super.key});
@@ -104,9 +107,15 @@ class _HealthRecordsPageState extends State<HealthRecordsPage> {
         backgroundColor: _bg,
         foregroundColor: Colors.white,
         elevation: 0,
-        title: const Text(
-          'Health Records',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+        automaticallyImplyLeading: false,
+        leadingWidth: AppBackButton.appBarLeadingWidth,
+        leading: const AppBackButton(),
+        title: AudioFeedbackTitle(
+          label: 'Health Records',
+          child: const Text(
+            'Health Records',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+          ),
         ),
         centerTitle: true,
       ),
@@ -158,11 +167,15 @@ class _HealthRecordsPageState extends State<HealthRecordsPage> {
             separatorBuilder: (_, __) => const SizedBox(height: 14),
             itemBuilder: (context, index) {
               final record = records[index];
-              return _HealthRecordCard(
-                record: record,
-                isPlayingAudio: _playingRecordId == record.recordId,
-                onPlayAudio: () => _onPlayAudio(record),
-                onExport: () => _onExport(record),
+              return AccessibleFocusRegion(
+                label:
+                    '${record.recordType}. ${record.dateCreated}. ${record.doctorName}. ${record.summary}',
+                child: _HealthRecordCard(
+                  record: record,
+                  isPlayingAudio: _playingRecordId == record.recordId,
+                  onPlayAudio: () => _onPlayAudio(record),
+                  onExport: () => _onExport(record),
+                ),
               );
             },
           );

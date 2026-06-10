@@ -3,6 +3,11 @@ import 'package:flutter/material.dart';
 import 'book_appointment_page.dart';
 import 'models/appointment_item.dart';
 import 'services/appointments_service.dart';
+import 'widgets/accessible_focus_region.dart';
+import 'widgets/app_back_button.dart';
+import 'widgets/audio_feedback_title.dart';
+import 'widgets/audio_feedback_overlay.dart';
+import 'services/app_settings_service.dart';
 
 class AppointmentsPage extends StatefulWidget {
   const AppointmentsPage({super.key});
@@ -40,6 +45,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
         _all = items;
         _loading = false;
       });
+      _refreshAudioFeedbackIfNeeded();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -56,6 +62,13 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
       _all.where((a) => a.isPast).toList()..sort((a, b) => b.dateTime.compareTo(a.dateTime));
 
   List<AppointmentItem> get _visible => _tabIndex == 0 ? _upcoming : _past;
+
+  void _refreshAudioFeedbackIfNeeded() {
+    if (!AppSettingsService.instance.settings.audioFeedbackEnabled) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      AudioFeedbackHost.requestRefresh();
+    });
+  }
 
   Future<void> _onCancel(AppointmentItem item) async {
     final confirmed = await showDialog<bool>(
@@ -119,9 +132,15 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
         foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          'Appointments',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+        automaticallyImplyLeading: false,
+        leadingWidth: AppBackButton.appBarLeadingWidth,
+        leading: const AppBackButton(),
+        title: AudioFeedbackTitle(
+          label: 'Appointments',
+          child: const Text(
+            'Appointments',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+          ),
         ),
       ),
       body: SafeArea(
@@ -152,19 +171,26 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                               separatorBuilder: (_, __) => const SizedBox(height: 14),
                               itemBuilder: (context, index) {
                                 final item = _visible[index];
-                                return _AppointmentCard(
-                                  item: item,
-                                  showActions: _tabIndex == 0,
-                                  onCancel: () => _onCancel(item),
-                                  onReschedule: () => _onReschedule(item),
+                                return AccessibleFocusRegion(
+                                  label:
+                                      '${item.doctorName}. ${item.specialty}. ${item.dateLabel}. ${item.timeLabel}. ${item.locationDisplay}',
+                                  child: _AppointmentCard(
+                                    item: item,
+                                    showActions: _tabIndex == 0,
+                                    onCancel: () => _onCancel(item),
+                                    onReschedule: () => _onReschedule(item),
+                                  ),
                                 );
                               },
                             ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-              child: FilledButton(
-                onPressed: _onBook,
+              child: AccessibleFocusRegion(
+                label: 'Book Appointment',
+                onActivate: _onBook,
+                child: FilledButton(
+                  onPressed: _onBook,
                 style: FilledButton.styleFrom(
                   backgroundColor: _accent,
                   foregroundColor: Colors.black,
@@ -173,9 +199,10 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                     borderRadius: BorderRadius.circular(14),
                   ),
                 ),
-                child: const Text(
-                  'Book Appointment',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  child: const Text(
+                    'Book Appointment',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
                 ),
               ),
             ),
@@ -207,18 +234,26 @@ class _TabBar extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: _TabChip(
+          child: AccessibleFocusRegion(
             label: 'Upcoming ($upcomingCount)',
-            selected: selectedIndex == 0,
-            onTap: () => onChanged(0),
+            onActivate: () => onChanged(0),
+            child: _TabChip(
+              label: 'Upcoming ($upcomingCount)',
+              selected: selectedIndex == 0,
+              onTap: () => onChanged(0),
+            ),
           ),
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: _TabChip(
+          child: AccessibleFocusRegion(
             label: 'Past ($pastCount)',
-            selected: selectedIndex == 1,
-            onTap: () => onChanged(1),
+            onActivate: () => onChanged(1),
+            child: _TabChip(
+              label: 'Past ($pastCount)',
+              selected: selectedIndex == 1,
+              onTap: () => onChanged(1),
+            ),
           ),
         ),
       ],

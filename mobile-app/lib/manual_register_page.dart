@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_auth_helper.dart';
 import 'models/user_entity.dart';
 import 'services/user_registration_service.dart';
+import 'widgets/app_back_button.dart';
 import 'widgets/calendar_date_picker_dialog.dart';
 import 'widgets/date_select_field.dart';
 
@@ -225,8 +226,9 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
           'Create Account',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+        automaticallyImplyLeading: false,
+        leadingWidth: AppBackButton.appBarLeadingWidth,
+        leading: AppBackButton(
           onPressed: () {
             if (_step > 0) {
               setState(() => _step -= 1);

@@ -4,6 +4,9 @@ import 'chat_page.dart';
 import 'models/conversation_thread.dart';
 import 'models/staff_option.dart';
 import 'services/communication_service.dart';
+import 'widgets/accessible_focus_region.dart';
+import 'widgets/app_back_button.dart';
+import 'widgets/audio_feedback_title.dart';
 
 class CommunicationPage extends StatefulWidget {
   const CommunicationPage({super.key});
@@ -215,9 +218,15 @@ class _CommunicationPageState extends State<CommunicationPage> {
         backgroundColor: _bg,
         foregroundColor: Colors.white,
         elevation: 0,
-        title: const Text(
-          'Communication',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+        automaticallyImplyLeading: false,
+        leadingWidth: AppBackButton.appBarLeadingWidth,
+        leading: const AppBackButton(),
+        title: AudioFeedbackTitle(
+          label: 'Communication',
+          child: const Text(
+            'Communication',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+          ),
         ),
         centerTitle: true,
       ),
@@ -776,20 +785,23 @@ class _ThreadCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: _card,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: Color(0xFF333333)),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            children: [
-              _ThreadAvatar(thread: thread),
+    return AccessibleFocusRegion(
+      label: '${thread.title}. ${thread.preview}',
+      onActivate: onTap,
+      child: Material(
+        color: _card,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: const BorderSide(color: Color(0xFF333333)),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                _ThreadAvatar(thread: thread),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -840,6 +852,7 @@ class _ThreadCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
       ),
     );
   }

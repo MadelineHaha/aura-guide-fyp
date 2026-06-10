@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'models/navigation_destination.dart' show NavDestination;
 import 'services/navigation_guidance_controller.dart';
 import 'services/obstacle_scanner_service.dart';
+import 'widgets/app_back_button.dart';
 import 'widgets/ar_path_overlay.dart';
 import 'widgets/direction_compass.dart';
 
@@ -165,14 +166,7 @@ class _NavigationArPageState extends State<NavigationArPage>
               alignment: Alignment.topLeft,
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: IconButton.filled(
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.black54,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.arrow_back),
-                ),
+                child: const AppBackButton(style: AppBackButtonStyle.filled),
               ),
             ),
           ),

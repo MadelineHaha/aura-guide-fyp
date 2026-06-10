@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'widgets/app_back_button.dart';
+
 class PasswordRecoveryPage extends StatefulWidget {
   const PasswordRecoveryPage({super.key});
 
@@ -108,8 +110,9 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
           'Password Recovery',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+        automaticallyImplyLeading: false,
+        leadingWidth: AppBackButton.appBarLeadingWidth,
+        leading: AppBackButton(
           onPressed: () {
             if (_step > 0) {
               setState(() => _step -= 1);

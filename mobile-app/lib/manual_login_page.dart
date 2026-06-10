@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import 'widgets/app_back_button.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_auth_helper.dart';
 import 'main_menu_page.dart';
@@ -118,8 +120,9 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
           'Login Account',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+        automaticallyImplyLeading: false,
+        leadingWidth: AppBackButton.appBarLeadingWidth,
+        leading: AppBackButton(
           onPressed: () {
             if (_step > 0) {
               setState(() => _step -= 1);

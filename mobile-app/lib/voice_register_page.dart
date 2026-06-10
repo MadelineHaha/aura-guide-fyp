@@ -1,5 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import 'widgets/app_back_button.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import 'main_menu_page.dart';
@@ -246,8 +248,9 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
           'Create Account',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+        automaticallyImplyLeading: false,
+        leadingWidth: AppBackButton.appBarLeadingWidth,
+        leading: AppBackButton(
           onPressed: () {
             if (_step > 0) {
               setState(() => _step -= 1);

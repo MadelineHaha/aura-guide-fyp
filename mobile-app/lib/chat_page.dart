@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import 'models/chat_list_item.dart';
 import 'services/communication_service.dart';
+import 'widgets/accessible_focus_region.dart';
+import 'widgets/app_back_button.dart';
+import 'widgets/audio_feedback_title.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({
@@ -91,9 +94,15 @@ class _ChatPageState extends State<ChatPage> {
         backgroundColor: _bg,
         foregroundColor: Colors.white,
         elevation: 0,
-        title: Text(
-          widget.title,
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+        automaticallyImplyLeading: false,
+        leadingWidth: AppBackButton.appBarLeadingWidth,
+        leading: const AppBackButton(),
+        title: AudioFeedbackTitle(
+          label: widget.title,
+          child: Text(
+            widget.title,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
         ),
       ),
       body: Column(
@@ -123,10 +132,14 @@ class _ChatPageState extends State<ChatPage> {
 
                 if (items.isEmpty) {
                   return const Center(
-                    child: Text(
-                      'No messages yet.\nSay hello to start the conversation.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: _subtext, height: 1.4),
+                    child: AccessibleFocusRegion(
+                      label:
+                          'No messages yet. Say hello to start the conversation.',
+                      child: Text(
+                        'No messages yet.\nSay hello to start the conversation.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: _subtext, height: 1.4),
+                      ),
                     ),
                   );
                 }
@@ -141,18 +154,28 @@ class _ChatPageState extends State<ChatPage> {
                     final item = items[index];
                     switch (item.type) {
                       case ChatListItemType.divider:
-                        return _DateDivider(label: item.label ?? '');
+                        return AccessibleFocusRegion(
+                          label: item.label ?? '',
+                          child: _DateDivider(label: item.label ?? ''),
+                        );
                       case ChatListItemType.incoming:
-                        return _Bubble(
-                          text: item.text ?? '',
-                          time: item.time ?? '',
-                          outgoing: false,
+                        return AccessibleFocusRegion(
+                          label:
+                              'Message from ${widget.title}. ${item.text ?? ''}',
+                          child: _Bubble(
+                            text: item.text ?? '',
+                            time: item.time ?? '',
+                            outgoing: false,
+                          ),
                         );
                       case ChatListItemType.outgoing:
-                        return _Bubble(
-                          text: item.text ?? '',
-                          time: item.time ?? '',
-                          outgoing: true,
+                        return AccessibleFocusRegion(
+                          label: 'You said. ${item.text ?? ''}',
+                          child: _Bubble(
+                            text: item.text ?? '',
+                            time: item.time ?? '',
+                            outgoing: true,
+                          ),
                         );
                     }
                   },
@@ -160,17 +183,20 @@ class _ChatPageState extends State<ChatPage> {
               },
             ),
           ),
-          _Composer(
-            controller: _controller,
-            sending: _sending,
-            onSend: _send,
-            onMic: () {
+          AccessibleFocusRegion(
+            label: 'Type or use voice to send a message.',
+            child: _Composer(
+              controller: _controller,
+              sending: _sending,
+              onSend: _send,
+              onMic: () {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('Voice input will be added in a future update.'),
                 ),
               );
-            },
+              },
+            ),
           ),
         ],
       ),

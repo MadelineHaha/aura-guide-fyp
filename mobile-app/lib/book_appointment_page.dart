@@ -7,6 +7,7 @@ import 'services/healthcare_staff_service.dart';
 import 'utils/appointment_time_slots.dart';
 import 'utils/clinic_datetime.dart';
 import 'widgets/calendar_date_picker_dialog.dart';
+import 'widgets/app_back_button.dart';
 import 'widgets/date_select_field.dart';
 
 class BookAppointmentPage extends StatefulWidget {
@@ -342,12 +343,9 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(
                 children: [
-                  IconButton(
+                  AppBackButton(
                     onPressed: _goBack,
-                    icon: const Icon(Icons.arrow_back, color: Colors.white),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                    tooltip: _step == 0 ? 'Back' : 'Previous step',
+                    style: AppBackButtonStyle.compact,
                   ),
                   const SizedBox(width: 4),
                   Expanded(

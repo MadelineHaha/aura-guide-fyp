@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import 'models/medication_item.dart';
 import 'services/medications_service.dart';
+import 'widgets/accessible_focus_region.dart';
+import 'widgets/app_back_button.dart';
+import 'widgets/audio_feedback_title.dart';
 
 class MedicationsPage extends StatefulWidget {
   const MedicationsPage({super.key});
@@ -22,6 +25,11 @@ class _MedicationsPageState extends State<MedicationsPage> {
   void initState() {
     super.initState();
     _medicationsStream = _service.watchForCurrentPatient();
+  }
+
+  static String _medicationLabel(MedicationItem item) {
+    final status = item.takenToday ? 'Taken' : 'Not taken';
+    return '${item.name}. ${item.scheduledTime}. ${item.dosage}. $status';
   }
 
   Future<void> _toggleTaken(MedicationItem item) async {
@@ -46,9 +54,15 @@ class _MedicationsPageState extends State<MedicationsPage> {
         backgroundColor: _bg,
         foregroundColor: Colors.white,
         elevation: 0,
-        title: const Text(
-          'Medication',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+        automaticallyImplyLeading: false,
+        leadingWidth: AppBackButton.appBarLeadingWidth,
+        leading: const AppBackButton(),
+        title: AudioFeedbackTitle(
+          label: 'Medication',
+          child: const Text(
+            'Medication',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+          ),
         ),
         centerTitle: true,
       ),
@@ -60,10 +74,13 @@ class _MedicationsPageState extends State<MedicationsPage> {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
-                child: Text(
-                  'Could not load medications.\n${snapshot.error}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: _subtext, height: 1.4),
+                child: AccessibleFocusRegion(
+                  label: 'Could not load medications. ${snapshot.error}',
+                  child: Text(
+                    'Could not load medications.\n${snapshot.error}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: _subtext, height: 1.4),
+                  ),
                 ),
               ),
             );
@@ -84,11 +101,15 @@ class _MedicationsPageState extends State<MedicationsPage> {
             return const Center(
               child: Padding(
                 padding: EdgeInsets.all(32),
-                child: Text(
-                  'There is no medication yet.\n'
-                  'Your healthcare provider will add prescriptions for you.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: _subtext, fontSize: 15, height: 1.4),
+                child: AccessibleFocusRegion(
+                  label:
+                      'There is no medication yet. Your healthcare provider will add prescriptions for you.',
+                  child: Text(
+                    'There is no medication yet.\n'
+                    'Your healthcare provider will add prescriptions for you.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: _subtext, fontSize: 15, height: 1.4),
+                  ),
                 ),
               ),
             );
@@ -102,19 +123,27 @@ class _MedicationsPageState extends State<MedicationsPage> {
           return ListView(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
             children: [
-              _TodayProgressCard(
-                takenCount: takenCount,
-                total: total,
-                progress: progress,
-                percent: percent,
+              AccessibleFocusRegion(
+                label:
+                    "Today's Progress. $takenCount of $total taken. $percent percent.",
+                child: _TodayProgressCard(
+                  takenCount: takenCount,
+                  total: total,
+                  progress: progress,
+                  percent: percent,
+                ),
               ),
               const SizedBox(height: 16),
               ...meds.map(
                 (med) => Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: _MedicationCard(
-                    item: med,
-                    onToggleTaken: () => _toggleTaken(med),
+                  child: AccessibleFocusRegion(
+                    label: _medicationLabel(med),
+                    onActivate: () => _toggleTaken(med),
+                    child: _MedicationCard(
+                      item: med,
+                      onToggleTaken: () => _toggleTaken(med),
+                    ),
                   ),
                 ),
               ),

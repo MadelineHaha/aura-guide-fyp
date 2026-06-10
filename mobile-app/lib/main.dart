@@ -9,6 +9,7 @@ import 'firebase_auth_helper.dart';
 import 'firebase_options.dart';
 import 'main_menu_page.dart';
 import 'services/app_settings_service.dart';
+import 'services/audio_feedback_route_notifier.dart';
 import 'start_page.dart';
 import 'widgets/audio_feedback_overlay.dart';
 
@@ -25,29 +26,36 @@ Future<void> main() async {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
+  static final rootNavigatorKey = GlobalKey<NavigatorState>();
+
   @override
   Widget build(BuildContext context) {
-    final settings = AppSettingsService.instance;
-    return AnimatedBuilder(
-      animation: settings,
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Aura Guide',
+      navigatorKey: rootNavigatorKey,
+      navigatorObservers: [
+        appRouteObserver,
+        AudioFeedbackRouteNotifier.instance,
+      ],
       builder: (context, child) {
-        return MaterialApp(
-          debugShowCheckedModeBanner: false,
-          title: 'Aura Guide',
-          navigatorObservers: [appRouteObserver],
-          builder: (context, child) {
-            final scaled = MediaQuery(
-              data: MediaQuery.of(context).copyWith(
-                textScaler: TextScaler.linear(settings.settings.fontScale),
-              ),
-              child: child ?? const SizedBox.shrink(),
-            );
-            return AudioFeedbackOverlay(child: scaled);
-          },
-          home: child,
+        return AudioFeedbackHost(
+          navigatorKey: rootNavigatorKey,
+          child: ListenableBuilder(
+            listenable: AppSettingsService.instance,
+            builder: (context, _) {
+              final settings = AppSettingsService.instance.settings;
+              return MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  textScaler: TextScaler.linear(settings.fontScale),
+                ),
+                child: child ?? const SizedBox.shrink(),
+              );
+            },
+          ),
         );
       },
-      child: const _AuthGate(),
+      home: const _AuthGate(),
     );
   }
 }
@@ -72,6 +80,7 @@ class _AuthGateState extends State<_AuthGate> {
     _user = FirebaseAuth.instance.currentUser;
     if (_user != null) {
       AuthSession.updateSignedInUser(_user!);
+      unawaited(AppSettingsService.instance.syncFromFirestore(_user!.uid));
     }
     _authSub = FirebaseAuth.instance.authStateChanges().listen(_onAuthChanged);
   }
@@ -81,6 +90,7 @@ class _AuthGateState extends State<_AuthGate> {
 
     if (user != null) {
       AuthSession.updateSignedInUser(user);
+      unawaited(AppSettingsService.instance.syncFromFirestore(user.uid));
       setState(() {
         _user = user;
         _initializing = false;
@@ -92,6 +102,7 @@ class _AuthGateState extends State<_AuthGate> {
     if (AuthSession.explicitSignOutRequested) {
       AuthSession.clearExplicitSignOut();
       AuthSession.lastKnownUser = null;
+      AppSettingsService.instance.clearCloudSync();
       setState(() {
         _user = null;
         _initializing = false;
@@ -107,6 +118,7 @@ class _AuthGateState extends State<_AuthGate> {
         if (!mounted) return;
         if (recovered != null) {
           AuthSession.updateSignedInUser(recovered);
+          unawaited(AppSettingsService.instance.syncFromFirestore(recovered.uid));
           setState(() => _user = recovered);
           return;
         }
