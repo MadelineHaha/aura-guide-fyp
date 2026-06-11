@@ -20,7 +20,6 @@ class UserEntity {
             accessibilityPreferences ?? _defaultAccessibilityPreferences();
 
   static Map<String, dynamic> _defaultAccessibilityPreferences() => {
-        'audioFeedbackEnabled': false,
         'fontScale': 1.0,
         'notificationsEnabled': true,
         'languageCode': 'en',
@@ -62,7 +61,7 @@ class UserEntity {
       'name': name,
       'birthDate': Timestamp.fromDate(dateOnlyUtc(birthDate)),
       'email': email,
-      'voiceProfile': voiceProfile,
+      if (voiceProfile.isNotEmpty) 'voiceProfile': voiceProfile,
       'emergencyContact': emergencyContact,
       'accessibilityPreferences': accessibilityPreferences,
       'status': status == UserStatus.active ? 'Active' : 'Inactive',

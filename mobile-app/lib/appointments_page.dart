@@ -5,9 +5,6 @@ import 'models/appointment_item.dart';
 import 'services/appointments_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
-import 'widgets/audio_feedback_title.dart';
-import 'widgets/audio_feedback_overlay.dart';
-import 'services/app_settings_service.dart';
 
 class AppointmentsPage extends StatefulWidget {
   const AppointmentsPage({super.key});
@@ -45,7 +42,6 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
         _all = items;
         _loading = false;
       });
-      _refreshAudioFeedbackIfNeeded();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -62,13 +58,6 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
       _all.where((a) => a.isPast).toList()..sort((a, b) => b.dateTime.compareTo(a.dateTime));
 
   List<AppointmentItem> get _visible => _tabIndex == 0 ? _upcoming : _past;
-
-  void _refreshAudioFeedbackIfNeeded() {
-    if (!AppSettingsService.instance.settings.audioFeedbackEnabled) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      AudioFeedbackHost.requestRefresh();
-    });
-  }
 
   Future<void> _onCancel(AppointmentItem item) async {
     final confirmed = await showDialog<bool>(
@@ -135,12 +124,9 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: AudioFeedbackTitle(
-          label: 'Appointments',
-          child: const Text(
-            'Appointments',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-          ),
+        title: const Text(
+          'Appointments',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
         ),
       ),
       body: SafeArea(

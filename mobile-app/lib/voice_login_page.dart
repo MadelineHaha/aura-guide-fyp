@@ -1,10 +1,14 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:speech_to_text/speech_to_text.dart';
 
+import 'firebase_auth_helper.dart';
 import 'main_menu_page.dart';
+import 'services/phone_number_service.dart';
+import 'services/voice_auth_credentials_service.dart';
+import 'services/voice_passphrase_controller.dart';
 import 'services/voice_profile_service.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/voice_record_button.dart';
 
 class VoiceLoginPage extends StatefulWidget {
   const VoiceLoginPage({super.key});
@@ -14,121 +18,229 @@ class VoiceLoginPage extends StatefulWidget {
 }
 
 class _VoiceLoginPageState extends State<VoiceLoginPage> {
-  final _speech = SpeechToText();
+  final _controller = VoicePassphraseController();
   final _voiceProfile = VoiceProfileService();
 
-  bool _isRecording = false;
-  bool _hasSample = false;
   bool _enteringDashboard = false;
-  String _capturedPhrase = '';
+  bool _showPhoneBackup = false;
+  String? _statusMessage;
+  List<Map<String, dynamic>> _phoneBackupCandidates = const [];
 
-  static const Color _accent = Color(0xFF63C3C4);
   static const Color _bg = Color(0xFF000000);
+  static const Color _accent = Color(0xFF63C3C4);
   static const Color _subtext = Color(0xFFB0B0B0);
 
-  Future<void> _toggleRecording() async {
-    if (_isRecording) {
-      await _speech.stop();
-      if (!mounted) return;
-      setState(() => _isRecording = false);
-      return;
-    }
-
-    final available = await _speech.initialize(
-      onStatus: (status) {
-        if (status == 'done' && mounted) {
-          setState(() => _isRecording = false);
-        }
-      },
-      onError: (error) {
-        if (!mounted) return;
-        setState(() => _isRecording = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Voice capture failed: ${error.errorMsg}')),
-        );
-      },
-    );
-
-    if (!available) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Microphone permission is required.')),
-      );
-      return;
-    }
-
-    setState(() {
-      _isRecording = true;
-      _capturedPhrase = '';
-    });
-
-    await _speech.listen(
-      listenFor: const Duration(seconds: 8),
-      pauseFor: const Duration(seconds: 2),
-      listenOptions: SpeechListenOptions(partialResults: true),
-      onResult: (result) {
-        if (!mounted) return;
-        final normalized = _voiceProfile.normalize(result.recognizedWords);
-        setState(() {
-          _capturedPhrase = normalized;
-          _hasSample = normalized.isNotEmpty;
-        });
-      },
-    );
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onRecordingChanged);
   }
 
-  Future<void> _enterDashboard() async {
-    if (!_hasSample) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Please record your voice sample first.',
-            style: TextStyle(fontSize: 15),
-          ),
-        ),
-      );
-      return;
-    }
+  void _onRecordingChanged() {
+    if (!_controller.hasValidSample || _enteringDashboard) return;
+    _attemptVoiceLogin();
+  }
 
-    setState(() => _enteringDashboard = true);
+  Future<void> _startRecording() async {
+    if (_enteringDashboard || _controller.isRecording) return;
+
+    setState(() {
+      _statusMessage = null;
+      _showPhoneBackup = false;
+      _phoneBackupCandidates = const [];
+    });
+    final error = await _controller.startRecording();
+    if (!mounted) return;
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
+    }
+  }
+
+  Future<void> _attemptVoiceLogin() async {
+    if (_enteringDashboard) return;
+
+    setState(() {
+      _enteringDashboard = true;
+      _statusMessage = 'Verifying your voiceprint...';
+      _showPhoneBackup = false;
+    });
+
     try {
-      final matched = await _voiceProfile.findMatchingProfile(_capturedPhrase);
-      if (matched == null) {
+      final verification = await _voiceProfile.verifyVoiceLogin(
+        passphrase: _controller.capturedPhrase,
+        probeVector: _controller.voiceprintVector,
+      );
+
+      if (verification.status == VoiceVerificationStatus.phraseNotFound) {
         if (!mounted) return;
-        setState(() => _enteringDashboard = false);
+        _controller.resetSample();
+        setState(() {
+          _enteringDashboard = false;
+          _statusMessage =
+              'Voice does not match any registered profile. Please try again.';
+        });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Voice does not match any registered profile.')),
+          const SnackBar(
+            content: Text('Voice does not match any registered profile.'),
+          ),
         );
         return;
       }
 
-      if (FirebaseAuth.instance.currentUser == null) {
-        await FirebaseAuth.instance.signInAnonymously();
+      if (verification.status == VoiceVerificationStatus.voiceMismatch) {
+        if (!mounted) return;
+        _controller.resetSample();
+        setState(() {
+          _enteringDashboard = false;
+          _showPhoneBackup = true;
+          _phoneBackupCandidates = verification.candidates;
+          _statusMessage =
+              'Your voice sounds different. Verify with your registered phone number as a backup.';
+        });
+        return;
       }
 
+      final matched = verification.profile;
+      if (matched == null) {
+        throw StateError('Voice verification succeeded without a profile.');
+      }
+
+      await _signInWithProfile(matched);
+    } on FirebaseAuthException catch (e) {
       if (!mounted) return;
-      setState(() => _enteringDashboard = false);
+      _controller.resetSample();
+      setState(() {
+        _enteringDashboard = false;
+        _statusMessage = firebaseAuthErrorMessage(e);
+      });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Voice verified. Welcome ${matched['name'] ?? 'User'}!')),
-      );
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute<void>(
-          builder: (context) => const MainMenuPage(),
-        ),
-        (route) => false,
+        SnackBar(content: Text(firebaseAuthErrorMessage(e))),
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _enteringDashboard = false);
+      _controller.resetSample();
+      setState(() {
+        _enteringDashboard = false;
+        _statusMessage = 'Voice login failed. Please try again.';
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Voice login failed: $e')),
       );
     }
   }
 
+  Future<void> _verifyWithPhone() async {
+    setState(() {
+      _enteringDashboard = true;
+      _statusMessage = 'Verifying registered phone number...';
+    });
+
+    try {
+      final simPhone = await PhoneNumberService.instance.detectSimPhoneNumber();
+      if (simPhone == null || simPhone.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _enteringDashboard = false;
+          _statusMessage =
+              'Could not verify your registered phone number. Allow phone permission and try again.';
+        });
+        return;
+      }
+
+      Map<String, dynamic>? matched;
+      for (final candidate in _phoneBackupCandidates) {
+        final storedPhone = candidate['phoneNumber']?.toString();
+        if (PhoneNumberService.numbersMatch(storedPhone, simPhone)) {
+          matched = candidate;
+          break;
+        }
+      }
+
+      matched ??= await _voiceProfile.findProfileByPhone(simPhone);
+      if (matched == null) {
+        if (!mounted) return;
+        setState(() {
+          _enteringDashboard = false;
+          _statusMessage =
+              'This phone number does not match your registered account.';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Phone number verification failed.'),
+          ),
+        );
+        return;
+      }
+
+      await _signInWithProfile(matched);
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _enteringDashboard = false;
+        _statusMessage = firebaseAuthErrorMessage(e);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _enteringDashboard = false;
+        _statusMessage = 'Phone verification failed. Please try again.';
+      });
+    }
+  }
+
+  Future<void> _signInWithProfile(Map<String, dynamic> matched) async {
+    final matchedUid = (matched['authUid'] as String?)?.trim() ?? '';
+    if (matchedUid.isEmpty) {
+      throw StateError('Matched profile is missing an account id.');
+    }
+
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid != matchedUid) {
+      final credentials =
+          await VoiceAuthCredentialsService.instance.load(matchedUid);
+      if (credentials == null) {
+        if (!mounted) return;
+        _controller.resetSample();
+        setState(() {
+          _enteringDashboard = false;
+          _showPhoneBackup = false;
+          _statusMessage =
+              'Account found, but this device cannot sign in automatically. '
+              'Use email login instead.';
+        });
+        return;
+      }
+
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: credentials.email,
+        password: credentials.password,
+      );
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _enteringDashboard = false;
+      _showPhoneBackup = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Welcome ${matched['name'] ?? 'User'}!'),
+      ),
+    );
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(
+        builder: (context) => const MainMenuPage(),
+      ),
+      (route) => false,
+    );
+  }
+
   @override
   void dispose() {
-    _speech.stop();
+    _controller.removeListener(_onRecordingChanged);
+    _controller.dispose();
     super.dispose();
   }
 
@@ -167,91 +279,52 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Tap the microphone and speak your passphrase',
+                'Double tap the button below and say Sign me in. Your voiceprint will be verified.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
               ),
               const SizedBox(height: 34),
-              Center(
-                child: GestureDetector(
-                  onTap: _toggleRecording,
-                  child: Container(
-                    width: 112,
-                    height: 112,
-                    decoration: const BoxDecoration(
-                      color: _accent,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.mic,
-                      color: Colors.white,
-                      size: 48,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                _isRecording ? 'Listening...' : 'Tap to speak',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _capturedPhrase.isEmpty
-                    ? 'Please say: "Sign me in"'
-                    : 'Captured: "$_capturedPhrase"',
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: _subtext, fontSize: 15),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(4, (i) {
-                  final active = _hasSample || (_isRecording && i < 2);
-                  return Container(
-                    width: 7,
-                    height: 7,
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    decoration: BoxDecoration(
-                      color: active ? _accent : const Color(0xFF4D4D4D),
-                      shape: BoxShape.circle,
-                    ),
+              ListenableBuilder(
+                listenable: _controller,
+                builder: (context, _) {
+                  return VoiceRecordButton(
+                    isRecording: _controller.isRecording,
+                    hasValidSample: _controller.hasValidSample,
+                    heardPreview: _controller.heardPreview,
+                    accessibilityMessage: _controller.accessibilityMessage,
+                    onActivate: _startRecording,
                   );
-                }),
+                },
               ),
-              const SizedBox(height: 36),
-              FilledButton(
-                onPressed: _enteringDashboard ? null : _enterDashboard,
-                style: FilledButton.styleFrom(
-                  backgroundColor: _accent,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+              const SizedBox(height: 20),
+              if (_enteringDashboard)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: CircularProgressIndicator(color: _accent),
+                  ),
+                )
+              else if (_statusMessage != null)
+                Text(
+                  _statusMessage!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: _subtext, fontSize: 15),
+                ),
+              if (_showPhoneBackup && !_enteringDashboard) ...[
+                const SizedBox(height: 20),
+                FilledButton(
+                  onPressed: _verifyWithPhone,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _accent,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text(
+                    'Verify with Registered Phone Number',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                   ),
                 ),
-                child: _enteringDashboard
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.black,
-                        ),
-                      )
-                    : const Text(
-                        'Enter Dashboard',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-              ),
+              ],
             ],
           ),
         ),

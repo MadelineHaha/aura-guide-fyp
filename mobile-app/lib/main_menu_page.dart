@@ -13,12 +13,9 @@ import 'my_profile_page.dart';
 import 'services/appointments_service.dart';
 import 'services/communication_service.dart';
 import 'services/health_records_service.dart';
-import 'services/app_settings_service.dart';
-import 'services/audio_feedback_scaffold_registry.dart';
 import 'services/medications_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
-import 'widgets/audio_feedback_overlay.dart';
 
 class MainMenuPage extends StatefulWidget {
   const MainMenuPage({super.key});
@@ -35,67 +32,20 @@ class _MainMenuPageState extends State<MainMenuPage> {
   static const Color _text = Color(0xFFEFEFEF);
 
   @override
-  void initState() {
-    super.initState();
-    AudioFeedbackScaffoldRegistry.mainMenuScaffoldKey = MainMenuPage.scaffoldKey;
-  }
-
-  @override
-  void dispose() {
-    if (AudioFeedbackScaffoldRegistry.mainMenuScaffoldKey ==
-        MainMenuPage.scaffoldKey) {
-      AudioFeedbackScaffoldRegistry.mainMenuScaffoldKey = null;
-    }
-    super.dispose();
-  }
-
-  void _openDrawer() {
-    MainMenuPage.scaffoldKey.currentState?.openDrawer();
-    AudioFeedbackHost.notifyDrawerChanged();
-    _watchDrawerUntilClosed();
-  }
-
-  void _watchDrawerUntilClosed() {
-    void tick() {
-      if (!mounted) return;
-      if (AudioFeedbackScaffoldRegistry.isMainMenuDrawerOpen) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => tick());
-        return;
-      }
-      AudioFeedbackHost.notifyDrawerChanged();
-    }
-
-    WidgetsBinding.instance.addPostFrameCallback((_) => tick());
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: AppSettingsService.instance,
-      builder: (context, _) {
-        final audioFeedbackOn =
-            AppSettingsService.instance.settings.audioFeedbackEnabled;
-        return Scaffold(
-          key: MainMenuPage.scaffoldKey,
-          backgroundColor: _bg,
-          drawer: _MainMenuDrawer(
-            onClose: AudioFeedbackHost.notifyDrawerChanged,
-          ),
-          drawerEnableOpenDragGesture: !audioFeedbackOn,
-          drawerEdgeDragWidth: audioFeedbackOn ? 0 : 96,
-          body: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const _HeaderSection(),
-                  if (audioFeedbackOn) ...[
-                    const SizedBox(height: 10),
-                    _OpenMenuDrawerButton(onOpenDrawer: _openDrawer),
-                  ],
-                  const SizedBox(height: 14),
-                  const _ReminderCard(),
+    return Scaffold(
+      key: MainMenuPage.scaffoldKey,
+      backgroundColor: _bg,
+      drawer: const _MainMenuDrawer(),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const _HeaderSection(),
+              const SizedBox(height: 14),
+              const _ReminderCard(),
               const SizedBox(height: 18),
               const AccessibleFocusRegion(
                 label: 'Main menu',
@@ -154,12 +104,10 @@ class _MainMenuPageState extends State<MainMenuPage> {
                   ],
                 ),
               ),
-                ],
-              ),
-            ),
+            ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }
@@ -247,49 +195,6 @@ class _NotificationButton extends StatelessWidget {
   static void _showComingSoon(BuildContext context) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Notifications are coming soon.')),
-    );
-  }
-}
-
-class _OpenMenuDrawerButton extends StatelessWidget {
-  const _OpenMenuDrawerButton({required this.onOpenDrawer});
-
-  final VoidCallback onOpenDrawer;
-
-  @override
-  Widget build(BuildContext context) {
-    return AccessibleFocusRegion(
-      label: 'Menu. Double tap to open the side menu.',
-      onActivate: onOpenDrawer,
-      child: Material(
-        color: const Color(0xFF1A1A1A),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: Color(0xFF63C3C4), width: 1.2),
-        ),
-        child: InkWell(
-          onTap: onOpenDrawer,
-          borderRadius: BorderRadius.circular(12),
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.menu, color: Color(0xFF63C3C4), size: 22),
-                SizedBox(width: 10),
-                Text(
-                  'Menu',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -638,13 +543,10 @@ class _IconCircle extends StatelessWidget {
 }
 
 class _MainMenuDrawer extends StatelessWidget {
-  const _MainMenuDrawer({this.onClose});
-
-  final VoidCallback? onClose;
+  const _MainMenuDrawer();
 
   void _closeDrawer(BuildContext context) {
-    Navigator.of(context).pop();
-    onClose?.call();
+    MainMenuPage.scaffoldKey.currentState?.closeDrawer();
   }
 
   @override

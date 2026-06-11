@@ -1,12 +1,16 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import 'widgets/app_back_button.dart';
-import 'package:speech_to_text/speech_to_text.dart';
-
+import 'firebase_auth_helper.dart';
 import 'main_menu_page.dart';
+import 'models/voice_capture_result.dart';
+import 'services/phone_number_service.dart';
 import 'services/user_registration_service.dart';
+import 'services/voice_auth_credentials_service.dart';
+import 'services/voice_passphrase_controller.dart';
 import 'services/voice_profile_service.dart';
+import 'widgets/app_back_button.dart';
+import 'widgets/voice_record_button.dart';
 
 class VoiceRegisterPage extends StatefulWidget {
   const VoiceRegisterPage({super.key});
@@ -18,15 +22,12 @@ class VoiceRegisterPage extends StatefulWidget {
 class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _speech = SpeechToText();
+  final _voiceProfiles = VoiceProfileService();
+  late final VoicePassphraseController _voiceController;
   final _registration = UserRegistrationService();
-  final _voiceProfile = VoiceProfileService();
 
   int _step = 0;
-  bool _isRecording = false;
-  bool _hasSample = false;
   bool _submitting = false;
-  String _capturedPhrase = '';
 
   static const Color _accent = Color(0xFF66C2BD);
   static const Color _bg = Color(0xFF000000);
@@ -39,50 +40,60 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
     r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$',
   );
 
-  Future<void> _toggleRecording() async {
-    if (_isRecording) {
-      await _speech.stop();
-      if (!mounted) return;
-      setState(() => _isRecording = false);
-      return;
-    }
-
-    final available = await _speech.initialize(
-      onStatus: (status) {
-        if (status == 'done' && mounted) {
-          setState(() => _isRecording = false);
-        }
-      },
-      onError: (error) {
-        if (!mounted) return;
-        setState(() => _isRecording = false);
-        _showValidation('Voice capture failed: ${error.errorMsg}');
-      },
+  @override
+  void initState() {
+    super.initState();
+    _voiceController = VoicePassphraseController(
+      onValidCapture: _onVoiceCaptured,
     );
+  }
 
-    if (!available) {
-      _showValidation('Microphone permission is required for voice registration.');
-      return;
+  Future<void> _onVoiceCaptured(VoiceCaptureResult result) async {
+    await _saveVoiceProfileIfSignedIn(result);
+    if (!mounted || _step != 0) return;
+
+    // Give the success message time to finish, then move to the next step.
+    await Future<void>.delayed(const Duration(milliseconds: 1800));
+    if (!mounted || _step != 0 || !_voiceController.hasValidSample) return;
+    setState(() => _step = 1);
+  }
+
+  Future<void> _saveVoiceProfileIfSignedIn(VoiceCaptureResult result) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return;
+
+    try {
+      await _voiceProfiles.saveVoiceProfile(
+        uid: uid,
+        passphrase: result.phrase,
+        voiceprintVector: result.voiceprintVector,
+        voiceFeatures: result.voiceFeatures,
+      );
+    } catch (_) {
+      // Profile is still saved when registration completes.
     }
+  }
 
-    setState(() {
-      _isRecording = true;
-      _capturedPhrase = '';
-    });
+  Future<String> _detectRegistrationPhone() async {
+    return await PhoneNumberService.instance.detectSimPhoneNumber() ?? '';
+  }
 
-    await _speech.listen(
-      listenFor: const Duration(seconds: 8),
-      pauseFor: const Duration(seconds: 2),
-      listenOptions: SpeechListenOptions(partialResults: true),
-      onResult: (result) {
-        if (!mounted) return;
-        final normalized = _voiceProfile.normalize(result.recognizedWords);
-        setState(() {
-          _capturedPhrase = normalized;
-          _hasSample = normalized.isNotEmpty;
-        });
-      },
+  VoiceCaptureResult? get _captureResult => _voiceController.captureResult;
+
+  Future<void> _retakeVoiceSample() async {
+    _voiceController.resetSample();
+    await _startRecording();
+  }
+
+  Future<void> _startRecording() async {
+    if (_voiceController.isRecording) return;
+    final error = await _voiceController.startRecording(
+      allowOverwrite: !_voiceController.hasValidSample,
     );
+    if (!mounted) return;
+    if (error != null) {
+      _showValidation(error);
+    }
   }
 
   void _showVoiceHint(String field) {
@@ -131,23 +142,33 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
       RegExp(r'[!@#$%^&*(),.?":{}|<>_\-\\/\[\];+=~`]').hasMatch(password);
 
   Future<void> _completeVoiceOnly() async {
-    if (!_hasSample) {
+    if (!_voiceController.hasValidSample) {
+      _showValidation('Please record your voice sample first.');
+      return;
+    }
+
+    final capture = _captureResult;
+    if (capture == null) {
       _showValidation('Please record your voice sample first.');
       return;
     }
 
     setState(() => _submitting = true);
     try {
-      final credential = await FirebaseAuth.instance.signInAnonymously();
-      final uid = credential.user?.uid;
-      if (uid == null) throw StateError('No uid returned from Firebase Auth.');
+      final account =
+          await VoiceAuthCredentialsService.instance.createVoiceOnlyAccount();
+      final uid = account.uid;
+      final phoneNumber = await _detectRegistrationPhone();
 
       await _registration.createUserProfile(
         uid: uid,
         name: 'Voice User',
         birthDate: DateTime(2000, 1, 1),
-        email: 'voice_$uid@auraguide.local',
-        voiceProfile: _capturedPhrase,
+        email: account.profileEmail,
+        voicePassphrase: capture.phrase,
+        voiceprintVector: capture.voiceprintVector,
+        voiceFeatures: capture.voiceFeatures,
+        phoneNumber: phoneNumber,
       );
 
       if (!mounted) return;
@@ -159,6 +180,12 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
         MaterialPageRoute<void>(builder: (context) => const MainMenuPage()),
         (route) => false,
       );
+    } on FirebaseAuthException catch (e) {
+      await _registration.deleteCurrentAuthUser();
+      await FirebaseAuth.instance.signOut();
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      _showValidation(firebaseAuthErrorMessage(e));
     } catch (e) {
       await _registration.deleteCurrentAuthUser();
       await FirebaseAuth.instance.signOut();
@@ -169,7 +196,7 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
   }
 
   Future<void> _submitWithEmailPassword() async {
-    if (!_hasSample) {
+    if (!_voiceController.hasValidSample) {
       _showValidation('Please record your voice sample first.');
       return;
     }
@@ -189,6 +216,12 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
       return;
     }
 
+    final capture = _captureResult;
+    if (capture == null) {
+      _showValidation('Please record your voice sample first.');
+      return;
+    }
+
     setState(() => _submitting = true);
     try {
       final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
@@ -198,12 +231,17 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
       final uid = cred.user?.uid;
       if (uid == null) throw StateError('No uid returned from Firebase Auth.');
 
+      final phoneNumber = await _detectRegistrationPhone();
+
       await _registration.createUserProfile(
         uid: uid,
         name: 'Voice User',
         birthDate: DateTime(2000, 1, 1),
         email: email,
-        voiceProfile: _capturedPhrase,
+        voicePassphrase: capture.phrase,
+        voiceprintVector: capture.voiceprintVector,
+        voiceFeatures: capture.voiceFeatures,
+        phoneNumber: phoneNumber,
       );
 
       if (!mounted) return;
@@ -229,7 +267,7 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
 
   @override
   void dispose() {
-    _speech.stop();
+    _voiceController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -260,6 +298,7 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
           },
         ),
       ),
+      resizeToAvoidBottomInset: true,
       body: SafeArea(
         child: Column(
           children: [
@@ -273,16 +312,21 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
                 child: _buildStepBody(),
               ),
             ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                _step == 0 ? 16 : 24,
-                _step == 0 ? 6 : 12,
-                _step == 0 ? 16 : 24,
-                24,
-              ),
-              child: _buildStepButton(),
-            ),
           ],
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            _step == 0 ? 16 : 24,
+            8,
+            _step == 0 ? 16 : 24,
+            16 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: ListenableBuilder(
+            listenable: _voiceController,
+            builder: (context, _) => _buildStepButton(),
+          ),
         ),
       ),
     );
@@ -320,54 +364,20 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
           style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
         ),
         const SizedBox(height: 34),
-        GestureDetector(
-          onTap: _toggleRecording,
-          child: Container(
-            width: 112,
-            height: 112,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: _accent,
-            ),
-            child: const Icon(
-              Icons.mic,
-              color: Colors.white,
-              size: 48,
-            ),
-          ),
-        ),
-        const SizedBox(height: 20),
-        Text(
-          _isRecording ? 'Recording...' : 'Tap to Record',
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          _capturedPhrase.isEmpty
-              ? 'Please say: "Sign me in"'
-              : 'Captured: "$_capturedPhrase"',
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: _subtext, fontSize: 15),
-        ),
-        const SizedBox(height: 20),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(4, (i) {
-            final active = _hasSample || (_isRecording && i < 2);
-            return Container(
-              width: 7,
-              height: 7,
-              margin: const EdgeInsets.symmetric(horizontal: 3),
-              decoration: BoxDecoration(
-                color: active ? _accent : const Color(0xFF4D4D4D),
-                shape: BoxShape.circle,
-              ),
+        ListenableBuilder(
+          listenable: _voiceController,
+          builder: (context, _) {
+            return VoiceRecordButton(
+              isRecording: _voiceController.isRecording,
+              hasValidSample: _voiceController.hasValidSample,
+              heardPreview: _voiceController.heardPreview,
+              accessibilityMessage: _voiceController.accessibilityMessage,
+              onActivate: _startRecording,
+              onRetake: _retakeVoiceSample,
+              accent: _accent,
+              subtext: _subtext,
             );
-          }),
+          },
         ),
       ],
     );
@@ -460,27 +470,24 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
 
   Widget _buildStepButton() {
     if (_step == 0) {
+      final canContinue = _voiceController.hasValidSample && !_submitting;
       return FilledButton(
-        onPressed: _submitting
-            ? null
+        onPressed: canContinue
+            ? () => setState(() => _step = 1)
             : () {
-                if (!_hasSample) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Please record your voice sample first.',
-                        style: TextStyle(fontSize: 15),
-                      ),
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Please record your voice sample first.',
+                      style: TextStyle(fontSize: 15),
                     ),
-                  );
-                  return;
-                }
-                setState(() => _step = 1);
+                  ),
+                );
               },
         style: _filledStyle(),
-        child: const Text(
-          'Complete Registration',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        child: Text(
+          _voiceController.hasValidSample ? 'Continue' : 'Record voice first',
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
         ),
       );
     }

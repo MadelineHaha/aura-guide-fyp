@@ -6,7 +6,6 @@ import 'models/staff_option.dart';
 import 'services/communication_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
-import 'widgets/audio_feedback_title.dart';
 
 class CommunicationPage extends StatefulWidget {
   const CommunicationPage({super.key});
@@ -221,12 +220,9 @@ class _CommunicationPageState extends State<CommunicationPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: AudioFeedbackTitle(
-          label: 'Communication',
-          child: const Text(
-            'Communication',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-          ),
+        title: const Text(
+          'Communication',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
         ),
         centerTitle: true,
       ),

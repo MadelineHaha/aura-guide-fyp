@@ -4,7 +4,6 @@ import 'models/medication_item.dart';
 import 'services/medications_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
-import 'widgets/audio_feedback_title.dart';
 
 class MedicationsPage extends StatefulWidget {
   const MedicationsPage({super.key});
@@ -57,12 +56,9 @@ class _MedicationsPageState extends State<MedicationsPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: AudioFeedbackTitle(
-          label: 'Medication',
-          child: const Text(
-            'Medication',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-          ),
+        title: const Text(
+          'Medication',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
         ),
         centerTitle: true,
       ),

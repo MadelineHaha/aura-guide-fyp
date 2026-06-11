@@ -4,6 +4,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 import 'models/navigation_destination.dart' show NavDestination;
+import 'services/device_permissions_service.dart';
 import 'services/navigation_guidance_controller.dart';
 import 'services/obstacle_scanner_service.dart';
 import 'widgets/app_back_button.dart';
@@ -64,6 +65,15 @@ class _NavigationArPageState extends State<NavigationArPage>
 
   Future<void> _initCamera() async {
     try {
+      final cameraGranted =
+          await DevicePermissionsService.instance.ensureCamera();
+      if (!cameraGranted) {
+        throw StateError(
+          'Camera permission is required for AR navigation. '
+          'Please allow camera access in your device settings.',
+        );
+      }
+
       _cameras = await availableCameras();
       if (_cameras.isEmpty) {
         throw StateError('No camera found on this device.');

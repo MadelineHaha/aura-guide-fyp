@@ -3,12 +3,13 @@ import 'package:flutter/material.dart';
 
 import 'auth_session.dart';
 import 'password_recovery_page.dart';
+import 'models/voice_profile_data.dart';
 import 'services/app_settings_service.dart';
 import 'services/user_profile_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
-import 'widgets/audio_feedback_title.dart';
 import 'voice_login_page.dart';
+import 'voice_profile_setup_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -58,11 +59,11 @@ class _SettingsPageState extends State<SettingsPage> {
 
     try {
       final result = await _profileService.loadProfile(user.uid);
-      final voiceProfile =
-          (result.data['voiceProfile'] as String?)?.trim() ?? '';
+      final voiceData =
+          VoiceProfileData.fromFirestore(result.data['voiceProfile']);
       if (!mounted) return;
       setState(() {
-        _voiceLoginActive = voiceProfile.isNotEmpty;
+        _voiceLoginActive = voiceData != null && voiceData.passphrase.isNotEmpty;
         _loadingVoiceStatus = false;
       });
     } catch (_) {
@@ -145,28 +146,14 @@ class _SettingsPageState extends State<SettingsPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: AudioFeedbackTitle(
-          label: 'Settings',
-          child: const Text(
-            'Settings',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
+        title: const Text(
+          'Settings',
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
-          _SettingsCard(
-            icon: Icons.volume_up_outlined,
-            title: 'AUDIO FEEDBACK',
-            subtitle: 'Read screen on tap',
-            trailing: Switch(
-              value: settings.audioFeedbackEnabled,
-              activeColor: Colors.white,
-              activeTrackColor: _accent,
-              onChanged: _settings.setAudioFeedbackEnabled,
-            ),
-          ),
           _SettingsCard(
             icon: Icons.text_fields,
             iconLabel: 'Aa',
@@ -196,10 +183,7 @@ class _SettingsPageState extends State<SettingsPage> {
             icon: Icons.language,
             title: 'LANGUAGE',
             subtitle: _settings.languageLabel,
-            onTap: () {
-              _settings.speakIfEnabled('Language. ${_settings.languageLabel}');
-              _pickLanguage();
-            },
+            onTap: _pickLanguage,
             trailing: const Icon(Icons.chevron_right, color: Colors.white54),
           ),
           _SettingsCard(
@@ -217,11 +201,11 @@ class _SettingsPageState extends State<SettingsPage> {
             loading: _loadingVoiceStatus,
             active: _voiceLoginActive,
             onTap: () async {
-              _settings.speakIfEnabled('Voice login');
+              final page = _voiceLoginActive
+                  ? const VoiceLoginPage()
+                  : const VoiceProfileSetupPage();
               await Navigator.of(context).push<void>(
-                MaterialPageRoute<void>(
-                  builder: (context) => const VoiceLoginPage(),
-                ),
+                MaterialPageRoute<void>(builder: (context) => page),
               );
               await _loadVoiceLoginStatus();
             },
@@ -231,7 +215,6 @@ class _SettingsPageState extends State<SettingsPage> {
             title: 'RESET PASSWORD',
             subtitle: 'Create stronger password',
             onTap: () {
-              _settings.speakIfEnabled('Reset password');
               Navigator.of(context).push<void>(
                 MaterialPageRoute<void>(
                   builder: (context) => const PasswordRecoveryPage(),

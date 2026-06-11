@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/user_entity.dart';
+import 'phone_number_service.dart';
 
 class UserRegistrationService {
   UserRegistrationService({
@@ -19,7 +20,10 @@ class UserRegistrationService {
     required String name,
     required DateTime birthDate,
     required String email,
-    String voiceProfile = '',
+    String voicePassphrase = '',
+    List<double>? voiceprintVector,
+    Map<String, dynamic>? voiceFeatures,
+    String phoneNumber = '',
     String emergencyContact = '',
     Map<String, dynamic>? accessibilityPreferences,
     UserStatus status = UserStatus.active,
@@ -39,12 +43,37 @@ class UserRegistrationService {
         name: name,
         birthDate: birthDate,
         email: email,
-        voiceProfile: voiceProfile,
         emergencyContact: emergencyContact,
         accessibilityPreferences: accessibilityPreferences,
         status: status,
       );
-      transaction.set(userRef, entity.toFirestore());
+
+      final payload = <String, dynamic>{
+        ...entity.toFirestore(),
+        'authUid': uid,
+      };
+
+      final normalizedPhrase = voicePassphrase.trim().toLowerCase();
+      if (normalizedPhrase.isNotEmpty) {
+        payload['voicePassphrase'] = normalizedPhrase;
+        payload['voiceProfile'] = {
+          'passphrase': normalizedPhrase,
+          if (voiceprintVector != null && voiceprintVector.isNotEmpty)
+            'voiceprintVector': voiceprintVector,
+          if (voiceFeatures != null && voiceFeatures.isNotEmpty)
+            'voiceFeatures': voiceFeatures,
+          'embeddingVersion': 1,
+        };
+      }
+
+      final trimmedPhone = phoneNumber.trim();
+      if (trimmedPhone.isNotEmpty) {
+        payload['phoneNumber'] = trimmedPhone;
+        payload['phoneNumberNormalized'] =
+            PhoneNumberService.normalize(trimmedPhone);
+      }
+
+      transaction.set(userRef, payload);
     });
   }
 
