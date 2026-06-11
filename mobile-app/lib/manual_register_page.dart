@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import 'firebase_auth_helper.dart';
 import 'models/user_entity.dart';
+import 'services/phone_number_service.dart';
 import 'services/user_registration_service.dart';
 import 'widgets/app_back_button.dart';
 import 'widgets/calendar_date_picker_dialog.dart';
@@ -146,11 +147,15 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
       if (uid == null) throw StateError('No user uid after registration.');
 
       try {
+        final phoneNumber =
+            await PhoneNumberService.instance.detectSimPhoneNumber() ?? '';
+
         await _registration.createUserProfile(
           uid: uid,
           name: _nameController.text.trim(),
           birthDate: _birthDate!,
           email: _emailController.text.trim(),
+          phoneNumber: phoneNumber,
         );
       } catch (e) {
         await _registration.deleteCurrentAuthUser();

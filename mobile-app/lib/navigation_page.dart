@@ -5,11 +5,11 @@ import 'package:speech_to_text/speech_to_text.dart';
 
 import 'models/navigation_destination.dart' show NavDestination;
 import 'navigation_ar_page.dart';
+import 'services/device_permissions_service.dart';
 import 'services/navigation_guidance_controller.dart';
 import 'services/navigation_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
-import 'widgets/audio_feedback_title.dart';
 
 class NavigationPage extends StatefulWidget {
   const NavigationPage({super.key});
@@ -77,6 +77,20 @@ class _NavigationPageState extends State<NavigationPage> {
       return;
     }
 
+    final micGranted =
+        await DevicePermissionsService.instance.ensureMicrophone();
+    if (!micGranted) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Microphone permission is required. Please allow microphone access in your device settings.',
+          ),
+        ),
+      );
+      return;
+    }
+
     final available = await _speech.initialize();
     if (!available) {
       if (!mounted) return;
@@ -122,12 +136,9 @@ class _NavigationPageState extends State<NavigationPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: AudioFeedbackTitle(
-          label: 'Navigation',
-          child: const Text(
-            'Navigation',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
+        title: const Text(
+          'Navigation',
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
       ),
       body: Stack(

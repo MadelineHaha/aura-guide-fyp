@@ -4,7 +4,6 @@ import 'models/chat_list_item.dart';
 import 'services/communication_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
-import 'widgets/audio_feedback_title.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({
@@ -97,12 +96,9 @@ class _ChatPageState extends State<ChatPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: AudioFeedbackTitle(
-          label: widget.title,
-          child: Text(
-            widget.title,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-          ),
+        title: Text(
+          widget.title,
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
         ),
       ),
       body: Column(

@@ -6,7 +6,6 @@ import 'services/health_record_audio_service.dart';
 import 'services/health_records_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
-import 'widgets/audio_feedback_title.dart';
 
 class HealthRecordsPage extends StatefulWidget {
   const HealthRecordsPage({super.key});
@@ -110,12 +109,9 @@ class _HealthRecordsPageState extends State<HealthRecordsPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: AudioFeedbackTitle(
-          label: 'Health Records',
-          child: const Text(
-            'Health Records',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-          ),
+        title: const Text(
+          'Health Records',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
         ),
         centerTitle: true,
       ),

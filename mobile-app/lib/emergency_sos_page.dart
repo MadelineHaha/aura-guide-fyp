@@ -4,10 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import 'models/emergency_alert_entity.dart';
+import 'services/device_permissions_service.dart';
 import 'services/emergency_alert_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
-import 'widgets/audio_feedback_title.dart';
 
 class EmergencySosPage extends StatefulWidget {
   const EmergencySosPage({super.key});
@@ -66,6 +66,9 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
 
   Future<void> _startVoiceListen() async {
     if (_sosActive) return;
+    final micGranted =
+        await DevicePermissionsService.instance.ensureMicrophone();
+    if (!micGranted || !mounted) return;
     final available = await _speech.initialize(
       onStatus: (status) {
         if (status == 'done' && mounted && !_sosActive && !_submitting) {
@@ -180,12 +183,9 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
             automaticallyImplyLeading: false,
             leadingWidth: AppBackButton.appBarLeadingWidth,
             leading: const AppBackButton(),
-            title: AudioFeedbackTitle(
-              label: 'Emergency SOS',
-              child: const Text(
-                'Emergency SOS',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-              ),
+            title: const Text(
+              'Emergency SOS',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
             ),
             centerTitle: true,
           ),

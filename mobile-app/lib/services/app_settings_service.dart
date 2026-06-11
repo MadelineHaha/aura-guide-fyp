@@ -11,13 +11,11 @@ import 'user_profile_service.dart';
 
 class AppSettings {
   const AppSettings({
-    this.audioFeedbackEnabled = false,
     this.fontScale = 1.0,
     this.notificationsEnabled = true,
     this.languageCode = 'en',
   });
 
-  final bool audioFeedbackEnabled;
   final double fontScale;
   final bool notificationsEnabled;
   final String languageCode;
@@ -31,7 +29,6 @@ class AppSettings {
   factory AppSettings.fromMap(Map<String, dynamic>? map) {
     if (map == null || map.isEmpty) return const AppSettings();
     return AppSettings(
-      audioFeedbackEnabled: map['audioFeedbackEnabled'] == true,
       fontScale: ((map['fontScale'] as num?) ?? 1.0).toDouble().clamp(0.85, 1.35),
       notificationsEnabled: map['notificationsEnabled'] != false,
       languageCode: _languageFromMap(map['languageCode']),
@@ -45,20 +42,17 @@ class AppSettings {
   }
 
   Map<String, dynamic> toMap() => {
-        'audioFeedbackEnabled': audioFeedbackEnabled,
         'fontScale': fontScale,
         'notificationsEnabled': notificationsEnabled,
         'languageCode': languageCode,
       };
 
   AppSettings copyWith({
-    bool? audioFeedbackEnabled,
     double? fontScale,
     bool? notificationsEnabled,
     String? languageCode,
   }) {
     return AppSettings(
-      audioFeedbackEnabled: audioFeedbackEnabled ?? this.audioFeedbackEnabled,
       fontScale: fontScale ?? this.fontScale,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
       languageCode: languageCode ?? this.languageCode,
@@ -72,7 +66,6 @@ class AppSettingsService extends ChangeNotifier {
 
   static final AppSettingsService instance = AppSettingsService._();
 
-  static const _audioKey = 'settings_audio_feedback';
   static const _fontKey = 'settings_font_scale';
   static const _notificationsKey = 'settings_notifications';
   static const _languageKey = 'settings_language';
@@ -92,7 +85,6 @@ class AppSettingsService extends ChangeNotifier {
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     _settings = AppSettings(
-      audioFeedbackEnabled: prefs.getBool(_audioKey) ?? false,
       fontScale: prefs.getDouble(_fontKey) ?? 1.0,
       notificationsEnabled: prefs.getBool(_notificationsKey) ?? true,
       languageCode: prefs.getString(_languageKey) ?? 'en',
@@ -135,19 +127,6 @@ class AppSettingsService extends ChangeNotifier {
     _firestoreDebounce = null;
   }
 
-  Future<void> setAudioFeedbackEnabled(bool value) async {
-    _settings = _settings.copyWith(audioFeedbackEnabled: value);
-    notifyListeners();
-    await _persist();
-    if (value) {
-      await speak(
-        'Audio feedback enabled. Swipe right for next, swipe left for previous. Double tap to activate.',
-      );
-    } else {
-      await _tts.stop();
-    }
-  }
-
   Future<void> setFontScale(double value) async {
     final clamped = value.clamp(0.85, 1.35);
     _settings = _settings.copyWith(fontScale: clamped);
@@ -172,14 +151,21 @@ class AppSettingsService extends ChangeNotifier {
   String get languageLabel =>
       AppSettings.languages[_settings.languageCode] ?? 'English';
 
-  Future<void> speakIfEnabled(String text) async {
-    if (!_settings.audioFeedbackEnabled) return;
-    await speak(text);
-  }
-
   String? _lastSpokenText;
   DateTime? _lastSpeakStartedAt;
+  Object? _activeSpeakToken;
 
+  /// Stops any in-progress voice prompt so the mic does not pick it up.
+  Future<void> stopSpeaking() async {
+    _activeSpeakToken = null;
+    try {
+      await _tts.stop();
+    } catch (_) {
+      // Ignore stop errors when nothing is playing.
+    }
+  }
+
+  /// Short TTS prompts (e.g. voice passphrase retake). TalkBack is used for UI.
   Future<void> speak(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
@@ -192,8 +178,15 @@ class AppSettingsService extends ChangeNotifier {
       return;
     }
 
+    final token = Object();
+    _activeSpeakToken = token;
+
     await _ensureTtsReady();
+    if (_activeSpeakToken != token) return;
+
     await _tts.stop();
+    if (_activeSpeakToken != token) return;
+
     _lastSpokenText = trimmed;
     _lastSpeakStartedAt = now;
     await _tts.speak(trimmed);
@@ -210,7 +203,6 @@ class AppSettingsService extends ChangeNotifier {
 
   Future<void> _saveLocal() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_audioKey, _settings.audioFeedbackEnabled);
     await prefs.setDouble(_fontKey, _settings.fontScale);
     await prefs.setBool(_notificationsKey, _settings.notificationsEnabled);
     await prefs.setString(_languageKey, _settings.languageCode);

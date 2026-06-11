@@ -71,6 +71,8 @@ String firebaseAuthErrorMessage(FirebaseAuthException e) {
       return 'No network connection. Check Wi‑Fi or mobile data.';
     case 'operation-not-allowed':
       return 'Email/password sign-in is not enabled in Firebase. Enable it under Authentication → Sign-in method.';
+    case 'admin-restricted-operation':
+      return 'This sign-in method is disabled in Firebase. Enable Email/Password under Authentication → Sign-in method.';
     default:
       return e.message ?? 'Authentication failed (${e.code}).';
   }

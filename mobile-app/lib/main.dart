@@ -9,9 +9,8 @@ import 'firebase_auth_helper.dart';
 import 'firebase_options.dart';
 import 'main_menu_page.dart';
 import 'services/app_settings_service.dart';
-import 'services/audio_feedback_route_notifier.dart';
+import 'services/device_permissions_service.dart';
 import 'start_page.dart';
-import 'widgets/audio_feedback_overlay.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +19,7 @@ Future<void> main() async {
   );
   await configureFirebaseAuth();
   await AppSettingsService.instance.load();
+  await DevicePermissionsService.instance.requestMicAndCameraOnLaunch();
   runApp(const MyApp());
 }
 
@@ -36,23 +36,19 @@ class MyApp extends StatelessWidget {
       navigatorKey: rootNavigatorKey,
       navigatorObservers: [
         appRouteObserver,
-        AudioFeedbackRouteNotifier.instance,
       ],
       builder: (context, child) {
-        return AudioFeedbackHost(
-          navigatorKey: rootNavigatorKey,
-          child: ListenableBuilder(
-            listenable: AppSettingsService.instance,
-            builder: (context, _) {
-              final settings = AppSettingsService.instance.settings;
-              return MediaQuery(
-                data: MediaQuery.of(context).copyWith(
-                  textScaler: TextScaler.linear(settings.fontScale),
-                ),
-                child: child ?? const SizedBox.shrink(),
-              );
-            },
-          ),
+        return ListenableBuilder(
+          listenable: AppSettingsService.instance,
+          builder: (context, _) {
+            final settings = AppSettingsService.instance.settings;
+            return MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(settings.fontScale),
+              ),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
         );
       },
       home: const _AuthGate(),
