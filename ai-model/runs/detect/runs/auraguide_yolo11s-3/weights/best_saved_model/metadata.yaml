@@ -1,0 +1,53 @@
+description: Ultralytics YOLO11s model trained on datasets\CombinedDataset\data.yaml
+author: Ultralytics
+date: '2026-06-17T21:57:52.981238'
+version: 8.4.70
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+batch: 1
+imgsz:
+- 640
+- 640
+names:
+  0: Bike
+  1: Building
+  2: Car
+  3: Person
+  4: Stairs
+  5: Traffic sign
+  6: Electrical Pole
+  7: Road
+  8: Motorcycle
+  9: Dustbin
+  10: Dog
+  11: Manhole
+  12: Tree
+  13: Guard rail
+  14: Pedestrian crosswalk
+  15: Truck
+  16: Bus
+  17: Bench
+  18: Traffic Cone
+  19: Fire hydrant
+  20: Teraffic Barrel
+  21: Plant Pot
+  22: Electrical Box
+  23: Chair
+  24: Bicycle Rack
+  25: door
+  26: elevator
+  27: escalator
+  28: lift_icon
+  29: surau_icon
+  30: toilet_icon
+args:
+  data: null
+  batch: 1
+  fraction: 1.0
+  half: false
+  int8: false
+  nms: false
+channels: 3
+end2end: false

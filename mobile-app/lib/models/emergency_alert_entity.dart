@@ -1,7 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
-import '../utils/clinic_datetime.dart';
-
 /// Table 4.7 — EmergencyAlert entity (`emergencyalerts` collection).
 class EmergencyAlertEntity {
   const EmergencyAlertEntity({
@@ -13,7 +9,6 @@ class EmergencyAlertEntity {
     required this.userId,
     this.resolutionNotes = '',
     this.staffId = '',
-    this.dateTimeLabel,
   });
 
   static final RegExp alertIdPattern = RegExp(r'^E\d{5}$');
@@ -22,19 +17,41 @@ class EmergencyAlertEntity {
   static const alertTypeFallDetection = 'Fall Detection';
 
   static const statusActive = 'Active';
+  static const statusResponded = 'Responded';
   static const statusResolved = 'Resolved';
 
+  /// ERD `AlertID` — document id, format `ENNNNN` (e.g. E00001).
   final String alertId;
-  final Timestamp dateTime;
+
+  /// ERD `DateTime` — `YYYY-MM-DD HH:mm:ss`.
+  final String dateTime;
+
+  /// ERD `Location` — GPS coordinates string.
   final String location;
+
+  /// ERD `AlertType` — e.g. Manual SOS, Fall Detection.
   final String alertType;
+
+  /// ERD `Status` — Active, Responded, or Resolved.
   final String status;
+
+  /// ERD `ResolutionNotes`.
   final String resolutionNotes;
+
+  /// ERD `UserID` — linked patient, format `UNNNNN`.
   final String userId;
+
+  /// ERD `StaffID` — linked staff, format `SNNNNN` (empty until assigned).
   final String staffId;
-  final String? dateTimeLabel;
 
   bool get isActive => status == statusActive;
+
+  /// Active or Responded — blocks sending another SOS until Resolved.
+  bool get isOpen =>
+      status == statusActive || status == statusResponded;
+
+  /// Human-readable time; same as [dateTime] per ERD format.
+  String get dateTimeLabel => dateTime;
 
   static String formatClinicDateTime(DateTime clinicLocal) {
     final y = clinicLocal.year;
@@ -46,19 +63,24 @@ class EmergencyAlertEntity {
     return '$y-$m-$d $hh:$mm:$ss';
   }
 
+  static String? _readString(Map<String, dynamic> data, String pascal, String camel) {
+    final value = data[pascal] ?? data[camel];
+    if (value is! String) return null;
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  /// Writes only the eight ERD fields (Table 4.7) using PascalCase keys.
   Map<String, dynamic> toFirestoreMap() {
-    final clinic = ClinicDateTime.fromFirestore(dateTime) ?? ClinicDateTime.nowClinic();
     return {
-      'alertId': alertId,
-      'dateTime': dateTime,
-      'dateTimeLabel': dateTimeLabel ?? formatClinicDateTime(clinic),
-      'location': location,
-      'alertType': alertType,
-      'status': status,
-      'resolutionNotes': resolutionNotes,
-      'userId': userId,
-      'staffId': staffId,
-      'createdAt': FieldValue.serverTimestamp(),
+      'AlertID': alertId,
+      'DateTime': dateTime,
+      'Location': location,
+      'AlertType': alertType,
+      'Status': status,
+      'ResolutionNotes': resolutionNotes,
+      'UserID': userId,
+      'StaffID': staffId,
     };
   }
 
@@ -66,29 +88,29 @@ class EmergencyAlertEntity {
     String docId,
     Map<String, dynamic> data,
   ) {
-    final alertId = (data['alertId'] as String?)?.trim() ?? docId;
+    final alertId = _readString(data, 'AlertID', 'alertId') ?? docId.trim();
     if (!alertIdPattern.hasMatch(alertId)) return null;
 
-    final ts = data['dateTime'];
-    if (ts is! Timestamp) return null;
+    final dateTime = _readString(data, 'DateTime', 'dateTime');
+    if (dateTime == null) return null;
 
-    final userId = (data['userId'] as String?)?.trim() ??
-        (data['userID'] as String?)?.trim() ??
-        '';
-    if (userId.isEmpty) return null;
+    final userId = _readString(data, 'UserID', 'userId') ??
+        _readString(data, 'UserID', 'userID');
+    if (userId == null) return null;
 
     return EmergencyAlertEntity(
       alertId: alertId,
-      dateTime: ts,
-      location: (data['location'] as String?)?.trim() ?? '',
-      alertType: (data['alertType'] as String?)?.trim() ?? alertTypeManualSos,
-      status: (data['status'] as String?)?.trim() ?? statusActive,
-      resolutionNotes: (data['resolutionNotes'] as String?)?.trim() ?? '',
+      dateTime: dateTime,
+      location: _readString(data, 'Location', 'location') ?? '',
+      alertType:
+          _readString(data, 'AlertType', 'alertType') ?? alertTypeManualSos,
+      status: _readString(data, 'Status', 'status') ?? statusActive,
+      resolutionNotes:
+          _readString(data, 'ResolutionNotes', 'resolutionNotes') ?? '',
       userId: userId,
-      staffId: (data['staffId'] as String?)?.trim() ??
-          (data['staffID'] as String?)?.trim() ??
+      staffId: _readString(data, 'StaffID', 'staffId') ??
+          _readString(data, 'StaffID', 'staffID') ??
           '',
-      dateTimeLabel: (data['dateTimeLabel'] as String?)?.trim(),
     );
   }
 }

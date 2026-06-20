@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'l10n/app_localizations.dart';
 import 'models/health_record_item.dart';
 import 'services/health_record_audio_service.dart';
 import 'services/health_records_service.dart';
@@ -63,7 +64,7 @@ class _HealthRecordsPageState extends State<HealthRecordsPage> {
       if (!mounted) return;
       final message = e is StateError
           ? e.message
-          : 'Could not play audio. Stop the app and run flutter run again.';
+          : context.l10n.t('couldNotPlayAudio');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
       );
@@ -94,12 +95,13 @@ class _HealthRecordsPageState extends State<HealthRecordsPage> {
     await Clipboard.setData(ClipboardData(text: buffer.toString()));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Record summary copied to clipboard.')),
+      SnackBar(content: Text(context.l10n.t('recordSummaryCopied'))),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
@@ -109,9 +111,9 @@ class _HealthRecordsPageState extends State<HealthRecordsPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: const Text(
-          'Health Records',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+        title: Text(
+          l10n.t('healthRecords'),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
         ),
         centerTitle: true,
       ),
@@ -128,7 +130,7 @@ class _HealthRecordsPageState extends State<HealthRecordsPage> {
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text(
-                  'Could not load health records.\n${snapshot.error}',
+                  l10n.t('couldNotLoadHealthRecords', {'error': snapshot.error}),
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: _subtext, height: 1.4),
                 ),
@@ -145,13 +147,13 @@ class _HealthRecordsPageState extends State<HealthRecordsPage> {
                 child: CircularProgressIndicator(color: _accent),
               );
             }
-            return const Center(
+            return Center(
               child: Padding(
-                padding: EdgeInsets.all(32),
+                padding: const EdgeInsets.all(32),
                 child: Text(
-                  'There is no health record yet.',
+                  l10n.t('noHealthRecordYet'),
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: _subtext, fontSize: 15),
+                  style: const TextStyle(color: _subtext, fontSize: 15),
                 ),
               ),
             );
@@ -164,8 +166,12 @@ class _HealthRecordsPageState extends State<HealthRecordsPage> {
             itemBuilder: (context, index) {
               final record = records[index];
               return AccessibleFocusRegion(
-                label:
-                    '${record.recordType}. ${record.dateCreated}. ${record.doctorName}. ${record.summary}',
+                label: l10n.t('healthRecordItemA11y', {
+                  'recordType': record.recordType,
+                  'dateLabel': record.dateCreated,
+                  'doctorName': record.doctorName,
+                  'summary': record.summary,
+                }),
                 child: _HealthRecordCard(
                   record: record,
                   isPlayingAudio: _playingRecordId == record.recordId,
@@ -201,6 +207,7 @@ class _HealthRecordCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Container(
       decoration: BoxDecoration(
         color: _card,
@@ -250,7 +257,7 @@ class _HealthRecordCard extends StatelessWidget {
             children: [
               Expanded(
                 child: _ActionButton(
-                  label: isPlayingAudio ? 'Stop Audio' : 'Play Audio',
+                  label: isPlayingAudio ? l10n.t('stopAudio') : l10n.t('playAudio'),
                   backgroundColor: _accent,
                   foregroundColor: Colors.black,
                   onTap: onPlayAudio,
@@ -259,7 +266,7 @@ class _HealthRecordCard extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: _ActionButton(
-                  label: 'Export',
+                  label: l10n.t('export'),
                   backgroundColor: _exportBg,
                   foregroundColor: Colors.white,
                   onTap: onExport,

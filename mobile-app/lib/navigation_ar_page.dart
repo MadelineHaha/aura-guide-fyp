@@ -4,12 +4,16 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 import 'models/navigation_destination.dart' show NavDestination;
+import 'l10n/app_localizations.dart';
+import 'services/app_settings_service.dart';
 import 'services/device_permissions_service.dart';
 import 'services/navigation_guidance_controller.dart';
 import 'services/obstacle_scanner_service.dart';
+import 'utils/obstacle_direction.dart';
+import 'utils/obstacle_labels.dart';
 import 'widgets/app_back_button.dart';
 import 'widgets/ar_path_overlay.dart';
-import 'widgets/direction_compass.dart';
+import 'widgets/obstacle_detection_overlay.dart';
 
 class NavigationArPage extends StatefulWidget {
   const NavigationArPage({
@@ -41,7 +45,9 @@ class _NavigationArPageState extends State<NavigationArPage>
 
   NavigationGuidanceState _guidanceState = NavigationGuidanceState.initial;
   ObstacleAlert? _activeAlert;
-  double _pulse = 0;
+  DateTime? _lastObstacleSpeechAt;
+  String? _lastSpokenObstacleMessage;
+  Timer? _clearAlertTimer;
 
   late final AnimationController _pulseController;
 
@@ -57,9 +63,7 @@ class _NavigationArPageState extends State<NavigationArPage>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     )..repeat();
-    _pulseController.addListener(() {
-      if (mounted) setState(() => _pulse = _pulseController.value);
-    });
+    unawaited(_obstacleScanner.warmUp());
     _initCamera();
   }
 
@@ -106,7 +110,13 @@ class _NavigationArPageState extends State<NavigationArPage>
 
       _obstacleSub = _obstacleScanner.alerts.listen((alert) {
         if (!mounted) return;
+        _clearAlertTimer?.cancel();
         setState(() => _activeAlert = alert);
+        _clearAlertTimer = Timer(const Duration(seconds: 3), () {
+          if (!mounted) return;
+          setState(() => _activeAlert = null);
+        });
+        unawaited(_announceObstacle(alert));
       });
       await _obstacleScanner.start(controller);
 
@@ -127,12 +137,101 @@ class _NavigationArPageState extends State<NavigationArPage>
 
   @override
   void dispose() {
+    _clearAlertTimer?.cancel();
     _pulseController.dispose();
     _guidanceSub?.cancel();
     _obstacleSub?.cancel();
     unawaited(_obstacleScanner.dispose());
     _cameraController?.dispose();
     super.dispose();
+  }
+
+  Future<void> _announceObstacle(ObstacleAlert alert) async {
+    final message = _obstacleLocatedMessage(alert);
+
+    final now = DateTime.now();
+    if (_lastSpokenObstacleMessage == message &&
+        _lastObstacleSpeechAt != null &&
+        now.difference(_lastObstacleSpeechAt!) <
+            const Duration(milliseconds: 2800)) {
+      return;
+    }
+
+    _lastObstacleSpeechAt = now;
+    _lastSpokenObstacleMessage = message;
+    await AppSettingsService.instance.stopSpeaking();
+    await AppSettingsService.instance.speakCalmSystemVoice(message);
+  }
+
+  String _obstacleLocatedMessage(ObstacleAlert alert) {
+    final detectedLabel = _localizedDetectedLabel(alert.label);
+    final direction = context.l10n.t(
+      obstacleDirectionL10nKey(alert.direction),
+    );
+    final distance = alert.distanceMeters.toStringAsFixed(
+      alert.distanceMeters.truncateToDouble() == alert.distanceMeters ? 0 : 1,
+    );
+    return context.l10n.t(
+      'obstacleLocated',
+      {'label': detectedLabel, 'direction': direction, 'distance': distance},
+    );
+  }
+
+  String _obstacleOverlayLabel(ObstacleAlert alert) {
+    return _obstacleLocatedMessage(alert);
+  }
+
+  String _localizedObstacleLabel(String label) {
+    if (label == 'Person') {
+      return context.l10n.t('obstaclePeople');
+    }
+    return ObstacleLabels.friendlyName(label);
+  }
+
+  String _localizedDetectedLabel(String label) {
+    return context.l10n.t(
+      'obstacleDetected',
+      {'label': _localizedObstacleLabel(label)},
+    );
+  }
+
+  Widget _buildFullScreenCameraPreview() {
+    final controller = _cameraController!;
+    final previewSize = controller.value.previewSize;
+
+    final overlay = _activeAlert != null
+        ? ObstacleDetectionOverlay(
+            alert: _activeAlert!,
+            controller: controller,
+            labelText: _obstacleOverlayLabel(_activeAlert!),
+          )
+        : null;
+
+    if (previewSize == null) {
+      return CameraPreview(controller, child: overlay);
+    }
+
+    // Fill the screen like the native camera app (no small letterboxed preview).
+    final isPortrait =
+        MediaQuery.orientationOf(context) == Orientation.portrait;
+    final previewWidth =
+        isPortrait ? previewSize.height : previewSize.width;
+    final previewHeight =
+        isPortrait ? previewSize.width : previewSize.height;
+
+    return ClipRect(
+      child: OverflowBox(
+        alignment: Alignment.center,
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: previewWidth,
+            height: previewHeight,
+            child: CameraPreview(controller, child: overlay),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -145,12 +244,22 @@ class _NavigationArPageState extends State<NavigationArPage>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          if (cameraReady) CameraPreview(_cameraController!) else Container(color: Colors.black),
           if (cameraReady)
-            ArPathOverlay(
-              turnDeltaDegrees: _guidanceState.turnDelta,
-              guidanceHint: _guidanceState.guidanceHint,
-              pulse: _pulse,
+            Positioned.fill(
+              child: _buildFullScreenCameraPreview(),
+            )
+          else
+            Container(color: Colors.black),
+          if (cameraReady)
+            AnimatedBuilder(
+              animation: _pulseController,
+              builder: (context, _) {
+                return ArPathOverlay(
+                  turnDeltaDegrees: _guidanceState.turnDelta,
+                  guidanceHint: _guidanceState.guidanceHint,
+                  pulse: _pulseController.value,
+                );
+              },
             ),
           _buildTopHud(),
           _buildDirectionPanel(cameraReady),
@@ -221,6 +330,36 @@ class _NavigationArPageState extends State<NavigationArPage>
                       ),
                     ),
                   ),
+                  if (_guidanceState.walkMode)
+                    Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _accent.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _accent.withValues(alpha: 0.5),
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.directions_walk, color: _accent, size: 14),
+                          SizedBox(width: 4),
+                          Text(
+                            'Walk',
+                            style: TextStyle(
+                              color: _accent,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   if (_guidanceState.hasGpsFix)
                     Text(
                       '${_guidanceState.distanceMeters.toStringAsFixed(0)} m',
@@ -239,45 +378,38 @@ class _NavigationArPageState extends State<NavigationArPage>
   }
 
   Widget _buildDirectionPanel(bool cameraReady) {
+    if (!cameraReady) return const SizedBox.shrink();
+
     return Positioned(
       left: 16,
       right: 16,
       bottom: 24,
       child: SafeArea(
         top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            DirectionCompass(
-              state: _guidanceState,
-              size: cameraReady ? 120 : 150,
-              compact: cameraReady,
-            ),
-            if (cameraReady) ...[
-              const SizedBox(height: 10),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.55),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: _accent.withValues(alpha: 0.35)),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.sensors, color: _accent, size: 18),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'AI scanning surroundings for obstacles',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                      ),
-                    ),
-                  ],
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _accent.withValues(alpha: 0.35)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.sensors, color: _accent, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  context.l10n.t('aiScanningObstacles'),
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    height: 1.35,
+                  ),
                 ),
               ),
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -302,6 +434,26 @@ class _ObstacleBanner extends StatelessWidget {
 
   final ObstacleAlert alert;
 
+  static String messageFor(BuildContext context, ObstacleAlert alert) {
+    final friendlyLabel = alert.label == 'Person'
+        ? context.l10n.t('obstaclePeople')
+        : ObstacleLabels.friendlyName(alert.label);
+    final detectedLabel = context.l10n.t(
+      'obstacleDetected',
+      {'label': friendlyLabel},
+    );
+    final direction = context.l10n.t(
+      obstacleDirectionL10nKey(alert.direction),
+    );
+    final distance = alert.distanceMeters.toStringAsFixed(
+      alert.distanceMeters.truncateToDouble() == alert.distanceMeters ? 0 : 1,
+    );
+    return context.l10n.t(
+      'obstacleLocated',
+      {'label': detectedLabel, 'direction': direction, 'distance': distance},
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -323,7 +475,7 @@ class _ObstacleBanner extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              alert.message,
+              _ObstacleBanner.messageFor(context, alert),
               style: const TextStyle(
                 color: Colors.black,
                 fontWeight: FontWeight.w700,

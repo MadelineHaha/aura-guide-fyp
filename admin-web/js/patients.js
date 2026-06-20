@@ -31,7 +31,7 @@ import {
 } from "./medications-service.js";
 import { releaseFirestoreListener } from "./firestore-realtime.js";
 
-const PAGE_SIZE = 4;
+const PAGE_SIZE = 6;
 
 const tbodyEl = document.getElementById("patients-tbody");
 const emptyEl = document.getElementById("patients-empty");

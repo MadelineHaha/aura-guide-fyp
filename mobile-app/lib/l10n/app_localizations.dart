@@ -54,6 +54,15 @@ class AppLocalizations {
     }
     return value;
   }
+
+  /// Localized strings using a language code (for services without [BuildContext]).
+  static String translate(
+    String languageCode,
+    String key, [
+    Map<String, Object?> params = const {},
+  ]) {
+    return AppLocalizations(languageCode).t(key, params);
+  }
 }
 
 class AppLocalizationsDelegate

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'l10n/app_localizations.dart';
 import 'login_page.dart';
 import 'register_page.dart';
 import 'widgets/accessible_focus_region.dart';
@@ -13,6 +14,12 @@ class StartPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final brandingA11y = l10n.t('menuCardA11y', {
+      'title': l10n.t('appName'),
+      'subtitle': l10n.t('appTagline'),
+    });
+
     void openLogin() {
       Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -39,7 +46,7 @@ class StartPage extends StatelessWidget {
             children: [
               const Spacer(),
               AccessibleFocusRegion(
-                label: 'Aura Guide. Your accessible health companion.',
+                label: brandingA11y,
                 child: Column(
                   children: [
                     Center(
@@ -50,10 +57,10 @@ class StartPage extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 18),
-                    const Text(
-                      'Aura Guide',
+                    Text(
+                      l10n.t('appName'),
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 32,
                         fontWeight: FontWeight.bold,
@@ -61,10 +68,10 @@ class StartPage extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    const Text(
-                      'Your accessible health companion',
+                    Text(
+                      l10n.t('appTagline'),
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: _subtext,
                         fontSize: 15,
                       ),
@@ -74,7 +81,7 @@ class StartPage extends StatelessWidget {
               ),
               const Spacer(),
               AccessibleFocusRegion(
-                label: 'Sign In',
+                label: l10n.t('signIn'),
                 onActivate: openLogin,
                 child: FilledButton(
                   onPressed: openLogin,
@@ -86,15 +93,15 @@ class StartPage extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: const Text(
-                    'Sign In',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  child: Text(
+                    l10n.t('signIn'),
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                   ),
                 ),
               ),
               const SizedBox(height: 12),
               AccessibleFocusRegion(
-                label: 'Create Account',
+                label: l10n.t('createAccount'),
                 onActivate: openRegister,
                 child: OutlinedButton(
                   onPressed: openRegister,
@@ -106,9 +113,9 @@ class StartPage extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: const Text(
-                    'Create Account',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  child: Text(
+                    l10n.t('createAccount'),
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                   ),
                 ),
               ),

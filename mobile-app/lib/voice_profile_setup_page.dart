@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'l10n/app_localizations.dart';
 import 'auth_session.dart';
 import 'models/voice_capture_result.dart';
 import 'services/voice_passphrase_controller.dart';
@@ -32,17 +33,19 @@ class _VoiceProfileSetupPageState extends State<VoiceProfileSetupPage> {
   }
 
   Future<void> _saveVoiceProfile(VoiceCaptureResult result) async {
+    final l10n = context.l10n;
     final uid = AuthSession.resolveUser()?.uid ??
         FirebaseAuth.instance.currentUser?.uid;
     if (uid == null || uid.isEmpty) {
       if (!mounted) return;
-      setState(() => _statusMessage = 'You must be signed in to save a voice profile.');
+      setState(() => _statusMessage =
+          'You must be signed in to save a voice profile.');
       return;
     }
 
     setState(() {
       _saving = true;
-      _statusMessage = 'Saving your voice profile…';
+      _statusMessage = l10n.t('voiceLoginChecking');
     });
 
     try {
@@ -55,17 +58,17 @@ class _VoiceProfileSetupPageState extends State<VoiceProfileSetupPage> {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _statusMessage = 'Voice profile saved.';
+        _statusMessage = l10n.t('voiceRegistrationSetupCompleted');
       });
     } catch (e) {
       if (!mounted) return;
       _controller.resetSample();
       setState(() {
         _saving = false;
-        _statusMessage = 'Could not save voice profile. Please try again.';
+        _statusMessage = l10n.t('voiceCaptureFailed', {'error': e});
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not save voice profile: $e')),
+        SnackBar(content: Text(l10n.t('couldNotSaveProfile', {'error': e}))),
       );
     }
   }
@@ -90,6 +93,10 @@ class _VoiceProfileSetupPageState extends State<VoiceProfileSetupPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    const instructions =
+        'Double tap the button below and say Sign me in. Your voice profile will be saved to your account.';
+
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
@@ -100,9 +107,9 @@ class _VoiceProfileSetupPageState extends State<VoiceProfileSetupPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: const Text(
-          'Voice Profile',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
+        title: Text(
+          l10n.t('voiceLogin'),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
         ),
       ),
       body: SafeArea(
@@ -112,20 +119,27 @@ class _VoiceProfileSetupPageState extends State<VoiceProfileSetupPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 36),
-              const Text(
-                'Set Up Voice Login',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+              Semantics(
+                header: true,
+                label: l10n.t('voiceLogin'),
+                child: Text(
+                  l10n.t('voiceLogin'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
-              const Text(
-                'Double tap the button below and say Sign me in. Your voice profile will be saved to your account.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+              Semantics(
+                label: instructions,
+                child: Text(
+                  instructions,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+                ),
               ),
               const SizedBox(height: 34),
               ListenableBuilder(
@@ -146,10 +160,13 @@ class _VoiceProfileSetupPageState extends State<VoiceProfileSetupPage> {
                   child: CircularProgressIndicator(color: Color(0xFF63C3C4)),
                 )
               else if (_statusMessage != null)
-                Text(
-                  _statusMessage!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: _subtext, fontSize: 15),
+                Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    _statusMessage!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: _subtext, fontSize: 15),
+                  ),
                 ),
             ],
           ),

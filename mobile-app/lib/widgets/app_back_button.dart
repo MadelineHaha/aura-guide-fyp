@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import 'accessible_focus_region.dart';
 
 enum AppBackButtonStyle {
@@ -8,7 +9,7 @@ enum AppBackButtonStyle {
   filled,
 }
 
-/// Shared back control — text-only "Back" label (no arrow icon).
+/// Shared back control — text-only back label (no arrow icon).
 class AppBackButton extends StatelessWidget {
   const AppBackButton({
     super.key,
@@ -41,6 +42,7 @@ class AppBackButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final label = context.l10n.t('back');
     void onTap() => _handlePress(context);
 
     Widget button;
@@ -54,7 +56,7 @@ class AppBackButton extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             visualDensity: VisualDensity.compact,
           ),
-          child: const Text('Back'),
+          child: Text(label),
         );
       case AppBackButtonStyle.compact:
         button = TextButton(
@@ -64,7 +66,7 @@ class AppBackButton extends StatelessWidget {
             minimumSize: Size.zero,
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
-          child: Text('Back', style: _labelStyle(color)),
+          child: Text(label, style: _labelStyle(color)),
         );
       case AppBackButtonStyle.appBar:
         button = Align(
@@ -76,13 +78,13 @@ class AppBackButton extends StatelessWidget {
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: Text('Back', style: _labelStyle(color)),
+            child: Text(label, style: _labelStyle(color)),
           ),
         );
     }
 
     return AccessibleFocusRegion(
-      label: 'Back',
+      label: label,
       onActivate: onTap,
       child: button,
     );

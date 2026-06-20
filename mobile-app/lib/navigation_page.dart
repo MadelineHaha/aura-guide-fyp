@@ -1,15 +1,22 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:speech_to_text/speech_to_text.dart';
+import 'package:geolocator/geolocator.dart';
 
 import 'models/navigation_destination.dart' show NavDestination;
+import 'models/place_search_result.dart';
+import 'models/walking_route.dart';
 import 'navigation_ar_page.dart';
-import 'services/device_permissions_service.dart';
+import 'l10n/app_localizations.dart';
+import 'services/field_speech_input.dart';
 import 'services/navigation_guidance_controller.dart';
 import 'services/navigation_service.dart';
+import 'services/places_search_service.dart';
+import 'services/walking_route_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/listening_mic_button.dart';
+import 'widgets/set_saved_place_sheet.dart';
 
 class NavigationPage extends StatefulWidget {
   const NavigationPage({super.key});
@@ -22,20 +29,132 @@ class _NavigationPageState extends State<NavigationPage> {
   static const Color _bg = Color(0xFF000000);
   static const Color _accent = Color(0xFF63C3C4);
 
-  final _service = NavigationService();
+  final _service = NavigationService.instance;
+  late final PlacesSearchService _placesSearch =
+      PlacesSearchService(navigationService: _service);
   final _searchController = TextEditingController();
-  final _speech = SpeechToText();
+  final _fieldSpeech = FieldSpeechInput.instance;
   final _guidance = NavigationGuidanceController();
 
   bool _loadingDestination = false;
-  bool _listening = false;
+  bool _searching = false;
+  String? _searchError;
+  List<PlaceSearchResult> _searchResults = const [];
+  Position? _userPosition;
+  NavDestination? _currentLocation;
+  var _locationLoading = false;
+  Timer? _searchDebounce;
+  int _searchRequestId = 0;
+  var _storageReady = false;
+
+  bool get _listening => _fieldSpeech.isListeningFor(_searchController);
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(_onSearchTextChanged);
+    _fieldSpeech.addListener(_onFieldSpeechChanged);
+    unawaited(_bootstrap());
+  }
+
+  void _onFieldSpeechChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _bootstrap() async {
+    await _service.initialize();
+    await _loadUserPosition();
+    if (!mounted) return;
+    setState(() => _storageReady = true);
+  }
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.removeListener(_onSearchTextChanged);
+    _fieldSpeech.removeListener(_onFieldSpeechChanged);
+    unawaited(_fieldSpeech.stop());
     unawaited(_guidance.dispose());
     _searchController.dispose();
-    _speech.stop();
     super.dispose();
+  }
+
+  Future<void> _loadUserPosition() async {
+    setState(() => _locationLoading = true);
+    try {
+      _userPosition = await _service.currentPosition();
+      _currentLocation = await _service.destinationFromPosition(_userPosition!);
+    } catch (_) {
+      _userPosition = null;
+      _currentLocation = null;
+    } finally {
+      if (mounted) setState(() => _locationLoading = false);
+    }
+  }
+
+  PlaceSearchResult? get _currentLocationResult {
+    final location = _currentLocation;
+    if (location == null) return null;
+    return PlaceSearchResult(
+      destination: location,
+      distanceMeters: 0,
+    );
+  }
+
+  void _onSearchTextChanged() {
+    _searchDebounce?.cancel();
+    final query = _searchController.text.trim();
+    if (query.isEmpty) {
+      setState(() {
+        _searchResults = const [];
+        _searchError = null;
+        _searching = false;
+      });
+      return;
+    }
+
+    _searchDebounce = Timer(const Duration(milliseconds: 400), () {
+      unawaited(_runSearch(query));
+    });
+  }
+
+  Future<void> _runSearch(String query) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return;
+
+    final requestId = ++_searchRequestId;
+    setState(() {
+      _searching = true;
+      _searchError = null;
+    });
+
+    try {
+      if (_userPosition == null) {
+        await _loadUserPosition();
+      }
+
+      final results = await _placesSearch.search(
+        query: trimmed,
+        originLat: _userPosition?.latitude,
+        originLng: _userPosition?.longitude,
+      );
+
+      if (!mounted || requestId != _searchRequestId) return;
+      setState(() {
+        _searchResults = results;
+        _searching = false;
+        _searchError = results.isEmpty
+            ? context.l10n.t('noPlacesFoundForQuery', {'query': trimmed})
+            : null;
+      });
+    } catch (error) {
+      if (!mounted || requestId != _searchRequestId) return;
+      setState(() {
+        _searchResults = const [];
+        _searching = false;
+        _searchError = context.l10n.t('couldNotSearchPlaces');
+      });
+    }
   }
 
   Future<void> _startNavigation(NavDestination destination) async {
@@ -44,8 +163,10 @@ class _NavigationPageState extends State<NavigationPage> {
 
     try {
       final resolved = await _service.resolveDestination(destination);
-      _service.rememberRecent(resolved);
-      await _guidance.start(resolved);
+      await _service.rememberRecent(resolved);
+
+      var walkingRoute = await _fetchWalkingRoute(resolved);
+      await _guidance.start(resolved, walkingRoute: walkingRoute);
       if (!mounted) return;
 
       await Navigator.of(context).push<void>(
@@ -60,73 +181,112 @@ class _NavigationPageState extends State<NavigationPage> {
       if (!mounted) return;
       await _guidance.stop();
       _searchController.clear();
+      setState(() {
+        _searchResults = const [];
+        _searchError = null;
+      });
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not start navigation: $e')),
+        SnackBar(content: Text(context.l10n.t('couldNotStartNavigation', {'error': e}))),
       );
     } finally {
       if (mounted) setState(() => _loadingDestination = false);
     }
   }
 
-  Future<void> _startVoiceSearch() async {
-    if (_listening) {
-      await _speech.stop();
-      if (mounted) setState(() => _listening = false);
-      return;
-    }
-
-    final micGranted =
-        await DevicePermissionsService.instance.ensureMicrophone();
-    if (!micGranted) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Microphone permission is required. Please allow microphone access in your device settings.',
-          ),
-        ),
-      );
-      return;
-    }
-
-    final available = await _speech.initialize();
-    if (!available) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Voice search is not available.')),
-      );
-      return;
-    }
-
-    setState(() => _listening = true);
-    await _speech.listen(
-      onResult: (result) {
-        _searchController.text = result.recognizedWords;
-        if (result.finalResult && mounted) {
-          setState(() => _listening = false);
-          _submitSearch();
-        }
-      },
-      listenFor: const Duration(seconds: 8),
-      pauseFor: const Duration(seconds: 2),
-      localeId: 'en_US',
+  Future<void> _openSetSavedPlace(SavedPlaceType type) async {
+    final saved = await showSetSavedPlaceSheet(
+      context: context,
+      type: type,
+      navigationService: _service,
+      placesSearch: _placesSearch,
+      userPosition: _userPosition,
+      currentLocation: _currentLocation,
     );
+    if (!mounted || saved == null) return;
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          type == SavedPlaceType.home
+              ? context.l10n.t('homeAddressSaved')
+              : context.l10n.t('workAddressSaved'),
+        ),
+      ),
+    );
+  }
+
+  void _onHomeTap(NavDestination? home) {
+    if (home == null) {
+      unawaited(_openSetSavedPlace(SavedPlaceType.home));
+      return;
+    }
+    unawaited(_startNavigation(home));
+  }
+
+  void _onWorkTap(NavDestination? work) {
+    if (work == null) {
+      unawaited(_openSetSavedPlace(SavedPlaceType.work));
+      return;
+    }
+    unawaited(_startNavigation(work));
+  }
+
+  Future<WalkingRoute?> _fetchWalkingRoute(NavDestination destination) async {
+    if (!destination.hasCoordinates) return null;
+
+    try {
+      final position = await _service.currentPosition();
+      return await walkingRouteService.fetchWalkingRoute(
+        startLat: position.latitude,
+        startLng: position.longitude,
+        endLat: destination.latitude!,
+        endLng: destination.longitude!,
+      );
+    } catch (_) {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n.t('couldNotLoadWalkingRoute'))),
+      );
+      return null;
+    }
+  }
+
+  Future<void> _startVoiceSearch() async {
+    final error = await _fieldSpeech.toggleForController(_searchController);
+    if (error != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
+    }
   }
 
   void _submitSearch() {
     final query = _searchController.text.trim();
     if (query.isEmpty) return;
-    final results = _service.search(query);
-    _startNavigation(results.first);
+    unawaited(_runSearch(query));
   }
+
+  void _selectSearchResult(PlaceSearchResult result) {
+    FocusScope.of(context).unfocus();
+    _startNavigation(result.destination);
+  }
+
+  bool get _showSearchResults =>
+      _searchController.text.trim().isNotEmpty ||
+      _searching ||
+      _searchResults.isNotEmpty ||
+      _searchError != null;
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final home = _service.home;
     final work = _service.work;
-    final recents = _service.recents;
+    final recents = _service.recentsForDisplay;
+    final showSearchResults = _showSearchResults;
+    final hereLabel = l10n.t('here');
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
@@ -136,9 +296,9 @@ class _NavigationPageState extends State<NavigationPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: const Text(
-          'Navigation',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        title: Text(
+          l10n.t('navigation'),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
       ),
       body: Stack(
@@ -147,57 +307,150 @@ class _NavigationPageState extends State<NavigationPage> {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
             children: [
               AccessibleFocusRegion(
-                label: 'Where to? Search for a destination.',
+                label: _listening
+                    ? l10n.t('navigationListeningA11y')
+                    : l10n.t('whereToSearchA11y'),
                 child: _SearchBar(
                   controller: _searchController,
                   listening: _listening,
+                  searching: _searching,
                   enabled: !_loadingDestination,
                   onSubmitted: (_) => _submitSearch(),
-                  onMicTap: _startVoiceSearch,
+                  onMicTap: () => unawaited(_startVoiceSearch()),
                 ),
               ),
+              if (!showSearchResults) ...[
+                const SizedBox(height: 12),
+                if (_locationLoading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFF63C3C4),
+                        ),
+                      ),
+                    ),
+                  )
+                else if (_currentLocationResult != null)
+                  AccessibleFocusRegion(
+                    label: l10n.t('yourLocationSelectA11y', {
+                      'address': _currentLocation!.address,
+                    }),
+                    onActivate: () =>
+                        _selectSearchResult(_currentLocationResult!),
+                    child: _SearchResultTile(
+                      result: _currentLocationResult!,
+                      icon: Icons.my_location,
+                      distanceLabel: hereLabel,
+                      onTap: () => _selectSearchResult(_currentLocationResult!),
+                    ),
+                  )
+                else
+                  AccessibleFocusRegion(
+                    label: l10n.t('locationUnavailable'),
+                    child: _SearchMessageCard(
+                      message: l10n.t('locationUnavailable'),
+                    ),
+                  ),
+              ],
+              if (showSearchResults) ...[
+                const SizedBox(height: 16),
+                AccessibleFocusRegion(
+                  label: l10n.t('searchResults'),
+                  child: Text(
+                    l10n.t('searchResults'),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (_searching && _searchResults.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Center(
+                      child: CircularProgressIndicator(
+                        color: Color(0xFF63C3C4),
+                      ),
+                    ),
+                  )
+                else if (_searchError != null)
+                  AccessibleFocusRegion(
+                    label: _searchError!,
+                    child: _SearchMessageCard(message: _searchError!),
+                  )
+                else
+                  ..._searchResults.map(
+                    (result) => AccessibleFocusRegion(
+                      label: _searchResultAccessibilityLabel(context, result),
+                      onActivate: () => _selectSearchResult(result),
+                      child: _SearchResultTile(
+                        result: result,
+                        icon: result.destination.label.toLowerCase() ==
+                                'your location'
+                            ? Icons.my_location
+                            : Icons.place_outlined,
+                        distanceLabel: result.destination.label
+                                        .toLowerCase() ==
+                                    'your location'
+                            ? hereLabel
+                            : null,
+                        onTap: () => _selectSearchResult(result),
+                      ),
+                    ),
+                  ),
+              ],
+              if (!showSearchResults) ...[
               const SizedBox(height: 18),
               Row(
                 children: [
                   Expanded(
                     child: AccessibleFocusRegion(
-                      label:
-                          'Home. ${home?.address ?? 'Set now'}. Double tap to navigate.',
-                      onActivate:
-                          home == null ? null : () => _startNavigation(home),
+                      label: home == null
+                          ? l10n.t('homeSetNowA11y')
+                          : l10n.t('homeNavigateA11y', {'address': home.address}),
+                      onActivate: () => _onHomeTap(home),
                       child: _QuickPlaceCard(
-                        title: 'HOME',
-                        subtitle: home?.address ?? 'Set now',
+                        title: l10n.t('home'),
+                        subtitle: home?.address ?? l10n.t('setNow'),
                         icon: Icons.home_outlined,
-                        onTap:
-                            home == null ? null : () => _startNavigation(home),
+                        onTap: () => _onHomeTap(home),
+                        onLongPress: () =>
+                            unawaited(_openSetSavedPlace(SavedPlaceType.home)),
                       ),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: AccessibleFocusRegion(
-                      label:
-                          'Work. ${work?.address ?? 'Set now'}. Double tap to navigate.',
-                      onActivate:
-                          work == null ? null : () => _startNavigation(work),
+                      label: work == null
+                          ? l10n.t('workSetNowA11y')
+                          : l10n.t('workNavigateA11y', {'address': work.address}),
+                      onActivate: () => _onWorkTap(work),
                       child: _QuickPlaceCard(
-                        title: 'WORK',
-                        subtitle: work?.address ?? 'Set now',
+                        title: l10n.t('work'),
+                        subtitle: work?.address ?? l10n.t('setNow'),
                         icon: Icons.work_outline,
-                        onTap:
-                            work == null ? null : () => _startNavigation(work),
+                        onTap: () => _onWorkTap(work),
+                        onLongPress: () =>
+                            unawaited(_openSetSavedPlace(SavedPlaceType.work)),
                       ),
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 24),
-              const AccessibleFocusRegion(
-                label: 'Recent destinations',
+              AccessibleFocusRegion(
+                label: l10n.t('recentDestinations'),
                 child: Text(
-                  'Recent',
-                  style: TextStyle(
+                  l10n.t('recent'),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
                     fontSize: 18,
@@ -205,10 +458,27 @@ class _NavigationPageState extends State<NavigationPage> {
                 ),
               ),
               const SizedBox(height: 12),
-              ...recents.map(
+              if (!_storageReady)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Center(
+                    child: CircularProgressIndicator(color: Color(0xFF63C3C4)),
+                  ),
+                )
+              else if (recents.isEmpty)
+                AccessibleFocusRegion(
+                  label: l10n.t('noRecentDestinations'),
+                  child: _SearchMessageCard(
+                    message: l10n.t('noRecentDestinations'),
+                  ),
+                )
+              else
+                ...recents.map(
                 (item) => AccessibleFocusRegion(
-                  label:
-                      '${item.label}. ${item.address}. Double tap to navigate.',
+                  label: l10n.t('placeNavigateA11y', {
+                    'label': item.label,
+                    'address': item.address,
+                  }),
                   onActivate: () => _startNavigation(item),
                   child: _RecentTile(
                     destination: item,
@@ -216,6 +486,7 @@ class _NavigationPageState extends State<NavigationPage> {
                   ),
                 ),
               ),
+              ],
             ],
           ),
           if (_loadingDestination)
@@ -228,12 +499,25 @@ class _NavigationPageState extends State<NavigationPage> {
       ),
     );
   }
+
+  String _searchResultAccessibilityLabel(BuildContext context, PlaceSearchResult result) {
+    final distance = result.distanceLabel;
+    final distancePart = distance.isEmpty
+        ? ''
+        : ' $distance from your location.';
+    return context.l10n.t('placeSearchResultA11y', {
+      'label': result.destination.label,
+      'address': result.destination.address,
+      'distancePart': distancePart,
+    });
+  }
 }
 
 class _SearchBar extends StatelessWidget {
   const _SearchBar({
     required this.controller,
     required this.listening,
+    required this.searching,
     required this.enabled,
     required this.onSubmitted,
     required this.onMicTap,
@@ -241,6 +525,7 @@ class _SearchBar extends StatelessWidget {
 
   final TextEditingController controller;
   final bool listening;
+  final bool searching;
   final bool enabled;
   final ValueChanged<String> onSubmitted;
   final VoidCallback onMicTap;
@@ -263,23 +548,166 @@ class _SearchBar extends StatelessWidget {
               controller: controller,
               enabled: enabled,
               style: const TextStyle(color: Colors.white, fontSize: 16),
-              decoration: const InputDecoration(
-                hintText: 'Where to?',
-                hintStyle: TextStyle(color: Color(0xFF8A8A8A)),
+              decoration: InputDecoration(
+                hintText: listening && controller.text.trim().isEmpty
+                    ? context.l10n.t('listeningEllipsis')
+                    : context.l10n.t('whereTo'),
+                hintStyle: TextStyle(
+                  color: listening ? const Color(0xFF63C3C4) : const Color(0xFF8A8A8A),
+                ),
                 border: InputBorder.none,
               ),
-              textInputAction: TextInputAction.go,
+              textInputAction: TextInputAction.search,
               onSubmitted: onSubmitted,
             ),
           ),
-          IconButton(
-            onPressed: enabled ? onMicTap : null,
-            icon: Icon(
-              listening ? Icons.mic : Icons.mic_none,
-              color: const Color(0xFF63C3C4),
+          if (searching)
+            const Padding(
+              padding: EdgeInsets.only(right: 4),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Color(0xFF63C3C4),
+                ),
+              ),
+            )
+          else
+            ListeningMicButton(
+              listening: listening,
+              enabled: enabled,
+              onPressed: onMicTap,
+              tooltip: listening
+                  ? context.l10n.t('stopListening')
+                  : context.l10n.t('voiceSearch'),
+              variant: ListeningMicButtonVariant.icon,
+              inactiveColor: const Color(0xFF63C3C4),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SearchMessageCard extends StatelessWidget {
+  const _SearchMessageCard({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF2E2E2E)),
+      ),
+      child: Text(
+        message,
+        style: const TextStyle(
+          color: Color(0xFFB0B0B0),
+          fontSize: 14,
+          height: 1.4,
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchResultTile extends StatelessWidget {
+  const _SearchResultTile({
+    required this.result,
+    required this.onTap,
+    this.icon = Icons.place_outlined,
+    this.distanceLabel,
+  });
+
+  final PlaceSearchResult result;
+  final VoidCallback onTap;
+  final IconData icon;
+  final String? distanceLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final destination = result.destination;
+    final distance = distanceLabel ?? result.distanceLabel;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFF2E2E2E)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF63C3C4),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    icon,
+                    color: Colors.black,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        destination.label,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        destination.address,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFFB0B0B0),
+                          fontSize: 13,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (distance.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    distance,
+                    style: const TextStyle(
+                      color: Color(0xFF63C3C4),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -291,12 +719,14 @@ class _QuickPlaceCard extends StatelessWidget {
     required this.subtitle,
     required this.icon,
     required this.onTap,
+    this.onLongPress,
   });
 
   final String title;
   final String subtitle;
   final IconData icon;
-  final VoidCallback? onTap;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -305,6 +735,7 @@ class _QuickPlaceCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
+        onLongPress: onLongPress,
         borderRadius: BorderRadius.circular(16),
         child: Container(
           padding: const EdgeInsets.all(14),

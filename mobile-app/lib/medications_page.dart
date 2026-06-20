@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'l10n/app_localizations.dart';
 import 'models/medication_item.dart';
 import 'services/medications_service.dart';
 import 'widgets/accessible_focus_region.dart';
@@ -26,9 +27,17 @@ class _MedicationsPageState extends State<MedicationsPage> {
     _medicationsStream = _service.watchForCurrentPatient();
   }
 
-  static String _medicationLabel(MedicationItem item) {
-    final status = item.takenToday ? 'Taken' : 'Not taken';
-    return '${item.name}. ${item.scheduledTime}. ${item.dosage}. $status';
+  String _medicationLabel(BuildContext context, MedicationItem item) {
+    final l10n = context.l10n;
+    final status = item.takenToday
+        ? l10n.t('medicationTaken')
+        : l10n.t('medicationNotTaken');
+    return l10n.t('medicationItemA11y', {
+      'name': item.name,
+      'time': item.scheduledTime,
+      'dosage': item.dosage,
+      'status': status,
+    });
   }
 
   Future<void> _toggleTaken(MedicationItem item) async {
@@ -40,13 +49,16 @@ class _MedicationsPageState extends State<MedicationsPage> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not update medication: $e')),
+        SnackBar(
+          content: Text(context.l10n.t('couldNotUpdateMedication', {'error': e})),
+        ),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
@@ -56,9 +68,9 @@ class _MedicationsPageState extends State<MedicationsPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: const Text(
-          'Medication',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+        title: Text(
+          l10n.t('medication'),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
         ),
         centerTitle: true,
       ),
@@ -67,13 +79,16 @@ class _MedicationsPageState extends State<MedicationsPage> {
         initialData: const [],
         builder: (context, snapshot) {
           if (snapshot.hasError) {
+            final message = l10n.t('couldNotLoadMedicationsMultiline', {
+              'error': snapshot.error,
+            });
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: AccessibleFocusRegion(
-                  label: 'Could not load medications. ${snapshot.error}',
+                  label: message,
                   child: Text(
-                    'Could not load medications.\n${snapshot.error}',
+                    message,
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: _subtext, height: 1.4),
                   ),
@@ -94,17 +109,16 @@ class _MedicationsPageState extends State<MedicationsPage> {
           }
 
           if (meds.isEmpty) {
-            return const Center(
+            final emptyMessage = l10n.t('noMedicationYet');
+            return Center(
               child: Padding(
-                padding: EdgeInsets.all(32),
+                padding: const EdgeInsets.all(32),
                 child: AccessibleFocusRegion(
-                  label:
-                      'There is no medication yet. Your healthcare provider will add prescriptions for you.',
+                  label: emptyMessage,
                   child: Text(
-                    'There is no medication yet.\n'
-                    'Your healthcare provider will add prescriptions for you.',
+                    emptyMessage.replaceFirst('. ', '.\n'),
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: _subtext, fontSize: 15, height: 1.4),
+                    style: const TextStyle(color: _subtext, fontSize: 15, height: 1.4),
                   ),
                 ),
               ),
@@ -120,8 +134,11 @@ class _MedicationsPageState extends State<MedicationsPage> {
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
             children: [
               AccessibleFocusRegion(
-                label:
-                    "Today's Progress. $takenCount of $total taken. $percent percent.",
+                label: l10n.t('todayProgressA11y', {
+                  'takenCount': takenCount,
+                  'total': total,
+                  'percent': percent,
+                }),
                 child: _TodayProgressCard(
                   takenCount: takenCount,
                   total: total,
@@ -134,7 +151,7 @@ class _MedicationsPageState extends State<MedicationsPage> {
                 (med) => Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: AccessibleFocusRegion(
-                    label: _medicationLabel(med),
+                    label: _medicationLabel(context, med),
                     onActivate: () => _toggleTaken(med),
                     child: _MedicationCard(
                       item: med,
@@ -170,6 +187,7 @@ class _TodayProgressCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -186,9 +204,9 @@ class _TodayProgressCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      "Today's Progress",
-                      style: TextStyle(
+                    Text(
+                      l10n.t('todayProgress'),
+                      style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
                         fontSize: 17,
@@ -196,7 +214,10 @@ class _TodayProgressCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '$takenCount of $total taken',
+                      l10n.t('medicationTakenProgress', {
+                        'takenCount': takenCount,
+                        'total': total,
+                      }),
                       style: const TextStyle(color: _subtext, fontSize: 14),
                     ),
                   ],
@@ -215,7 +236,7 @@ class _TodayProgressCard extends StatelessWidget {
                       color: _accent,
                     ),
                     Text(
-                      '$percent%',
+                      l10n.t('medicationPercentTaken', {'percent': percent}),
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
@@ -281,7 +302,7 @@ class _MedicationCard extends StatelessWidget {
               color: iconBg,
               shape: BoxShape.circle,
             ),
-            child: Icon(
+            child: const Icon(
               Icons.medication_outlined,
               color: Colors.black87,
               size: 26,

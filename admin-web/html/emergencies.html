@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Emergency Monitoring — Aura Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body class="staff-app">
+  <header class="staff-nav">
+    <a class="staff-nav-brand" href="dashboard.html">
+      <img class="logo" src="../assets/images/logo.png" alt="" width="40" height="40" />
+      <span class="staff-nav-brand-text">Aura Guide</span>
+    </a>
+    <div class="staff-nav-links-wrap">
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--prev" aria-label="Scroll navigation left">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <nav class="staff-nav-links" aria-label="Main">
+        <a class="staff-nav-link" href="dashboard.html">Dashboard</a>
+        <a class="staff-nav-link" href="appointments.html">Appointments</a>
+        <a class="staff-nav-link" href="patients.html">Patients</a>
+        <a class="staff-nav-link is-active" href="emergencies.html">Emergencies</a>
+        <a class="staff-nav-link" href="#">Reports</a>
+        <a class="staff-nav-link" href="communication.html">Communication</a>
+        <a class="staff-nav-link" href="logs.html">Logs</a>
+      </nav>
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--next" aria-label="Scroll navigation right">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
+    <div class="staff-nav-user">
+      <button type="button" class="staff-avatar" id="btn-user-menu" aria-label="Account menu">
+        <span class="staff-avatar-initials" id="staff-avatar-initials">—</span>
+      </button>
+      <div class="staff-user-menu" id="user-menu" hidden>
+        <p class="staff-user-menu-name" id="menu-staff-name">—</p>
+        <p class="staff-user-menu-role" id="menu-staff-role">—</p>
+        <button type="button" class="staff-user-menu-signout" id="btn-sign-out">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="staff-page emergencies-page">
+    <header class="emergencies-header">
+      <div class="emergencies-header-text">
+        <h1 class="emergencies-title">Emergency Monitoring</h1>
+        <p class="emergencies-subtitle">Real-time patient emergency alerts</p>
+      </div>
+      <p class="emergencies-active-badge" id="emergencies-active-badge" hidden>
+        <span class="emergencies-active-badge-dot" aria-hidden="true"></span>
+        <span id="emergencies-active-label">0 Active Alerts</span>
+      </p>
+    </header>
+
+    <section class="emergencies-map-panel" aria-label="Live map">
+      <div class="emergencies-map-toolbar">
+        <span class="emergencies-map-label" id="emergencies-map-label">Live patient locations</span>
+        <div class="emergencies-map-legend" aria-hidden="true">
+          <span class="emergencies-legend-item"><span class="emergencies-legend-dot emergencies-legend-dot--active"></span>Active</span>
+          <span class="emergencies-legend-item"><span class="emergencies-legend-dot emergencies-legend-dot--responded"></span>Responded</span>
+          <span class="emergencies-legend-item"><span class="emergencies-legend-dot emergencies-legend-dot--resolved"></span>Resolved</span>
+        </div>
+      </div>
+      <div class="emergencies-map" id="emergencies-map"></div>
+    </section>
+
+    <section class="emergencies-alerts-section" aria-labelledby="emergencies-alerts-heading">
+      <div class="emergencies-alerts-toolbar">
+        <h2 class="emergencies-alerts-heading" id="emergencies-alerts-heading">Alerts</h2>
+        <div
+          class="filter-tabs emergencies-filter-tabs"
+          id="emergencies-filter-tabs"
+          role="tablist"
+          aria-label="Filter alerts by status"
+        >
+          <button type="button" class="filter-tab is-active" role="tab" data-filter="all" aria-selected="true">All</button>
+          <button type="button" class="filter-tab" role="tab" data-filter="active" aria-selected="false">Active</button>
+          <button type="button" class="filter-tab" role="tab" data-filter="responded" aria-selected="false">Responded</button>
+          <button type="button" class="filter-tab" role="tab" data-filter="resolved" aria-selected="false">Resolved</button>
+        </div>
+      </div>
+      <div class="emergencies-list" id="emergencies-list" aria-live="polite"></div>
+      <p class="emergencies-empty" id="emergencies-empty" hidden>No emergency alerts yet.</p>
+    </section>
+  </main>
+
+  <div class="modal-backdrop" id="emergency-respond-modal" hidden>
+    <div
+      class="health-records-modal emergency-respond-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="emergency-respond-title"
+    >
+      <header class="modal-dialog-header">
+        <div class="modal-dialog-header-main">
+          <span class="modal-dialog-icon emergency-respond-modal-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </span>
+          <div>
+            <h2 class="modal-dialog-title" id="emergency-respond-title">Respond to alert</h2>
+            <p class="emergency-respond-modal-patient" id="emergency-respond-patient">—</p>
+          </div>
+        </div>
+        <button type="button" class="modal-dialog-close" id="emergency-respond-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </header>
+      <div class="emergency-respond-modal-body">
+        <p class="emergency-respond-modal-lead">
+          How would you like to respond to this emergency?
+        </p>
+        <div class="emergency-respond-modal-actions">
+          <button type="button" class="emergency-respond-option" data-response-action="caregiver">
+            <span class="emergency-respond-option-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                <circle cx="12" cy="7" r="4"/>
+              </svg>
+            </span>
+            <span class="emergency-respond-option-text">
+              <strong>Assign caregiver</strong>
+              <span>Send a caregiver to the patient&apos;s location</span>
+            </span>
+          </button>
+          <button type="button" class="emergency-respond-option emergency-respond-option--emergency" data-response-action="emergency">
+            <span class="emergency-respond-option-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
+              </svg>
+            </span>
+            <span class="emergency-respond-option-text">
+              <strong>Call emergency service</strong>
+              <span>Contact emergency services for immediate help</span>
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="emergency-caregiver-modal" hidden>
+    <div
+      class="health-records-modal emergency-caregiver-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="emergency-caregiver-title"
+    >
+      <header class="modal-dialog-header">
+        <div class="modal-dialog-header-main">
+          <span class="modal-dialog-icon emergency-respond-modal-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </span>
+          <div>
+            <h2 class="modal-dialog-title" id="emergency-caregiver-title">Assign caregiver</h2>
+            <p class="emergency-respond-modal-patient" id="emergency-caregiver-patient">—</p>
+          </div>
+        </div>
+        <button type="button" class="modal-dialog-close" id="emergency-caregiver-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </header>
+      <div class="emergency-caregiver-modal-body">
+        <p class="emergency-respond-modal-lead">Choose an available caregiver for this alert.</p>
+        <div class="emergency-caregiver-list" id="emergency-caregiver-list" aria-live="polite"></div>
+        <p class="emergency-caregiver-empty" id="emergency-caregiver-empty" hidden>No active caregivers found.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="emergency-resolve-modal" hidden>
+    <div
+      class="health-records-modal emergency-resolve-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="emergency-resolve-title"
+    >
+      <header class="modal-dialog-header">
+        <div class="modal-dialog-header-main">
+          <span class="modal-dialog-icon emergency-resolve-modal-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </span>
+          <div>
+            <h2 class="modal-dialog-title" id="emergency-resolve-title">Resolve alert</h2>
+            <p class="emergency-respond-modal-patient" id="emergency-resolve-patient">—</p>
+          </div>
+        </div>
+        <button type="button" class="modal-dialog-close" id="emergency-resolve-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </header>
+      <div class="emergency-resolve-modal-body">
+        <p class="emergency-resolve-modal-lead">
+          Mark this emergency as resolved?
+        </p>
+        <label class="emergency-resolve-note-field" for="emergency-resolve-note">
+          <span class="emergency-resolve-note-label">Resolve note</span>
+          <textarea
+            id="emergency-resolve-note"
+            class="emergency-resolve-note"
+            rows="3"
+            required
+            autocapitalize="sentences"
+            placeholder="Describe what happen to the user and how this alert was resolved"
+          ></textarea>
+        </label>
+        <p class="emergency-resolve-note-error" id="emergency-resolve-note-error" hidden>
+          Please enter a resolve note.
+        </p>
+        <div class="emergency-resolve-modal-actions">
+          <button type="button" class="emergency-resolve-cancel" id="emergency-resolve-cancel">Cancel</button>
+          <button type="button" class="emergency-resolve-confirm" id="emergency-resolve-confirm">Confirm resolve</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script type="module" src="../js/emergencies.js"></script>
+</body>
+</html>

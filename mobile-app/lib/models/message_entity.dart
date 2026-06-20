@@ -12,6 +12,7 @@ class MessageEntity {
     required this.senderId,
     required this.receiverId,
     this.callDuration,
+    this.callDurationSeconds,
     this.deliveredAt,
     this.readAt,
     this.hiddenFor = const [],
@@ -40,6 +41,7 @@ class MessageEntity {
   final String senderId;
   final String receiverId;
   final int? callDuration;
+  final int? callDurationSeconds;
   final dynamic deliveredAt;
   final dynamic readAt;
   final List<String> hiddenFor;
@@ -56,6 +58,7 @@ class MessageEntity {
       'messageType': messageType,
       'content': content,
       'callDuration': callDuration,
+      if (callDurationSeconds != null) 'callDurationSeconds': callDurationSeconds,
       'timestamp': useServerTimestamp ? FieldValue.serverTimestamp() : timestamp,
       'deliveryStatus': deliveryStatus,
       'senderId': senderId,
@@ -99,6 +102,14 @@ class MessageEntity {
       callDuration = rawDuration.toInt();
     }
 
+    final rawDurationSeconds = data['callDurationSeconds'];
+    int? callDurationSeconds;
+    if (rawDurationSeconds is int) {
+      callDurationSeconds = rawDurationSeconds;
+    } else if (rawDurationSeconds is num) {
+      callDurationSeconds = rawDurationSeconds.toInt();
+    }
+
     final hiddenRaw = data['hiddenFor'];
     final hiddenFor = hiddenRaw is List
         ? hiddenRaw.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList()
@@ -115,6 +126,7 @@ class MessageEntity {
       senderId: senderId,
       receiverId: receiverId,
       callDuration: callDuration,
+      callDurationSeconds: callDurationSeconds,
       deliveredAt: data['deliveredAt'],
       readAt: data['readAt'],
       hiddenFor: hiddenFor,

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'chat_page.dart';
+import 'l10n/app_localizations.dart';
 import 'models/conversation_thread.dart';
 import 'models/staff_option.dart';
 import 'services/communication_service.dart';
+import 'services/patient_call_session.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
 
@@ -42,7 +45,10 @@ class _CommunicationPageState extends State<CommunicationPage> {
     }
   }
 
-  Future<void> _openChat(ConversationThread thread) async {
+  Future<void> _openChat(
+    ConversationThread thread, {
+    bool isArchived = false,
+  }) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (context) => ChatPage(
@@ -50,6 +56,7 @@ class _CommunicationPageState extends State<CommunicationPage> {
           title: thread.title,
           staffId: thread.staffId,
           isAuraGuide: thread.isAuraGuide,
+          isArchived: isArchived,
         ),
       ),
     );
@@ -64,7 +71,7 @@ class _CommunicationPageState extends State<CommunicationPage> {
         MaterialPageRoute<void>(
           builder: (context) => ChatPage(
             conversationId: conversationId,
-            title: staff.displayName,
+            title: staff.localizedDisplayName(context.l10n.languageCode),
             staffId: staff.staffId,
             isAuraGuide: false,
           ),
@@ -78,39 +85,29 @@ class _CommunicationPageState extends State<CommunicationPage> {
     }
   }
 
-  void _onCallStaff(StaffOption staff) {
-    _openChatWithStaff(staff);
-  }
-
-  Future<void> _archiveThread(ConversationThread thread) async {
+  Future<void> _onCallStaff(StaffOption staff) async {
     try {
-      await _service.archiveConversation(thread.conversationId);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${thread.title} archived')),
+      await PatientCallSession.instance.startOutgoingToStaff(
+        context: context,
+        staffId: staff.staffId,
+        remoteName: staff.localizedDisplayName(context.l10n.languageCode),
       );
-    } catch (e) {
+    } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not archive: $e')),
+        SnackBar(content: Text(_voiceCallErrorMessage(error))),
       );
     }
   }
 
-  Future<void> _unarchiveThread(ConversationThread thread) async {
-    try {
-      await _service.unarchiveConversation(thread.conversationId);
-      if (!mounted) return;
-      setState(() => _view = 0);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${thread.title} restored to Messages')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not cancel archive: $e')),
-      );
+  String _voiceCallErrorMessage(Object error) {
+    final text = error.toString();
+    if (error is MissingPluginException ||
+        text.contains('MissingPluginException') ||
+        text.contains('MissingPlugin')) {
+      return context.l10n.t('voiceCallPluginRestartHint');
     }
+    return context.l10n.t('voiceCallFailed');
   }
 
   void _showAddContactSheet() {
@@ -187,10 +184,6 @@ class _CommunicationPageState extends State<CommunicationPage> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    subtitle: Text(
-                      member.specialty,
-                      style: const TextStyle(color: Color(0xFFB0B0B0)),
-                    ),
                     trailing: const Icon(
                       Icons.chat_bubble_outline,
                       color: Color(0xFF63C3C4),
@@ -254,7 +247,6 @@ class _CommunicationPageState extends State<CommunicationPage> {
                   0 => _MessagesTab(
                       service: _service,
                       onOpenChat: _openChat,
-                      onArchive: _archiveThread,
                     ),
                   1 => _CallsTab(
                       loading: _loadingStaff,
@@ -263,8 +255,8 @@ class _CommunicationPageState extends State<CommunicationPage> {
                     ),
                   _ => _ArchivedTab(
                       service: _service,
-                      onOpenChat: _openChat,
-                      onUnarchive: _unarchiveThread,
+                      onOpenChat: (thread) =>
+                          _openChat(thread, isArchived: true),
                     ),
                 },
               ),
@@ -430,12 +422,10 @@ class _MessagesTab extends StatefulWidget {
   const _MessagesTab({
     required this.service,
     required this.onOpenChat,
-    required this.onArchive,
   });
 
   final CommunicationService service;
   final ValueChanged<ConversationThread> onOpenChat;
-  final ValueChanged<ConversationThread> onArchive;
 
   @override
   State<_MessagesTab> createState() => _MessagesTabState();
@@ -495,11 +485,9 @@ class _MessagesTabState extends State<_MessagesTab> {
           separatorBuilder: (_, __) => const SizedBox(height: 12),
           itemBuilder: (context, index) {
             final thread = threads[index];
-            return _SlidableThreadRow(
+            return _ThreadCard(
               thread: thread,
-              action: _SlidableAction.archive,
               onTap: () => widget.onOpenChat(thread),
-              onAction: () => widget.onArchive(thread),
             );
           },
         );
@@ -512,12 +500,10 @@ class _ArchivedTab extends StatefulWidget {
   const _ArchivedTab({
     required this.service,
     required this.onOpenChat,
-    required this.onUnarchive,
   });
 
   final CommunicationService service;
   final ValueChanged<ConversationThread> onOpenChat;
-  final ValueChanged<ConversationThread> onUnarchive;
 
   @override
   State<_ArchivedTab> createState() => _ArchivedTabState();
@@ -588,11 +574,9 @@ class _ArchivedTabState extends State<_ArchivedTab> {
           separatorBuilder: (_, __) => const SizedBox(height: 12),
           itemBuilder: (context, index) {
             final thread = threads[index];
-            return _SlidableThreadRow(
+            return _ThreadCard(
               thread: thread,
-              action: _SlidableAction.unarchive,
               onTap: () => widget.onOpenChat(thread),
-              onAction: () => widget.onUnarchive(thread),
             );
           },
         );
@@ -655,120 +639,6 @@ class _AddContactEmptyState extends StatelessWidget {
   }
 }
 
-enum _SlidableAction { archive, unarchive }
-
-class _SlidableThreadRow extends StatefulWidget {
-  const _SlidableThreadRow({
-    required this.thread,
-    required this.onTap,
-    required this.onAction,
-    this.action = _SlidableAction.archive,
-  });
-
-  final ConversationThread thread;
-  final VoidCallback onTap;
-  final VoidCallback onAction;
-  final _SlidableAction action;
-
-  @override
-  State<_SlidableThreadRow> createState() => _SlidableThreadRowState();
-}
-
-class _SlidableThreadRowState extends State<_SlidableThreadRow> {
-  double get _actionWidth =>
-      widget.action == _SlidableAction.unarchive ? 120.0 : 88.0;
-
-  double _dragOffset = 0;
-
-  void _snapOpen() => setState(() => _dragOffset = -_actionWidth);
-
-  void _snapClosed() => setState(() => _dragOffset = 0);
-
-  void _onActionTap() {
-    _snapClosed();
-    widget.onAction();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isUnarchive = widget.action == _SlidableAction.unarchive;
-    final panelColor =
-        isUnarchive ? const Color(0xFF1E3D40) : const Color(0xFF3D3520);
-    final actionColor =
-        isUnarchive ? const Color(0xFF63C3C4) : const Color(0xFFE8C547);
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Material(
-                  color: panelColor,
-                  child: InkWell(
-                    onTap: _onActionTap,
-                    child: SizedBox(
-                      width: _actionWidth,
-                      height: double.infinity,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            isUnarchive
-                                ? Icons.unarchive_outlined
-                                : Icons.archive_outlined,
-                            color: actionColor,
-                            size: 28,
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            isUnarchive ? 'Cancel archive' : 'Archive',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: actionColor,
-                              fontSize: isUnarchive ? 11 : 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          GestureDetector(
-            onHorizontalDragUpdate: (details) {
-              setState(() {
-                _dragOffset = (_dragOffset + details.delta.dx)
-                    .clamp(-_actionWidth, 0.0);
-              });
-            },
-            onHorizontalDragEnd: (details) {
-              final velocity = details.primaryVelocity ?? 0;
-              if (_dragOffset < -_actionWidth / 2 || velocity < -200) {
-                _snapOpen();
-              } else {
-                _snapClosed();
-              }
-            },
-            child: Transform.translate(
-              offset: Offset(_dragOffset, 0),
-              child: _ThreadCard(
-                thread: widget.thread,
-                onTap: widget.onTap,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _ThreadCard extends StatelessWidget {
   const _ThreadCard({required this.thread, required this.onTap});
 
@@ -808,18 +678,21 @@ class _ThreadCard extends StatelessWidget {
                         Expanded(
                           child: Text(
                             thread.title,
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: Colors.white,
-                              fontWeight: FontWeight.bold,
+                              fontWeight:
+                                  thread.unread ? FontWeight.w800 : FontWeight.bold,
                               fontSize: 16,
                             ),
                           ),
                         ),
                         Text(
                           thread.timeLabel,
-                          style: const TextStyle(
-                            color: _subtext,
+                          style: TextStyle(
+                            color: thread.unread ? Colors.white70 : _subtext,
                             fontSize: 13,
+                            fontWeight:
+                                thread.unread ? FontWeight.w600 : FontWeight.normal,
                           ),
                         ),
                       ],
@@ -829,7 +702,12 @@ class _ThreadCard extends StatelessWidget {
                       thread.preview,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: _subtext, fontSize: 14),
+                      style: TextStyle(
+                        color: thread.unread ? Colors.white : _subtext,
+                        fontSize: 14,
+                        fontWeight:
+                            thread.unread ? FontWeight.w600 : FontWeight.normal,
+                      ),
                     ),
                   ],
                 ),
@@ -948,23 +826,13 @@ class _CallsTab extends StatelessWidget {
                 ),
                 const SizedBox(width: 14),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        member.displayName,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        member.specialty,
-                        style: const TextStyle(color: _subtext, fontSize: 14),
-                      ),
-                    ],
+                  child: Text(
+                    member.displayName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
                   ),
                 ),
                 Material(

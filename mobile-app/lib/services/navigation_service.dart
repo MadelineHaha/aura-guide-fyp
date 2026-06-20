@@ -2,46 +2,58 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../models/navigation_destination.dart';
+import 'navigation_storage.dart';
 
 class NavigationService {
+  NavigationService._();
+
+  static final NavigationService instance = NavigationService._();
+
   NavDestination? _home;
   NavDestination? _work;
   final List<NavDestination> _recents = [];
-
-  static const _defaultHome = NavDestination(
-    label: 'HOME',
-    address: '45 Jalan Bukit Bintang, Kuala Lumpur',
-    latitude: 3.1478,
-    longitude: 101.7089,
-    isSavedHome: true,
-  );
-
-  NavigationService() {
-    _home = _defaultHome;
-    _recents.addAll([
-      _defaultHome,
-      const NavDestination(
-        label: 'After One KL',
-        address: '1 Jalan Yap Kwan Seng, Kuala Lumpur',
-        latitude: 3.1612,
-        longitude: 101.7148,
-      ),
-      const NavDestination(
-        label: 'Ho Kow Hainam Kopitiam',
-        address: '1 Jalan Balai Polis, Kuala Lumpur',
-        latitude: 3.1436,
-        longitude: 101.6974,
-      ),
-    ]);
-  }
+  var _initialized = false;
 
   NavDestination? get home => _home;
   NavDestination? get work => _work;
   List<NavDestination> get recents => List.unmodifiable(_recents);
 
+  List<NavDestination> get recentsForDisplay {
+    return _recents.where((item) {
+      if (_home != null && _isSamePlace(item, _home!)) return false;
+      if (_work != null && _isSamePlace(item, _work!)) return false;
+      return true;
+    }).toList(growable: false);
+  }
+
+  Future<void> initialize() async {
+    if (_initialized) return;
+
+    _home = await NavigationStorage.loadHome();
+    _work = await NavigationStorage.loadWork();
+    _recents
+      ..clear()
+      ..addAll(await NavigationStorage.loadRecents());
+    _initialized = true;
+  }
+
   List<NavDestination> search(String query) {
+    final matches = searchLocal(query);
+    if (matches.isEmpty) {
+      matches.add(
+        NavDestination(
+          label: query.trim(),
+          address: query.trim(),
+        ),
+      );
+    }
+    return matches;
+  }
+
+  /// Saved and recent places matching [query]. Does not add a free-text fallback.
+  List<NavDestination> searchLocal(String query) {
     final trimmed = query.trim().toLowerCase();
-    if (trimmed.isEmpty) return recents;
+    if (trimmed.isEmpty) return const [];
 
     final matches = <NavDestination>[];
     final seen = <String>{};
@@ -62,25 +74,68 @@ class NavigationService {
       addIfMatch(item);
     }
 
-    if (matches.isEmpty) {
-      matches.add(
-        NavDestination(
-          label: query.trim(),
-          address: query.trim(),
-        ),
-      );
-    }
     return matches;
   }
 
-  void rememberRecent(NavDestination destination) {
-    _recents.removeWhere(
-      (item) =>
-          item.label == destination.label && item.address == destination.address,
+  Future<void> rememberRecent(NavDestination destination) async {
+    final normalized = destination.copyWith(
+      isSavedHome: false,
+      isSavedWork: false,
     );
-    _recents.insert(0, destination);
+
+    _recents.removeWhere((item) => _isSamePlace(item, normalized));
+    _recents.insert(0, normalized);
     if (_recents.length > 8) {
       _recents.removeRange(8, _recents.length);
+    }
+    await NavigationStorage.saveRecents(_recents);
+  }
+
+  Future<NavDestination> setHome(NavDestination destination) async {
+    final resolved = await resolveDestination(destination);
+    _home = resolved.copyWith(isSavedHome: true, isSavedWork: false);
+    await NavigationStorage.saveHome(_home);
+    return _home!;
+  }
+
+  Future<NavDestination> setWork(NavDestination destination) async {
+    final resolved = await resolveDestination(destination);
+    _work = resolved.copyWith(isSavedHome: false, isSavedWork: true);
+    await NavigationStorage.saveWork(_work);
+    return _work!;
+  }
+
+  Future<NavDestination?> currentLocationDestination() async {
+    try {
+      final position = await currentPosition();
+      return destinationFromPosition(position);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<NavDestination?> destinationFromPosition(Position position) async {
+    try {
+      final placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      );
+      final placemark = placemarks.isNotEmpty ? placemarks.first : null;
+      final address = _formatPlacemarkAddress(placemark, position);
+      return NavDestination(
+        label: 'Your location',
+        address: address,
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+    } catch (_) {
+      return NavDestination(
+        label: 'Your location',
+        address:
+            '${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}',
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
     }
   }
 
@@ -152,5 +207,41 @@ class NavigationService {
     if (abs < 12) return 'Continue straight';
     if (turnDelta > 0) return 'Turn right';
     return 'Turn left';
+  }
+
+  String _formatPlacemarkAddress(Placemark? placemark, Position position) {
+    if (placemark == null) {
+      return '${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}';
+    }
+
+    final parts = <String>[
+      if (placemark.street != null && placemark.street!.trim().isNotEmpty)
+        placemark.street!.trim(),
+      if (placemark.subLocality != null &&
+          placemark.subLocality!.trim().isNotEmpty)
+        placemark.subLocality!.trim(),
+      if (placemark.locality != null && placemark.locality!.trim().isNotEmpty)
+        placemark.locality!.trim(),
+      if (placemark.administrativeArea != null &&
+          placemark.administrativeArea!.trim().isNotEmpty)
+        placemark.administrativeArea!.trim(),
+      if (placemark.country != null && placemark.country!.trim().isNotEmpty)
+        placemark.country!.trim(),
+    ];
+
+    if (parts.isEmpty) {
+      return '${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}';
+    }
+    return parts.join(', ');
+  }
+
+  bool _isSamePlace(NavDestination a, NavDestination b) {
+    if (a.hasCoordinates && b.hasCoordinates) {
+      final sameLat = (a.latitude! - b.latitude!).abs() < 0.0001;
+      final sameLng = (a.longitude! - b.longitude!).abs() < 0.0001;
+      if (sameLat && sameLng) return true;
+    }
+    return a.label.toLowerCase() == b.label.toLowerCase() &&
+        a.address.toLowerCase() == b.address.toLowerCase();
   }
 }

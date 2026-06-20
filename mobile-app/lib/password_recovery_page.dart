@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'l10n/app_localizations.dart';
 import 'widgets/app_back_button.dart';
 
 class PasswordRecoveryPage extends StatefulWidget {
@@ -23,21 +24,14 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
   static const Color _fieldBorder = Color(0xFF3A3A3A);
 
   String? _validateNewPassword(String password) {
-    if (password.isEmpty) return 'Please enter a new password.';
-    if (!_hasMinLength(password)) return 'Password must be at least 8 characters.';
-    if (password.length > 255) return 'Password must be at most 255 characters.';
-    if (!_hasUppercase(password)) {
-      return 'Password must include at least one uppercase letter.';
-    }
-    if (!_hasLowercase(password)) {
-      return 'Password must include at least one lowercase letter.';
-    }
-    if (!_hasDigit(password)) {
-      return 'Password must include at least one number.';
-    }
-    if (!_hasSpecialChar(password)) {
-      return 'Password must include at least one special character.';
-    }
+    final l10n = context.l10n;
+    if (password.isEmpty) return l10n.t('pleaseEnterNewPassword');
+    if (!_hasMinLength(password)) return l10n.t('passwordMustMinLength');
+    if (password.length > 255) return l10n.t('passwordMustMaxLength');
+    if (!_hasUppercase(password)) return l10n.t('passwordMustUppercase');
+    if (!_hasLowercase(password)) return l10n.t('passwordMustLowercase');
+    if (!_hasDigit(password)) return l10n.t('passwordMustDigit');
+    if (!_hasSpecialChar(password)) return l10n.t('passwordMustSpecial');
     return null;
   }
 
@@ -49,9 +43,10 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
       RegExp(r'[!@#$%^&*(),.?":{}|<>_\-\\/\[\];+=~`]').hasMatch(password);
 
   String? _validateRepeat(String confirm) {
-    if (confirm.isEmpty) return 'Please repeat your password.';
+    final l10n = context.l10n;
+    if (confirm.isEmpty) return l10n.t('pleaseRepeatPassword');
     if (confirm != _newPasswordController.text) {
-      return 'Passwords do not match.';
+      return l10n.t('passwordsDoNotMatch');
     }
     return null;
   }
@@ -77,16 +72,14 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
     if (!mounted) return;
     setState(() => _submitting = false);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Password reset request submitted.'),
-      ),
+      SnackBar(content: Text(context.l10n.t('passwordResetSubmitted'))),
     );
     Navigator.of(context).pop();
   }
 
-  void _showVoiceHint(String field) {
+  void _showVoiceHint(String fieldKey) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Voice input for $field will be available soon.')),
+      SnackBar(content: Text(context.l10n.t('voiceInputForFieldSoon', {'field': fieldKey}))),
     );
   }
 
@@ -99,6 +92,7 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
@@ -106,9 +100,9 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
         foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          'Password Recovery',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
+        title: Text(
+          l10n.t('passwordRecovery'),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
         ),
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
@@ -158,7 +152,9 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
                         ),
                       )
                     : Text(
-                        _step == 0 ? 'Continue' : 'Reset Password',
+                        _step == 0
+                            ? l10n.t('continueLabel')
+                            : l10n.t('resetPasswordTitle'),
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 16,
@@ -173,43 +169,44 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
   }
 
   Widget _buildStep1() {
+    final l10n = context.l10n;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: 8),
-        const Text(
-          'Please enter new password',
+        Text(
+          l10n.t('pleaseEnterNewPassword'),
           textAlign: TextAlign.center,
-          style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+          style: const TextStyle(color: _subtext, fontSize: 15, height: 1.35),
         ),
         const SizedBox(height: 32),
         _RecoveryInputField(
           controller: _newPasswordController,
-          hintText: 'New password',
+          hintText: l10n.t('newPassword'),
           prefixIcon: Icons.lock_outline,
           obscureText: true,
           onChanged: (_) => setState(() {}),
-          onMic: () => _showVoiceHint('new password'),
+          onMic: () => _showVoiceHint(l10n.t('newPassword')),
         ),
         const SizedBox(height: 14),
         _PasswordRequirement(
-          text: 'At least 8 characters',
+          text: l10n.t('passwordReqMinLength'),
           met: _hasMinLength(_newPasswordController.text),
         ),
         const SizedBox(height: 6),
         _PasswordRequirement(
-          text: 'One uppercase and one lowercase letter',
+          text: l10n.t('passwordReqUpperLower'),
           met: _hasUppercase(_newPasswordController.text) &&
               _hasLowercase(_newPasswordController.text),
         ),
         const SizedBox(height: 6),
         _PasswordRequirement(
-          text: 'At least one number',
+          text: l10n.t('passwordReqDigit'),
           met: _hasDigit(_newPasswordController.text),
         ),
         const SizedBox(height: 6),
         _PasswordRequirement(
-          text: 'At least one special character',
+          text: l10n.t('passwordReqSpecial'),
           met: _hasSpecialChar(_newPasswordController.text),
         ),
       ],
@@ -217,22 +214,23 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
   }
 
   Widget _buildStep2() {
+    final l10n = context.l10n;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: 8),
-        const Text(
-          'Please enter new password again',
+        Text(
+          l10n.t('pleaseEnterNewPasswordAgain'),
           textAlign: TextAlign.center,
-          style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+          style: const TextStyle(color: _subtext, fontSize: 15, height: 1.35),
         ),
         const SizedBox(height: 32),
         _RecoveryInputField(
           controller: _repeatPasswordController,
-          hintText: 'Repeat password',
+          hintText: l10n.t('repeatPassword'),
           prefixIcon: Icons.lock_outline,
           obscureText: true,
-          onMic: () => _showVoiceHint('repeat password'),
+          onMic: () => _showVoiceHint(l10n.t('repeatPassword')),
         ),
       ],
     );

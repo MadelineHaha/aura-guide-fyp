@@ -23,7 +23,7 @@
         <a class="staff-nav-link" href="dashboard.html">Dashboard</a>
         <a class="staff-nav-link" href="appointments.html">Appointments</a>
         <a class="staff-nav-link" href="patients.html">Patients</a>
-        <a class="staff-nav-link" href="#">Emergencies</a>
+        <a class="staff-nav-link" href="emergencies.html">Emergencies</a>
         <a class="staff-nav-link" href="#">Reports</a>
         <a class="staff-nav-link is-active" href="communication.html">Communication</a>
         <a class="staff-nav-link" href="logs.html">Logs</a>
@@ -91,10 +91,25 @@
               </svg>
               Call
             </button>
-            <button type="button" class="btn-chat-icon" aria-label="Search in conversation">
+            <button type="button" class="btn-chat-call" id="btn-chat-video">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <polygon points="23 7 16 12 23 17 23 7" />
+                <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+              </svg>
+              Video
+            </button>
+            <button type="button" class="btn-chat-icon" id="btn-chat-search" aria-label="Search in conversation" aria-expanded="false" aria-controls="chat-conversation-search">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <circle cx="11" cy="11" r="7" />
                 <line x1="16.5" y1="16.5" x2="21" y2="21" />
+              </svg>
+            </button>
+            <button type="button" class="btn-chat-icon" id="btn-chat-calendar" aria-label="Jump to date" aria-haspopup="dialog" aria-controls="chat-calendar-modal">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="18" rx="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
               </svg>
             </button>
             <button type="button" class="btn-chat-icon" aria-label="More options">
@@ -107,7 +122,66 @@
           </div>
         </header>
 
-        <div class="communication-messages" id="chat-messages" role="log" aria-live="polite"></div>
+        <div class="chat-conversation-search" id="chat-conversation-search" hidden>
+          <label class="chat-conversation-search-field" for="chat-conversation-search-input">
+            <span class="chat-conversation-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="7" />
+                <line x1="16.5" y1="16.5" x2="21" y2="21" />
+              </svg>
+            </span>
+            <input
+              type="search"
+              class="chat-conversation-search-input"
+              id="chat-conversation-search-input"
+              placeholder="Search in conversation"
+              autocomplete="off"
+            />
+          </label>
+          <button type="button" class="chat-conversation-search-close" id="chat-conversation-search-close" aria-label="Close search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="communication-messages-wrap">
+          <div class="communication-messages" id="chat-messages" role="log" aria-live="polite"></div>
+          <button type="button" class="chat-scroll-bottom-btn" id="btn-chat-scroll-bottom" hidden aria-label="Scroll to latest messages">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="chat-voice-call-overlay" id="chat-voice-call-overlay" hidden>
+          <div class="chat-voice-call-card" role="dialog" aria-modal="true" aria-labelledby="chat-voice-call-name">
+            <span class="chat-voice-call-avatar chat-avatar chat-avatar--teal" id="chat-voice-call-avatar" aria-hidden="true">—</span>
+            <h2 class="chat-voice-call-name" id="chat-voice-call-name">—</h2>
+            <p class="chat-voice-call-status" id="chat-voice-call-status">Calling…</p>
+            <p class="chat-voice-call-timer" id="chat-voice-call-timer" hidden>00:00</p>
+            <div class="chat-voice-call-controls">
+              <button type="button" class="chat-voice-call-control chat-voice-call-control--mute" id="chat-voice-call-mute" aria-label="Mute microphone" hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="23" />
+                  <line x1="8" y1="23" x2="16" y2="23" />
+                </svg>
+                <span>Mute</span>
+              </button>
+              <button type="button" class="chat-voice-call-control chat-voice-call-control--end" id="chat-voice-call-end" aria-label="End call">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+                <span>End</span>
+              </button>
+            </div>
+          </div>
+          <audio id="chat-voice-call-remote-audio" autoplay playsinline hidden></audio>
+        </div>
 
         <div class="chat-reply-strip" id="chat-reply-strip" hidden>
           <div class="chat-reply-strip-body">
@@ -261,6 +335,53 @@
     </div>
   </div>
 
+  <div class="modal-backdrop modal-backdrop--stacked" id="chat-call-modal" hidden>
+    <div class="chat-call-modal" role="dialog" aria-modal="true" aria-labelledby="chat-call-title">
+      <button type="button" class="chat-call-close" id="chat-call-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+      <div class="chat-call-body">
+        <span class="chat-call-avatar" id="chat-call-avatar" aria-hidden="true">—</span>
+        <h2 class="chat-call-name" id="chat-call-name">—</h2>
+        <p class="chat-call-subtitle" id="chat-call-subtitle">In-app voice call</p>
+        <p class="chat-call-phone" id="chat-call-patient-id">—</p>
+        <p class="chat-call-error" id="chat-call-error" hidden></p>
+      </div>
+      <footer class="chat-call-actions">
+        <button type="button" class="chat-call-btn chat-call-btn--cancel" id="chat-call-cancel">Cancel</button>
+        <button type="button" class="chat-call-btn chat-call-btn--start" id="chat-call-start">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
+          </svg>
+          Call
+        </button>
+      </footer>
+    </div>
+  </div>
+
+  <div class="modal-backdrop modal-backdrop--stacked" id="chat-incoming-call-modal" hidden>
+    <div class="chat-call-modal chat-incoming-call-modal" role="dialog" aria-modal="true" aria-labelledby="chat-incoming-call-title">
+      <div class="chat-call-body">
+        <span class="chat-call-avatar" id="chat-incoming-call-avatar" aria-hidden="true">—</span>
+        <h2 class="chat-call-name" id="chat-incoming-call-title">—</h2>
+        <p class="chat-call-subtitle" id="chat-incoming-call-subtitle">Incoming voice call</p>
+        <p class="chat-call-hint" id="chat-incoming-call-hint">A patient is calling you.</p>
+      </div>
+      <footer class="chat-call-actions">
+        <button type="button" class="chat-call-btn chat-call-btn--decline" id="chat-incoming-call-decline">Decline</button>
+        <button type="button" class="chat-call-btn chat-call-btn--accept" id="chat-incoming-call-accept">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
+          </svg>
+          Accept
+        </button>
+      </footer>
+    </div>
+  </div>
+
   <div class="modal-backdrop modal-backdrop--stacked" id="message-info-modal" hidden>
     <div class="message-action-modal" role="dialog" aria-modal="true" aria-labelledby="message-info-title">
       <header class="modal-dialog-header">
@@ -315,6 +436,50 @@
     </div>
   </div>
 
+  <div class="modal-backdrop modal-backdrop--stacked" id="chat-calendar-modal" hidden>
+    <div class="message-action-modal chat-calendar-modal" role="dialog" aria-modal="true" aria-labelledby="chat-calendar-title">
+      <header class="modal-dialog-header">
+        <div class="modal-dialog-header-main">
+          <span class="modal-dialog-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+          </span>
+          <h2 class="modal-dialog-title" id="chat-calendar-title">Jump to date</h2>
+        </div>
+        <button type="button" class="modal-dialog-close" id="chat-calendar-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+      <div class="chat-calendar-body">
+        <p class="chat-calendar-hint">Choose a date to trace back your messages in this conversation.</p>
+        <div class="chat-calendar-nav">
+          <button type="button" class="chat-calendar-nav-btn" id="chat-calendar-prev" aria-label="Previous month">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+          <p class="chat-calendar-month" id="chat-calendar-month-label" aria-live="polite">—</p>
+          <button type="button" class="chat-calendar-nav-btn" id="chat-calendar-next" aria-label="Next month">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </button>
+        </div>
+        <div class="chat-calendar-weekdays" aria-hidden="true">
+          <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+        </div>
+        <div class="chat-calendar-grid" id="chat-calendar-grid" role="grid" aria-label="Conversation dates"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-backdrop modal-backdrop--stacked" id="delete-message-modal" hidden>
     <div class="message-action-modal" role="dialog" aria-modal="true" aria-labelledby="delete-message-title">
       <header class="modal-dialog-header">
@@ -335,14 +500,11 @@
         </button>
       </header>
       <div class="message-delete-body">
-        <p class="message-delete-hint">Choose how you want to delete the selected message(s).</p>
         <button type="button" class="message-delete-option" id="delete-message-for-me">
           <span class="message-delete-option-title">Delete for me</span>
-          <span class="message-delete-option-desc">Hide from your chat. The patient can still see it.</span>
         </button>
         <button type="button" class="message-delete-option message-delete-option--danger" id="delete-message-for-everyone">
           <span class="message-delete-option-title">Delete for everyone</span>
-          <span class="message-delete-option-desc">Mark as deleted for all participants. The record stays in Firestore.</span>
         </button>
       </div>
     </div>

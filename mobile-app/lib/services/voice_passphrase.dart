@@ -6,11 +6,6 @@ class VoicePassphrase {
 
   static const expectedNormalized = 'sign me in';
 
-  static const retakeMessage =
-      'That was not correct. Please tap to record again and say, Sign me in.';
-
-  static const captureSuccessMessage = 'Voice captured successfully.';
-
   static final VoiceProfileService _profiles = VoiceProfileService();
 
   static String normalize(String raw) => _profiles.normalize(raw);

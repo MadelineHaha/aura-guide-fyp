@@ -30,6 +30,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
   flutter_localizations:
     sdk: flutter
   intl: any
@@ -52,6 +53,11 @@ dependencies:
   record: ^6.2.1
   path_provider: ^2.1.5
   mobile_number: ^3.0.0
+  http: ^1.6.0
+  audioplayers: ^6.1.0
+  flutter_webrtc: ^1.5.1
+  sensors_plus: ^6.1.1
+  tflite_flutter: ^0.11.0
 
 dev_dependencies:
   flutter_test:
@@ -77,6 +83,8 @@ flutter:
 
   assets:
     - assets/logo.png
+    - assets/sounds/sos_beep.wav
+    - assets/ai/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

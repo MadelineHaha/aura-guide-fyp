@@ -23,7 +23,7 @@
         <a class="staff-nav-link is-active" href="dashboard.html">Dashboard</a>
         <a class="staff-nav-link" href="appointments.html">Appointments</a>
         <a class="staff-nav-link" href="patients.html">Patients</a>
-        <a class="staff-nav-link" href="#">Emergencies</a>
+        <a class="staff-nav-link" href="emergencies.html">Emergencies</a>
         <a class="staff-nav-link" href="#">Reports</a>
         <a class="staff-nav-link" href="communication.html">Communication</a>
         <a class="staff-nav-link" href="logs.html">Logs</a>
@@ -44,21 +44,7 @@
     </div>
   </header>
 
-  <div class="emergency-banner" role="alert">
-    <div class="emergency-banner-icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="10" />
-        <line x1="12" y1="8" x2="12" y2="12" />
-        <line x1="12" y1="16" x2="12.01" y2="16" />
-      </svg>
-    </div>
-    <div class="emergency-banner-body">
-      <p class="emergency-banner-title">Active Emergency: Rajan Pillai</p>
-      <p class="emergency-banner-detail">Fall Detected — 45 Jalan Bukit Bintang, KL</p>
-      <p class="emergency-banner-time">2026-03-16 09:32 AM</p>
-    </div>
-    <button type="button" class="emergency-banner-action">Respond Now</button>
-  </div>
+  <div class="emergency-banners" id="emergency-banners" hidden aria-live="polite"></div>
 
   <main class="staff-dashboard">
     <header class="staff-dashboard-header">
@@ -69,100 +55,45 @@
     <section class="stat-cards" aria-label="Summary">
       <article class="stat-card">
         <p class="stat-card-label">Total Patients</p>
-        <p class="stat-card-value">6</p>
-        <p class="stat-card-meta stat-card-meta--positive">+2 this week</p>
+        <p class="stat-card-value" id="stat-total-patients">—</p>
+        <p class="stat-card-meta stat-card-meta--positive" id="stat-patients-meta">Loading…</p>
       </article>
       <article class="stat-card">
         <p class="stat-card-label">Today&apos;s Appointment</p>
-        <p class="stat-card-value">8</p>
-        <p class="stat-card-meta">3 remaining</p>
+        <p class="stat-card-value" id="stat-today-appointments">—</p>
+        <p class="stat-card-meta" id="stat-appointments-meta">Loading…</p>
       </article>
       <article class="stat-card">
         <p class="stat-card-label">Active Emergencies</p>
-        <p class="stat-card-value">1</p>
-        <p class="stat-card-meta stat-card-meta--positive">+2 this week</p>
+        <p class="stat-card-value" id="stat-active-emergencies">0</p>
+        <p class="stat-card-meta stat-card-meta--positive" id="stat-emergencies-meta">Live from Firestore</p>
       </article>
     </section>
 
     <section class="dashboard-grid">
       <article class="panel panel--chart">
         <h2 class="panel-title">Weekly Activity</h2>
-        <div class="bar-chart" role="img" aria-label="Weekly activity bar chart">
-          <div class="bar-chart-col"><span class="bar bar--primary" style="--h: 72%"></span><span class="bar bar--secondary" style="--h: 48%"></span><span class="bar-chart-day">Mon</span></div>
-          <div class="bar-chart-col"><span class="bar bar--primary" style="--h: 55%"></span><span class="bar bar--secondary" style="--h: 62%"></span><span class="bar-chart-day">Tue</span></div>
-          <div class="bar-chart-col"><span class="bar bar--primary" style="--h: 88%"></span><span class="bar bar--secondary" style="--h: 40%"></span><span class="bar-chart-day">Wed</span></div>
-          <div class="bar-chart-col"><span class="bar bar--primary" style="--h: 65%"></span><span class="bar bar--secondary" style="--h: 70%"></span><span class="bar-chart-day">Thu</span></div>
-          <div class="bar-chart-col"><span class="bar bar--primary" style="--h: 78%"></span><span class="bar bar--secondary" style="--h: 52%"></span><span class="bar-chart-day">Fri</span></div>
-          <div class="bar-chart-col"><span class="bar bar--primary" style="--h: 42%"></span><span class="bar bar--secondary" style="--h: 35%"></span><span class="bar-chart-day">Sat</span></div>
-          <div class="bar-chart-col"><span class="bar bar--primary" style="--h: 30%"></span><span class="bar bar--secondary" style="--h: 28%"></span><span class="bar-chart-day">Sun</span></div>
-        </div>
+        <div class="bar-chart" id="weekly-activity-chart" role="img" aria-label="Weekly activity bar chart"></div>
       </article>
 
       <article class="panel">
         <h2 class="panel-title">Today&apos;s Appointments</h2>
-        <ul class="appointment-list">
-          <li class="appointment-item">
-            <div class="appointment-main">
-              <p class="appointment-name">Ahmad Bin Ismail</p>
-              <p class="appointment-detail">10:00 AM — Eye Examination</p>
-            </div>
-            <span class="appointment-assignee">Sarah</span>
-          </li>
-          <li class="appointment-item">
-            <div class="appointment-main">
-              <p class="appointment-name">Mei Ling Wong</p>
-              <p class="appointment-detail">11:00 AM — Glaucoma Check</p>
-            </div>
-            <span class="appointment-assignee">Sarah</span>
-          </li>
-          <li class="appointment-item">
-            <div class="appointment-main">
-              <p class="appointment-name">Rajan Pillai</p>
-              <p class="appointment-detail">2:00 PM — Neuro Follow-up</p>
-            </div>
-            <span class="appointment-assignee">James</span>
-          </li>
-        </ul>
+        <ul class="appointment-list" id="today-appointments-list"></ul>
+        <p class="dashboard-empty" id="today-appointments-empty" hidden>No appointments today.</p>
       </article>
 
       <article class="panel panel--chart">
         <h2 class="panel-title">Patient Status</h2>
         <div class="donut-wrap">
-          <div class="donut-chart" role="img" aria-label="Patient status distribution"></div>
-          <ul class="donut-legend">
-            <li><span class="donut-swatch donut-swatch--stable"></span>Stable 45%</li>
-            <li><span class="donut-swatch donut-swatch--monitoring"></span>Monitoring 30%</li>
-            <li><span class="donut-swatch donut-swatch--critical"></span>Critical 10%</li>
-            <li><span class="donut-swatch donut-swatch--recovered"></span>Recovered 15%</li>
-          </ul>
+          <div class="donut-chart" id="patient-status-donut" role="img" aria-label="Patient status distribution"></div>
+          <ul class="donut-legend" id="patient-status-legend"></ul>
         </div>
       </article>
 
       <article class="panel">
         <h2 class="panel-title">Patients Needing Attention</h2>
-        <ul class="attention-list">
-          <li class="attention-item">
-            <div class="attention-main">
-              <p class="attention-name">Ahmad Bin Ismail</p>
-              <p class="attention-condition">Diabetic Retinopathy</p>
-            </div>
-            <span class="badge badge--monitoring">Monitoring</span>
-          </li>
-          <li class="attention-item">
-            <div class="attention-main">
-              <p class="attention-name">Rajan Pillai</p>
-              <p class="attention-condition">Low Vision (Stroke)</p>
-            </div>
-            <span class="badge badge--critical">Critical</span>
-          </li>
-          <li class="attention-item">
-            <div class="attention-main">
-              <p class="attention-name">David Lau</p>
-              <p class="attention-condition">Cataracts (post-op)</p>
-            </div>
-            <span class="badge badge--monitoring">Monitoring</span>
-          </li>
-        </ul>
+        <ul class="attention-list" id="attention-patients-list"></ul>
+        <p class="dashboard-empty" id="attention-patients-empty" hidden>No patients need attention.</p>
       </article>
     </section>
   </main>

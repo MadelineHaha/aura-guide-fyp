@@ -51,8 +51,14 @@ class VoiceEmbeddingService {
   }
 
   bool matches(List<double> enrolled, List<double> probe) {
-    if (enrolled.isEmpty || probe.isEmpty) return false;
+    if (!isUsableVoiceprint(enrolled) || !isUsableVoiceprint(probe)) {
+      return false;
+    }
     return cosineSimilarity(enrolled, probe) >= matchThreshold;
+  }
+
+  static bool isUsableVoiceprint(List<double> vector) {
+    return vector.isNotEmpty && vector.any((value) => value != 0);
   }
 
   List<double> _extractEmbedding(List<double> samples, int sampleRate) {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'l10n/app_localizations.dart';
 import 'manual_login_page.dart';
 import 'register_page.dart';
 import 'voice_login_page.dart';
@@ -15,6 +16,12 @@ class LoginPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final brandingA11y = l10n.t('menuCardA11y', {
+      'title': l10n.t('appName'),
+      'subtitle': l10n.t('appTagline'),
+    });
+
     void openVoiceLogin() {
       Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -57,7 +64,7 @@ class LoginPage extends StatelessWidget {
             children: [
               const SizedBox(height: 8),
               AccessibleFocusRegion(
-                label: 'Aura Guide. Your accessible health companion.',
+                label: brandingA11y,
                 child: Column(
                   children: [
                     Center(
@@ -68,10 +75,10 @@ class LoginPage extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    const Text(
-                      'Aura Guide',
+                    Text(
+                      l10n.t('appName'),
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 28,
                         fontWeight: FontWeight.bold,
@@ -79,10 +86,10 @@ class LoginPage extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    const Text(
-                      'Your accessible health companion',
+                    Text(
+                      l10n.t('appTagline'),
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 15,
                         fontWeight: FontWeight.w400,
@@ -92,12 +99,12 @@ class LoginPage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 40),
-              const AccessibleFocusRegion(
-                label: 'How would you like to sign in?',
+              AccessibleFocusRegion(
+                label: l10n.t('howWouldYouLikeToSignIn'),
                 child: Text(
-                  'How would you like to sign in?',
+                  l10n.t('howWouldYouLikeToSignIn'),
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -110,13 +117,13 @@ class LoginPage extends StatelessWidget {
               _ManualLoginCard(onTap: openManualLogin),
               const SizedBox(height: 36),
               AccessibleFocusRegion(
-                label: 'New user? Create an account',
+                label: l10n.t('newUserCreateAccount'),
                 onActivate: openRegister,
                 child: TextButton(
                   onPressed: openRegister,
-                  child: const Text(
-                    'New user? Create an account',
-                    style: TextStyle(
+                  child: Text(
+                    l10n.t('newUserCreateAccount'),
+                    style: const TextStyle(
                       color: _accent,
                       fontWeight: FontWeight.bold,
                       fontSize: 15,
@@ -140,8 +147,12 @@ class _VoiceLoginCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return AccessibleFocusRegion(
-      label: "Voice Login. Say 'Sign me in' to continue.",
+      label: l10n.t('menuCardA11y', {
+        'title': l10n.t('voiceLogin'),
+        'subtitle': l10n.t('voiceLoginPrompt'),
+      }),
       onActivate: onTap,
       child: Material(
         color: Colors.transparent,
@@ -171,19 +182,19 @@ class _VoiceLoginCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Text(
-                    'Voice Login',
-                    style: TextStyle(
+                  Text(
+                    l10n.t('voiceLogin'),
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 6),
-                  const Text(
-                    "Say 'Sign me in' to continue",
+                  Text(
+                    l10n.t('voiceLoginPrompt'),
                     textAlign: TextAlign.center,
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: LoginPage._subtext,
                       fontSize: 14,
                     ),
@@ -205,8 +216,12 @@ class _ManualLoginCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return AccessibleFocusRegion(
-      label: 'Manual Login. Enter email and password.',
+      label: l10n.t('menuCardA11y', {
+        'title': l10n.t('manualLogin'),
+        'subtitle': l10n.t('enterEmailAndPassword'),
+      }),
       onActivate: onTap,
       child: Material(
         color: Colors.transparent,
@@ -236,22 +251,22 @@ class _ManualLoginCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 16),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Manual Login',
-                          style: TextStyle(
+                          l10n.t('manualLogin'),
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        SizedBox(height: 4),
+                        const SizedBox(height: 4),
                         Text(
-                          'Enter email and password',
-                          style: TextStyle(
+                          l10n.t('enterEmailAndPassword'),
+                          style: const TextStyle(
                             color: LoginPage._subtext,
                             fontSize: 13,
                           ),

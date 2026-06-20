@@ -34,4 +34,24 @@ class NavDestination {
       isSavedWork: isSavedWork ?? this.isSavedWork,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'label': label,
+        'address': address,
+        if (latitude != null) 'latitude': latitude,
+        if (longitude != null) 'longitude': longitude,
+        'isSavedHome': isSavedHome,
+        'isSavedWork': isSavedWork,
+      };
+
+  factory NavDestination.fromJson(Map<String, dynamic> json) {
+    return NavDestination(
+      label: json['label'] as String? ?? '',
+      address: json['address'] as String? ?? '',
+      latitude: (json['latitude'] as num?)?.toDouble(),
+      longitude: (json['longitude'] as num?)?.toDouble(),
+      isSavedHome: json['isSavedHome'] as bool? ?? false,
+      isSavedWork: json['isSavedWork'] as bool? ?? false,
+    );
+  }
 }

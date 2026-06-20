@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'app_route_observer.dart';
 import 'auth_session.dart';
+import 'l10n/app_localizations.dart';
 import 'services/user_profile_service.dart';
 import 'widgets/app_back_button.dart';
 
@@ -177,9 +178,7 @@ class _MyProfilePageState extends State<MyProfilePage>
       unawaited(_refreshProfileOnOpen());
       if (showSnack) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Email verification synced successfully.'),
-          ),
+          SnackBar(content: Text(context.l10n.t('emailVerificationSynced'))),
         );
       }
       return;
@@ -253,8 +252,7 @@ class _MyProfilePageState extends State<MyProfilePage>
         if (!mounted) return;
         setState(() {
           _loading = false;
-          _loadError =
-              'Session is refreshing. Tap Retry in a moment — you are not logged out.';
+          _loadError = context.l10n.t('sessionRefreshingRetry');
         });
         unawaited(_retryRefreshWhenSessionRecovers());
         return;
@@ -311,7 +309,7 @@ class _MyProfilePageState extends State<MyProfilePage>
             setState(() {
               _profileData = {};
               _loading = false;
-              _loadError = 'No document at users/$uid';
+              _loadError = context.l10n.t('noDocumentAtUsers', {'uid': uid});
             });
             return;
           }
@@ -355,9 +353,10 @@ class _MyProfilePageState extends State<MyProfilePage>
           }
           setState(() {
             _loading = false;
-            _loadError =
-                'Firestore read failed: $e\n'
-                'Check Firestore rules allow read on users/$uid';
+            _loadError = context.l10n.t('firestoreReadFailed', {
+              'error': e,
+              'uid': uid,
+            });
           });
         },
       );
@@ -368,7 +367,7 @@ class _MyProfilePageState extends State<MyProfilePage>
       if (!_hasDisplayableProfileFromState()) {
         setState(() {
           _loading = false;
-          _loadError = 'Could not sync profile: $e';
+          _loadError = context.l10n.t('couldNotSyncProfile', {'error': e});
         });
       } else {
         setState(() => _loading = false);
@@ -454,15 +453,14 @@ class _MyProfilePageState extends State<MyProfilePage>
 
   void _showEmailNotVerifiedBlockMessage() {
     if (!mounted) return;
+    final l10n = context.l10n;
     final target = _emailVerificationTarget.trim();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           target.isNotEmpty
-              ? 'Verify $target before saving your profile. '
-                  'Open the verification link in your email, then tap Save Profile again.'
-              : 'Verify your new email before saving your profile. '
-                  'Open the verification link in your email, then tap Save Profile again.',
+              ? l10n.t('verifyEmailBeforeSaveWithTarget', {'email': target})
+              : l10n.t('verifyEmailBeforeSave'),
         ),
       ),
     );
@@ -554,8 +552,9 @@ class _MyProfilePageState extends State<MyProfilePage>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Verification link sent to $verificationTargetEmail. '
-              'Verify that email, then tap Save Profile again to save your profile.',
+              context.l10n.t('verificationLinkSentThenSave', {
+                'email': verificationTargetEmail,
+              }),
             ),
           ),
         );
@@ -599,11 +598,7 @@ class _MyProfilePageState extends State<MyProfilePage>
       if (!mounted) return;
       setState(() => _isEditing = true);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Editing mode enabled. Update fields then tap Save Profile.',
-          ),
-        ),
+        SnackBar(content: Text(context.l10n.t('editingModeEnabled'))),
       );
       return;
     }
@@ -612,11 +607,7 @@ class _MyProfilePageState extends State<MyProfilePage>
     if (user == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Session is refreshing. Try Save Profile again in a moment.',
-          ),
-        ),
+        SnackBar(content: Text(context.l10n.t('sessionRefreshingSaveProfile'))),
       );
       return;
     }
@@ -627,7 +618,7 @@ class _MyProfilePageState extends State<MyProfilePage>
     _reconcileEmailVerificationPending();
     setState(() => _isEditing = false);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Profile changes saved.')),
+      SnackBar(content: Text(context.l10n.t('profileChangesSaved'))),
     );
   }
 
@@ -647,14 +638,14 @@ class _MyProfilePageState extends State<MyProfilePage>
     final liveUser = await AuthSession.reloadAndResolve() ?? user;
     final currentEmail = (liveUser.email ?? '').trim();
     final normalizedNew = newEmail.trim().toLowerCase();
-    if (newEmail.isEmpty) return const _EmailUpdateResult(error: 'Email cannot be empty.');
+    if (newEmail.isEmpty) return _EmailUpdateResult(error: context.l10n.t('emailCannotBeEmpty'));
     if (normalizedNew == currentEmail.toLowerCase() ||
         normalizedNew == _loadedEmail.trim().toLowerCase()) {
       return const _EmailUpdateResult();
     }
     if (currentEmail.isEmpty) {
-      return const _EmailUpdateResult(
-        error: 'This account cannot change email because no current email is linked.',
+      return _EmailUpdateResult(
+        error: context.l10n.t('emailChangeNotAllowed'),
       );
     }
 
@@ -665,14 +656,12 @@ class _MyProfilePageState extends State<MyProfilePage>
         .get();
     if (sameEmailUsers.docs.isNotEmpty &&
         sameEmailUsers.docs.first.id != liveUser.uid) {
-      return const _EmailUpdateResult(
-        error: 'This email is already used by another account.',
-      );
+      return _EmailUpdateResult(error: context.l10n.t('emailAlreadyUsed'));
     }
 
     final password = await _askForCurrentPassword();
     if (password == null || password.isEmpty) {
-      return const _EmailUpdateResult(error: 'Password is required to change email.');
+      return _EmailUpdateResult(error: context.l10n.t('passwordRequiredForEmail'));
     }
 
     try {
@@ -688,10 +677,10 @@ class _MyProfilePageState extends State<MyProfilePage>
       );
     } on FirebaseAuthException catch (e) {
       return _EmailUpdateResult(
-        error: _authErrorMessage(e),
+        error: _authErrorMessage(context.l10n, e),
       );
     } catch (_) {
-      return const _EmailUpdateResult(error: 'Failed to update email.');
+      return _EmailUpdateResult(error: context.l10n.t('failedToUpdateEmail'));
     }
   }
 
@@ -717,13 +706,13 @@ class _MyProfilePageState extends State<MyProfilePage>
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Row(
+                    Row(
                       children: [
-                        Icon(Icons.lock_outline, color: _accent),
-                        SizedBox(width: 8),
+                        const Icon(Icons.lock_outline, color: _accent),
+                        const SizedBox(width: 8),
                         Text(
-                          'Confirm Password',
-                          style: TextStyle(
+                          context.l10n.t('confirmPassword'),
+                          style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
                             fontSize: 18,
@@ -732,9 +721,9 @@ class _MyProfilePageState extends State<MyProfilePage>
                       ],
                     ),
                     const SizedBox(height: 8),
-                    const Text(
-                      'For security, enter your current password to update email.',
-                      style: TextStyle(color: _subtext, fontSize: 13),
+                    Text(
+                      context.l10n.t('currentPasswordForEmail'),
+                      style: const TextStyle(color: _subtext, fontSize: 13),
                     ),
                     const SizedBox(height: 14),
                     TextField(
@@ -749,7 +738,7 @@ class _MyProfilePageState extends State<MyProfilePage>
                       decoration: InputDecoration(
                         filled: true,
                         fillColor: const Color(0xFF142328),
-                        hintText: 'Enter current password',
+                        hintText: context.l10n.t('enterCurrentPassword'),
                         hintStyle: const TextStyle(color: Color(0xFF9CA3AF)),
                         errorText: localError,
                         suffixIcon: IconButton(
@@ -775,13 +764,15 @@ class _MyProfilePageState extends State<MyProfilePage>
                       children: [
                         TextButton(
                           onPressed: () => Navigator.of(context).pop(),
-                          child: const Text('Cancel'),
+                          child: Text(context.l10n.t('cancel')),
                         ),
                         const SizedBox(width: 8),
                         FilledButton(
                           onPressed: () {
                             if (value.trim().isEmpty) {
-                              setDialogState(() => localError = 'Password is required');
+                              setDialogState(
+                                () => localError = context.l10n.t('passwordRequiredDialog'),
+                              );
                               return;
                             }
                             Navigator.of(context).pop();
@@ -790,7 +781,7 @@ class _MyProfilePageState extends State<MyProfilePage>
                             backgroundColor: _accent,
                             foregroundColor: Colors.black,
                           ),
-                          child: const Text('Confirm'),
+                          child: Text(context.l10n.t('confirm')),
                         ),
                       ],
                     ),
@@ -805,14 +796,16 @@ class _MyProfilePageState extends State<MyProfilePage>
     return value.trim().isEmpty ? null : value.trim();
   }
 
-  String get _displayPatientId {
+  String _displayPatientId(BuildContext context) {
+    final l10n = context.l10n;
     final id = _asString(_profileData['userId']).trim();
-    if (id.isNotEmpty) return 'Patient ID: $id';
-    if (_patientId.isNotEmpty) return 'Patient ID: $_patientId';
-    return 'Patient ID: -';
+    if (id.isNotEmpty) return l10n.t('patientIdDisplay', {'id': id});
+    if (_patientId.isNotEmpty) return l10n.t('patientIdDisplay', {'id': _patientId});
+    return l10n.t('patientIdDash');
   }
 
-  String get _displayName {
+  String _displayName(BuildContext context) {
+    final l10n = context.l10n;
     final name = _asString(_profileData['name']).trim();
     if (name.isNotEmpty) return name;
     final fromController = _nameController.text.trim();
@@ -820,7 +813,7 @@ class _MyProfilePageState extends State<MyProfilePage>
     final email = _loadedEmail.trim();
     if (email.contains('@')) return email.split('@').first;
     if (email.isNotEmpty) return email;
-    return 'User';
+    return l10n.t('userFallback');
   }
 
   @override
@@ -840,6 +833,7 @@ class _MyProfilePageState extends State<MyProfilePage>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
@@ -850,9 +844,9 @@ class _MyProfilePageState extends State<MyProfilePage>
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: const Text(
-          'My Profile',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
+        title: Text(
+          l10n.t('myProfile'),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
         ),
       ),
       body: SafeArea(
@@ -881,7 +875,7 @@ class _MyProfilePageState extends State<MyProfilePage>
                             if (_authUid.isNotEmpty) ...[
                               const SizedBox(height: 6),
                               Text(
-                                'Signed-in uid: $_authUid',
+                                l10n.t('signedInUid', {'uid': _authUid}),
                                 style: const TextStyle(
                                   color: Color(0xFF9CA3AF),
                                   fontSize: 12,
@@ -893,7 +887,7 @@ class _MyProfilePageState extends State<MyProfilePage>
                               alignment: Alignment.centerRight,
                               child: TextButton(
                                 onPressed: _loadProfile,
-                                child: const Text('Retry'),
+                                child: Text(l10n.t('retry')),
                               ),
                             ),
                           ],
@@ -923,7 +917,7 @@ class _MyProfilePageState extends State<MyProfilePage>
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      _displayName,
+                      _displayName(context),
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: _text,
@@ -933,7 +927,7 @@ class _MyProfilePageState extends State<MyProfilePage>
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      _displayPatientId,
+                      _displayPatientId(context),
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: _subtext,
@@ -949,7 +943,7 @@ class _MyProfilePageState extends State<MyProfilePage>
                           _isEditing ? Icons.save_outlined : Icons.edit_outlined,
                           size: 20,
                         ),
-                        label: Text(_isEditing ? 'Save Profile' : 'Edit Profile'),
+                        label: Text(_isEditing ? l10n.t('saveProfile') : l10n.t('editProfile')),
                         style: FilledButton.styleFrom(
                           backgroundColor: _isEditing
                               ? const Color(0xFF2F8F46)
@@ -983,9 +977,8 @@ class _MyProfilePageState extends State<MyProfilePage>
                         child: Text(
                           _awaitingEmailVerification ||
                                   _hasUnsavedEmailInForm()
-                              ? 'Email not verified yet. Open the verification link, then tap Save Profile. '
-                                  'Your profile will not be saved until then.'
-                              : 'Editing mode is ON. Update fields then tap Save Profile.',
+                              ? l10n.t('emailNotVerifiedEditingBanner')
+                              : l10n.t('editingModeOnBanner'),
                           textAlign: TextAlign.center,
                           style: const TextStyle(
                             color: Color(0xFF91E09F),
@@ -998,8 +991,8 @@ class _MyProfilePageState extends State<MyProfilePage>
                     const SizedBox(height: 10),
                     const Divider(color: Color(0xFF2B2B2B), height: 1),
                     const SizedBox(height: 12),
-                    const Text(
-                      'PERSONAL DETAILS',
+                    Text(
+                      l10n.t('personalDetails'),
                       style: TextStyle(
                         color: Colors.white70,
                         fontWeight: FontWeight.bold,
@@ -1007,7 +1000,7 @@ class _MyProfilePageState extends State<MyProfilePage>
                       ),
                     ),
                     const SizedBox(height: 10),
-                    ..._profileCards(),
+                    ..._profileCards(context),
                   ],
                 ),
               ),
@@ -1015,10 +1008,12 @@ class _MyProfilePageState extends State<MyProfilePage>
     );
   }
 
-  List<Widget> _profileCards() => [
+  List<Widget> _profileCards(BuildContext context) {
+    final l10n = context.l10n;
+    return [
         _ProfileTile(
           icon: Icons.mail_outline,
-          title: 'EMAIL ADDRESS',
+          title: l10n.t('emailAddress'),
           value: _isEditing ? _emailController.text : _viewField('email'),
           accentBg: const Color(0xFF1B636A),
           isEditing: _isEditing,
@@ -1027,7 +1022,7 @@ class _MyProfilePageState extends State<MyProfilePage>
         ),
         _ProfileTile(
           icon: Icons.person_outline,
-          title: 'NAME',
+          title: l10n.t('nameField'),
           value: _isEditing ? _nameController.text : _viewField('name'),
           accentBg: const Color(0xFF1B636A),
           trailingChevron: !_isEditing,
@@ -1036,7 +1031,7 @@ class _MyProfilePageState extends State<MyProfilePage>
         ),
         _ProfileTile(
           icon: Icons.phone_outlined,
-          title: 'PHONE NUMBER',
+          title: l10n.t('phoneNumber'),
           value: _isEditing ? _phoneController.text : _viewField('phoneNumber'),
           accentBg: const Color(0xFF1B636A),
           trailingChevron: !_isEditing,
@@ -1046,7 +1041,7 @@ class _MyProfilePageState extends State<MyProfilePage>
         ),
         _ProfileTile(
           icon: Icons.home_outlined,
-          title: 'ADDRESS',
+          title: l10n.t('address'),
           value: _isEditing ? _addressController.text : _viewField('address'),
           accentBg: const Color(0xFF1B636A),
           trailingChevron: !_isEditing,
@@ -1055,13 +1050,14 @@ class _MyProfilePageState extends State<MyProfilePage>
         ),
         _ProfileTile(
           icon: Icons.schedule,
-          title: 'AGE',
+          title: l10n.t('age'),
           value: _derivedAge,
           accentBg: const Color(0xFF1B636A),
           trailingChevron: !_isEditing,
           isEditing: false,
         ),
       ];
+  }
 }
 
 class _ProfileTile extends StatelessWidget {
@@ -1170,18 +1166,18 @@ class _ProfileTile extends StatelessWidget {
                               width: 1,
                             ),
                           ),
-                          child: const Row(
+                          child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(
+                              const Icon(
                                 Icons.auto_awesome,
                                 size: 13,
                                 color: Color(0xFF71C9D1),
                               ),
-                              SizedBox(width: 4),
+                              const SizedBox(width: 4),
                               Text(
-                                'Not set yet',
-                                style: TextStyle(
+                                context.l10n.t('notSetYet'),
+                                style: const TextStyle(
                                   color: Color(0xFF8BC0C7),
                                   fontSize: 13,
                                   fontStyle: FontStyle.italic,
@@ -1210,20 +1206,21 @@ class _ProfileTile extends StatelessWidget {
   }
 }
 
-String _authErrorMessage(FirebaseAuthException e) {
+String _authErrorMessage(AppLocalizations l10n, FirebaseAuthException e) {
   switch (e.code) {
     case 'wrong-password':
-      return 'Incorrect password. Email verification was not sent.';
+      return l10n.t('authWrongPasswordEmail');
     case 'invalid-email':
-      return 'The new email address format is invalid.';
+      return l10n.t('authInvalidEmail');
     case 'email-already-in-use':
-      return 'This email is already linked to another Firebase account.';
+      return l10n.t('authEmailAlreadyInUse');
     case 'requires-recent-login':
-      return 'Please sign out, sign in again, then retry changing email.';
+      return l10n.t('authRequiresRecentLogin');
     case 'too-many-requests':
-      return 'Too many attempts. Wait a few minutes, then try again.';
+      return l10n.t('authTooManyRequests');
     default:
-      return e.message ?? 'Could not send verification email (${e.code}).';
+      return e.message ??
+          l10n.t('authCouldNotSendVerification', {'code': e.code});
   }
 }
 

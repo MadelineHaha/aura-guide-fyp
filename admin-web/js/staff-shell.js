@@ -5,6 +5,7 @@ import {
   saveStaffSession,
   signOutStaff,
 } from "./staff-auth.js";
+import { initEmergencyAlertsWatcher } from "./emergency-alerts-watcher.js";
 
 const NAV_SCROLL_STORAGE_KEY = "staffNavScrollLeft";
 
@@ -155,6 +156,7 @@ export function initStaffAuth(onProfile) {
       const profile = await verifyActiveStaff(user.uid);
       saveStaffSession(profile);
       renderStaffNav(profile);
+      initEmergencyAlertsWatcher();
       if (onProfile) onProfile(profile);
     } catch {
       window.location.href = "login.html";

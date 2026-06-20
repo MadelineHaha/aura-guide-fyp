@@ -21,7 +21,22 @@ service cloud.firestore {
     }
 
     function patientUserId() {
-      return patientProfile().userId;
+      let profile = patientProfile();
+      return profile.userId != null ? profile.userId
+        : profile.patientId != null ? profile.patientId
+        : profile.UserID;
+    }
+
+    function emergencyAlertPatientId(data) {
+      return data.UserID != null ? data.UserID
+        : data.userId != null ? data.userId
+        : data.userID;
+    }
+
+    function emergencyAlertDocId(data, pathAlertId) {
+      return data.AlertID != null ? data.AlertID
+        : data.alertId != null ? data.alertId
+        : pathAlertId;
     }
 
     function isOwnPatientAppointment() {
@@ -105,18 +120,43 @@ service cloud.firestore {
     function isOwnPatientEmergencyAlert() {
       return hasPatientProfile()
         && patientUserId() is string
-        && (resource.data.userId == patientUserId()
+        && (resource.data.UserID == patientUserId()
+            || resource.data.userId == patientUserId()
             || resource.data.userID == patientUserId());
     }
 
-    function isPatientEmergencyAlertCreate() {
+    function isPatientEmergencyAlertCreate(pathAlertId) {
       return hasPatientProfile()
         && patientUserId() is string
-        && request.resource.data.alertId is string
+        && patientUserId() != ''
+        && emergencyAlertDocId(request.resource.data, pathAlertId) == pathAlertId
+        && emergencyAlertPatientId(request.resource.data) == patientUserId()
+        && (
+          isErdEmergencyAlertCreate(pathAlertId)
+          || isLegacyEmergencyAlertCreate(pathAlertId)
+        );
+    }
+
+    function isErdEmergencyAlertCreate(pathAlertId) {
+      return request.resource.data.AlertID == pathAlertId
+        && request.resource.data.UserID == patientUserId()
+        && request.resource.data.AlertType is string
+        && request.resource.data.Status == 'Active'
+        && request.resource.data.DateTime is string
+        && request.resource.data.Location is string
+        && request.resource.data.ResolutionNotes is string
+        && request.resource.data.StaffID is string;
+    }
+
+    function isLegacyEmergencyAlertCreate(pathAlertId) {
+      return request.resource.data.alertId == pathAlertId
         && request.resource.data.userId == patientUserId()
         && request.resource.data.alertType is string
         && request.resource.data.status == 'Active'
-        && request.resource.data.dateTime is timestamp
+        && (
+          request.resource.data.dateTime is timestamp
+          || request.resource.data.dateTime is string
+        )
         && request.resource.data.location is string;
     }
 
@@ -182,12 +222,15 @@ service cloud.firestore {
 
       allow list: if hasPatientProfile()
         && patientUserId() is string
+        && resource.data.UserID == patientUserId();
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
         && resource.data.userId == patientUserId();
       allow list: if hasPatientProfile()
         && patientUserId() is string
         && resource.data.userID == patientUserId();
 
-      allow create: if isActiveStaff() || isPatientEmergencyAlertCreate();
+      allow create: if isActiveStaff() || isPatientEmergencyAlertCreate(alertId);
       allow update, delete: if isActiveStaff();
     }
 
@@ -300,6 +343,104 @@ service cloud.firestore {
             .hasOnly(['hiddenFor', 'deletedForEveryone', 'deletedAt', 'deletedBy']);
     }
 
+    function isPatientMessageSoftDelete() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && isPatientMessageParty()
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['hiddenFor', 'deletedForEveryone', 'deletedAt', 'deletedBy']);
+    }
+
+    function isPatientCallParticipant() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && (resource.data.patientId == patientUserId()
+            || request.resource.data.patientId == patientUserId());
+    }
+
+    function callSessionData(callId) {
+      return get(/databases/$(database)/documents/callSessions/$(callId)).data;
+    }
+
+    function isPatientCallSessionParticipant(callId) {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && callSessionData(callId).patientId == patientUserId();
+    }
+
+    function staffAuthStaffId() {
+      return get(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid)).data.staffID != null
+        ? get(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid)).data.staffID
+        : get(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid)).data.staffId;
+    }
+
+    function isStaffCallSessionParticipant(callId) {
+      return isActiveStaff()
+        && request.auth != null
+        && exists(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid))
+        && callSessionData(callId).staffId == staffAuthStaffId();
+    }
+
+    function isValidIceCandidateCreate() {
+      return request.resource.data.from is string
+        && (request.resource.data.from == 'staff'
+            || request.resource.data.from == 'patient')
+        && request.resource.data.candidate is string;
+    }
+
+    function isStaffCallParticipant() {
+      return isActiveStaff()
+        && request.auth != null
+        && exists(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid))
+        && (
+          resource.data.staffId == get(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid)).data.staffID
+          || resource.data.staffId == get(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid)).data.staffId
+          || request.resource.data.staffId == get(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid)).data.staffID
+          || request.resource.data.staffId == get(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid)).data.staffId
+        );
+    }
+
+    function isStaffCallCreate() {
+      return isActiveStaff()
+        && request.resource.data.callId is string
+        && request.resource.data.conversationId is string
+        && request.resource.data.staffId is string
+        && request.resource.data.patientId is string
+        && request.resource.data.status == 'ringing'
+        && request.resource.data.initiatedBy == 'staff';
+    }
+
+    function isPatientCallCreate() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && request.resource.data.callId is string
+        && request.resource.data.conversationId is string
+        && request.resource.data.staffId is string
+        && request.resource.data.patientId == patientUserId()
+        && request.resource.data.status == 'ringing'
+        && request.resource.data.initiatedBy == 'patient';
+    }
+
+    match /callSessions/{callId} {
+      allow get: if isActiveStaff() || isPatientCallParticipant();
+
+      allow list: if isActiveStaff();
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.patientId == patientUserId();
+
+      allow create: if isStaffCallCreate() || isPatientCallCreate();
+      allow update: if isActiveStaff() || isPatientCallParticipant();
+
+      match /iceCandidates/{candidateId} {
+        allow read: if isStaffCallSessionParticipant(callId)
+          || isPatientCallSessionParticipant(callId);
+        allow create: if isValidIceCandidateCreate()
+          && (isStaffCallSessionParticipant(callId)
+              || isPatientCallSessionParticipant(callId));
+      }
+    }
+
     function isPatientArchiveConversation() {
       return hasPatientProfile()
         && patientUserId() is string
@@ -361,7 +502,8 @@ service cloud.firestore {
       allow create: if isActiveStaff() || isPatientMessageCreate();
       allow update: if isActiveStaff()
         || isPatientMarkMessageRead()
-        || isStaffMessageSoftDelete();
+        || isStaffMessageSoftDelete()
+        || isPatientMessageSoftDelete();
       allow delete: if isActiveStaff();
     }
 

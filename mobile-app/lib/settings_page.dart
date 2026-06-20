@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'auth_session.dart';
+import 'l10n/app_localizations.dart';
 import 'password_recovery_page.dart';
 import 'models/voice_profile_data.dart';
 import 'services/app_settings_service.dart';
+import 'services/fall_detection_coordinator.dart';
 import 'services/user_profile_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
@@ -90,9 +94,9 @@ class _SettingsPageState extends State<SettingsPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text(
-                  'Choose language',
-                  style: TextStyle(
+                Text(
+                  context.l10n.t('chooseLanguage'),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
                     fontSize: 18,
@@ -146,9 +150,9 @@ class _SettingsPageState extends State<SettingsPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: const Text(
-          'Settings',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        title: Text(
+          context.l10n.t('settings'),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
       ),
       body: ListView(
@@ -157,8 +161,8 @@ class _SettingsPageState extends State<SettingsPage> {
           _SettingsCard(
             icon: Icons.text_fields,
             iconLabel: 'Aa',
-            title: 'FONT SIZE',
-            subtitle: 'Ensure readability',
+            title: context.l10n.t('fontSizeTitle'),
+            subtitle: context.l10n.t('fontSizeSubtitle'),
             trailing: SizedBox(
               width: 132,
               child: SliderTheme(
@@ -181,20 +185,52 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           _SettingsCard(
             icon: Icons.language,
-            title: 'LANGUAGE',
+            title: context.l10n.t('languageTitle'),
             subtitle: _settings.languageLabel,
             onTap: _pickLanguage,
             trailing: const Icon(Icons.chevron_right, color: Colors.white54),
           ),
           _SettingsCard(
             icon: Icons.notifications_none_outlined,
-            title: 'NOTIFICATIONS',
-            subtitle: 'Get notify immediately',
+            title: context.l10n.t('notificationsTitle'),
+            subtitle: context.l10n.t('notificationsSubtitle'),
             trailing: Switch(
               value: settings.notificationsEnabled,
               activeColor: Colors.white,
               activeTrackColor: _accent,
               onChanged: _settings.setNotificationsEnabled,
+            ),
+          ),
+          _SettingsCard(
+            icon: Icons.accessibility_new_outlined,
+            title: context.l10n.t('fallDetectionSettingTitle').toUpperCase(),
+            subtitle: context.l10n.t('fallDetectionSettingSubtitle'),
+            trailing: Switch(
+              value: settings.fallDetectionEnabled,
+              activeColor: Colors.white,
+              activeTrackColor: _accent,
+              onChanged: _settings.setFallDetectionEnabled,
+            ),
+          ),
+          if (settings.fallDetectionEnabled)
+            _SettingsCard(
+              icon: Icons.science_outlined,
+              title: context.l10n.t('fallDetectionTestTitle').toUpperCase(),
+              subtitle: context.l10n.t('fallDetectionTestSubtitle'),
+              onTap: () => unawaited(
+                FallDetectionCoordinator.instance.triggerDemoCheckIn(),
+              ),
+              trailing: const Icon(Icons.chevron_right, color: Colors.white54),
+            ),
+          _SettingsCard(
+            icon: Icons.mic_none_outlined,
+            title: context.l10n.t('voiceAssistantSettingTitle').toUpperCase(),
+            subtitle: context.l10n.t('voiceAssistantSettingSubtitle'),
+            trailing: Switch(
+              value: settings.voiceAssistantEnabled,
+              activeColor: Colors.white,
+              activeTrackColor: _accent,
+              onChanged: _settings.setVoiceAssistantEnabled,
             ),
           ),
           _VoiceLoginCard(
@@ -212,8 +248,8 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           _SettingsCard(
             icon: Icons.vpn_key_outlined,
-            title: 'RESET PASSWORD',
-            subtitle: 'Create stronger password',
+            title: context.l10n.t('resetPasswordTitle'),
+            subtitle: context.l10n.t('resetPasswordSubtitle'),
             onTap: () {
               Navigator.of(context).push<void>(
                 MaterialPageRoute<void>(
@@ -362,9 +398,9 @@ class _VoiceLoginCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'VOICE LOGIN',
-                        style: TextStyle(
+                      Text(
+                        context.l10n.t('voiceLoginTitle'),
+                        style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
                           fontSize: 13,
@@ -376,10 +412,10 @@ class _VoiceLoginCard extends StatelessWidget {
                         children: [
                           Text(
                             loading
-                                ? 'Checking…'
+                                ? context.l10n.t('voiceLoginChecking')
                                 : active
-                                    ? 'Active'
-                                    : 'Not set up',
+                                    ? context.l10n.t('voiceLoginActive')
+                                    : context.l10n.t('voiceLoginNotSetUp'),
                             style: TextStyle(
                               color: active ? Colors.white : _subtext,
                               fontWeight:
@@ -398,9 +434,9 @@ class _VoiceLoginCard extends StatelessWidget {
                                 color: _accent,
                                 borderRadius: BorderRadius.circular(999),
                               ),
-                              child: const Text(
-                                'VERIFIED',
-                                style: TextStyle(
+                              child: Text(
+                                context.l10n.t('verified'),
+                                style: const TextStyle(
                                   color: Colors.black,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 11,

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
+
 /// Dark calendar dialog used for birth date, appointment date, etc.
 /// Matches the registration flow picker (bounded height + scrollable).
 Future<DateTime?> showCalendarDatePickerDialog({
@@ -119,7 +121,7 @@ class _CalendarDatePickerDialogState extends State<CalendarDatePickerDialog> {
                       children: [
                         TextButton(
                           onPressed: () => Navigator.of(context).pop(),
-                          child: const Text('Cancel'),
+                          child: Text(context.l10n.t('cancel')),
                         ),
                         const SizedBox(width: 8),
                         FilledButton(
@@ -128,7 +130,7 @@ class _CalendarDatePickerDialogState extends State<CalendarDatePickerDialog> {
                             backgroundColor: widget.accent,
                             foregroundColor: Colors.black,
                           ),
-                          child: const Text('OK'),
+                          child: Text(context.l10n.t('ok')),
                         ),
                       ],
                     ),
