@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import 'accessibility_live_message.dart';
 import 'accessible_focus_region.dart';
 
@@ -9,7 +10,7 @@ class VoiceRecordButton extends StatelessWidget {
     super.key,
     required this.isRecording,
     required this.hasValidSample,
-    required     this.onActivate,
+    required this.onActivate,
     this.onRetake,
     this.accessibilityMessage,
     this.heardPreview,
@@ -29,10 +30,10 @@ class VoiceRecordButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final title = isRecording
-        ? 'Recording...'
+        ? context.l10n.t('voiceRecordRecording')
         : hasValidSample
-            ? 'Voice captured'
-            : 'Tap to record';
+            ? context.l10n.t('voiceRecordCaptured')
+            : context.l10n.t('voiceRecordTapToRecord');
 
     final canRecord = !hasValidSample && !isRecording;
 
@@ -41,8 +42,8 @@ class VoiceRecordButton extends StatelessWidget {
       children: [
         AccessibleFocusRegion(
           label: hasValidSample
-              ? 'Voice captured. Use the Continue button below.'
-              : 'Tap to record. Please say Sign me in.',
+              ? context.l10n.t('voiceRecordCapturedA11y')
+              : context.l10n.t('voiceRecordTapA11y'),
           onActivate: canRecord ? onActivate : null,
           child: Material(
             color: Colors.transparent,
@@ -89,7 +90,7 @@ class VoiceRecordButton extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Please say "Sign me in"',
+                        context.l10n.t('voiceRecordPrompt'),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: subtext,
@@ -102,7 +103,9 @@ class VoiceRecordButton extends StatelessWidget {
                           heardPreview!.isNotEmpty) ...[
                         const SizedBox(height: 10),
                         Text(
-                          'Heard: "$heardPreview"',
+                          context.l10n.t('voiceRecordHeard', {
+                            'text': heardPreview!,
+                          }),
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: accent,
@@ -124,7 +127,7 @@ class VoiceRecordButton extends StatelessWidget {
           TextButton(
             onPressed: onRetake,
             child: Text(
-              'Record again',
+              context.l10n.t('voiceRecordAgain'),
               style: TextStyle(color: accent, fontSize: 15),
             ),
           ),

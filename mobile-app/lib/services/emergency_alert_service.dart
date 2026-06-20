@@ -4,6 +4,7 @@ import 'package:geolocator/geolocator.dart';
 
 import '../auth_session.dart';
 import '../models/emergency_alert_entity.dart';
+import '../models/user_entity.dart';
 import '../utils/clinic_datetime.dart';
 import 'user_profile_service.dart';
 
@@ -23,26 +24,73 @@ class EmergencyAlertService {
   static const _collection = 'emergencyalerts';
   static const _counterPath = 'system/emergencyAlertCounter';
 
-  Future<String?> _patientUserId() async {
-    final user = AuthSession.resolveUser() ?? _auth.currentUser;
-    if (user == null) return null;
-    final result =
-        await _profileService.loadProfile(user.uid, syncAuthFirst: false);
-    final id = (result.data['userId'] as String?)?.trim() ??
-        (result.data['patientId'] as String?)?.trim();
-    if (id == null || id.isEmpty) return null;
-
-    await _firestore.collection('users').doc(user.uid).set(
-      {'userId': id},
-      SetOptions(merge: true),
-    );
-    return id;
-  }
-
   EmergencyAlertEntity? _mapDoc(
     QueryDocumentSnapshot<Map<String, dynamic>> doc,
   ) {
     return EmergencyAlertEntity.fromFirestore(doc.id, doc.data());
+  }
+
+  bool _isOpenStatus(Map<String, dynamic> data) {
+    final status = (data['Status'] as String?)?.trim() ??
+        (data['status'] as String?)?.trim() ??
+        '';
+    return status == EmergencyAlertEntity.statusActive ||
+        status == EmergencyAlertEntity.statusResponded;
+  }
+
+  Future<String> _ensurePatientUserId() async {
+    final user = AuthSession.resolveUser() ?? _auth.currentUser;
+    if (user == null) {
+      throw StateError('You must be signed in to send an emergency alert.');
+    }
+
+    final result =
+        await _profileService.loadProfile(user.uid, syncAuthFirst: false);
+    var patientId = (result.data['userId'] as String?)?.trim() ??
+        (result.data['patientId'] as String?)?.trim();
+
+    if (patientId != null && patientId.isNotEmpty) {
+      await _firestore.collection('users').doc(user.uid).set(
+        {'userId': patientId, 'authUid': user.uid},
+        SetOptions(merge: true),
+      );
+      return patientId;
+    }
+
+    if (!result.found && result.data.isEmpty) {
+      throw StateError(
+        'Patient profile not found. Please complete registration first.',
+      );
+    }
+
+    patientId = await _allocatePatientUserId(user.uid, result.data);
+    return patientId;
+  }
+
+  Future<String> _allocatePatientUserId(
+    String uid,
+    Map<String, dynamic> existing,
+  ) async {
+    final userRef = _firestore.collection(UserEntity.collection).doc(uid);
+    final counterRef = _firestore.doc(UserEntity.counterDocPath);
+
+    return _firestore.runTransaction<String>((transaction) async {
+      final counterSnap = await transaction.get(counterRef);
+      final next = (counterSnap.data()?['next'] as num?)?.toInt() ?? 1;
+      final userId = 'U${next.toString().padLeft(5, '0')}';
+      transaction.set(counterRef, {'next': next + 1}, SetOptions(merge: true));
+      transaction.set(
+        userRef,
+        {
+          ...existing,
+          'userId': userId,
+          'authUid': uid,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+      return userId;
+    });
   }
 
   Future<String> _resolveLocation() async {
@@ -84,36 +132,41 @@ class EmergencyAlertService {
   }
 
   Future<EmergencyAlertEntity?> fetchActiveForCurrentPatient() async {
-    final patientId = await _patientUserId();
-    if (patientId == null) return null;
+    try {
+      final patientId = await _ensurePatientUserId();
 
-    final snap = await _firestore
-        .collection(_collection)
-        .where('userId', isEqualTo: patientId)
-        .where('status', isEqualTo: EmergencyAlertEntity.statusActive)
-        .limit(1)
-        .get();
+      final snap = await _firestore
+          .collection(_collection)
+          .where('UserID', isEqualTo: patientId)
+          .limit(10)
+          .get();
 
-    if (snap.docs.isEmpty) return null;
-    return _mapDoc(snap.docs.first);
+      for (final doc in snap.docs) {
+        if (!_isOpenStatus(doc.data())) continue;
+        final entity = _mapDoc(doc);
+        if (entity != null && entity.isOpen) return entity;
+      }
+      return null;
+    } on FirebaseException catch (e) {
+      if (e.code == 'failed-precondition' || e.code == 'permission-denied') {
+        return null;
+      }
+      rethrow;
+    }
   }
 
   Stream<EmergencyAlertEntity?> watchActiveForCurrentPatient() {
     return Stream.multi((controller) async {
       try {
-        final patientId = await _patientUserId();
-        if (patientId == null) {
-          controller.add(null);
-          await controller.close();
-          return;
-        }
+        final patientId = await _ensurePatientUserId();
 
         Future<void> emit(QuerySnapshot<Map<String, dynamic>> snap) async {
           if (controller.isClosed) return;
           EmergencyAlertEntity? active;
           for (final doc in snap.docs) {
+            if (!_isOpenStatus(doc.data())) continue;
             final entity = _mapDoc(doc);
-            if (entity != null && entity.isActive) {
+            if (entity != null && entity.isOpen) {
               active = entity;
               break;
             }
@@ -123,17 +176,15 @@ class EmergencyAlertService {
 
         final initial = await _firestore
             .collection(_collection)
-            .where('userId', isEqualTo: patientId)
-            .where('status', isEqualTo: EmergencyAlertEntity.statusActive)
-            .limit(1)
+            .where('UserID', isEqualTo: patientId)
+            .limit(10)
             .get();
         await emit(initial);
 
         final sub = _firestore
             .collection(_collection)
-            .where('userId', isEqualTo: patientId)
-            .where('status', isEqualTo: EmergencyAlertEntity.statusActive)
-            .limit(1)
+            .where('UserID', isEqualTo: patientId)
+            .limit(10)
             .snapshots()
             .listen(emit, onError: controller.addError);
 
@@ -146,16 +197,18 @@ class EmergencyAlertService {
     });
   }
 
-  /// Creates an Active alert (ERD Table 4.7). Returns existing active alert if one exists.
+  /// Creates an Active alert (ERD Table 4.7). Returns existing open alert if one exists.
   Future<EmergencyAlertEntity> triggerSos({
     String alertType = EmergencyAlertEntity.alertTypeManualSos,
   }) async {
-    final patientId = await _patientUserId();
-    if (patientId == null) {
-      throw StateError('Patient profile not found.');
-    }
+    final patientId = await _ensurePatientUserId();
 
-    final existing = await fetchActiveForCurrentPatient();
+    EmergencyAlertEntity? existing;
+    try {
+      existing = await fetchActiveForCurrentPatient();
+    } on FirebaseException {
+      existing = null;
+    }
     if (existing != null) return existing;
 
     final alertId = await _reserveAlertId();
@@ -163,18 +216,28 @@ class EmergencyAlertService {
     final clinicNow = ClinicDateTime.nowClinic();
     final entity = EmergencyAlertEntity(
       alertId: alertId,
-      dateTime: ClinicDateTime.toTimestamp(clinicNow),
+      dateTime: EmergencyAlertEntity.formatClinicDateTime(clinicNow),
       location: location,
       alertType: alertType,
       status: EmergencyAlertEntity.statusActive,
       userId: patientId,
-      dateTimeLabel: EmergencyAlertEntity.formatClinicDateTime(clinicNow),
     );
 
-    await _firestore
-        .collection(_collection)
-        .doc(alertId)
-        .set(entity.toFirestoreMap());
+    try {
+      await _firestore
+          .collection(_collection)
+          .doc(alertId)
+          .set(entity.toFirestoreMap());
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        throw StateError(
+          'Could not save emergency alert. Sign in again, complete patient '
+          'registration, and ensure Firestore security rules are deployed '
+          '(firebase deploy --only firestore:rules).',
+        );
+      }
+      throw StateError('Could not save emergency alert: ${e.message ?? e.code}');
+    }
 
     return entity;
   }

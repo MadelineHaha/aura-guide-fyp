@@ -28,6 +28,16 @@ export async function fetchActiveStaff() {
   return mapActiveStaffDocs(snap.docs);
 }
 
+function isCaregiverRole(role) {
+  const value = String(role || "").trim().toLowerCase();
+  return value === "caregiver" || value === "nurse";
+}
+
+export async function fetchActiveCaregivers() {
+  const staff = await fetchActiveStaff();
+  return staff.filter((member) => isCaregiverRole(member.role));
+}
+
 /** Real-time active staff list. */
 export function subscribeActiveStaff(onData, onError) {
   const unsub = onSnapshot(

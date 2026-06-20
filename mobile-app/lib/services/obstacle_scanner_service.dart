@@ -1,26 +1,69 @@
 import 'dart:async';
-import 'dart:math';
-import 'package:camera/camera.dart';
 
-/// Lightweight frame analysis that simulates AI obstacle detection from the camera feed.
+import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
+
+import 'obstacle_detection_service.dart';
+import '../models/obstacle_bounds.dart';
+import '../utils/obstacle_direction.dart';
+
+/// Automatically scans the live camera feed for obstacles in the background.
 class ObstacleScannerService {
-  ObstacleScannerService();
+  ObstacleScannerService({ObstacleDetectionService? detection})
+      : _detection = detection ?? ObstacleDetectionService.instance;
+
+  final ObstacleDetectionService _detection;
 
   final _alerts = StreamController<ObstacleAlert>.broadcast();
   CameraController? _cameraController;
+  CameraImage? _latestFrame;
+  Timer? _scanTimer;
+
   DateTime _lastAlertAt = DateTime.fromMillisecondsSinceEpoch(0);
-  int _frameCount = 0;
+  bool _scanInFlight = false;
+  double? _smoothedDistanceMeters;
+  String _smoothedDistanceLabel = '';
+
+  static const _scanInterval = Duration(milliseconds: 450);
+  static const _alertCooldown = Duration(milliseconds: 900);
+
+  bool isRunning = false;
+  bool modelReady = false;
+  int framesSeen = 0;
+  String statusText = 'Starting';
 
   Stream<ObstacleAlert> get alerts => _alerts.stream;
+
+  Future<void> warmUp() async {
+    modelReady = await _detection.initialize();
+  }
 
   Future<void> start(CameraController controller) async {
     await stop();
     if (!controller.value.isInitialized) return;
+
+    modelReady = await _detection.initialize();
+    statusText = modelReady ? 'Scanning surroundings' : 'Scanning (fallback)';
+
     _cameraController = controller;
+    isRunning = true;
+
     await controller.startImageStream(_onFrame);
+
+    unawaited(_scanLatestFrame());
+    _scanTimer = Timer.periodic(_scanInterval, (_) {
+      unawaited(_scanLatestFrame());
+    });
   }
 
   Future<void> stop() async {
+    isRunning = false;
+    _scanTimer?.cancel();
+    _scanTimer = null;
+    _latestFrame = null;
+    _smoothedDistanceMeters = null;
+    _smoothedDistanceLabel = '';
+
     final controller = _cameraController;
     _cameraController = null;
     if (controller != null && controller.value.isStreamingImages) {
@@ -30,93 +73,104 @@ class ObstacleScannerService {
 
   Future<void> dispose() async {
     await stop();
-    await _alerts.close();
+    if (!_alerts.isClosed) {
+      await _alerts.close();
+    }
   }
 
   void _onFrame(CameraImage image) {
-    _frameCount++;
-    if (_frameCount % 6 != 0) return;
+    framesSeen++;
+    _latestFrame = image;
+  }
 
-    final score = _analyzeFrame(image);
-    final now = DateTime.now();
-    if (score < 0.42) return;
-    if (now.difference(_lastAlertAt).inMilliseconds < 2800) return;
+  Future<void> _scanLatestFrame() async {
+    if (!isRunning || _scanInFlight) return;
 
-    _lastAlertAt = now;
-    final distance = (4.5 - score * 3.2).clamp(0.8, 4.0);
-    final label = score > 0.72 ? 'People' : 'Obstacle';
-    if (!_alerts.isClosed) {
-      _alerts.add(
-        ObstacleAlert(
-          label: label,
-          distanceMeters: double.parse(distance.toStringAsFixed(1)),
-          confidence: score,
-        ),
+    final frame = _latestFrame;
+    if (frame == null) {
+      statusText = 'Waiting for camera frames';
+      return;
+    }
+
+    _scanInFlight = true;
+    try {
+      ObstacleDetection? detection;
+
+      if (modelReady) {
+        detection = await _detection.detectFromCameraAsync(frame);
+      }
+
+      if (detection == null && !modelReady) {
+        detection = await detectObstacleHeuristicAsync(frame);
+      }
+
+      if (detection == null) {
+        if (_detection.inferenceCount % 8 == 0) {
+          debugPrint(
+            'ObstacleScanner: no detection '
+            '(top=${_detection.lastTopLabel} '
+            'score=${_detection.lastTopScore.toStringAsFixed(3)} '
+            'frames=$framesSeen model=$modelReady)',
+          );
+        }
+        statusText = modelReady
+            ? 'Scanning (${_detection.lastTopLabel.isEmpty ? 'watching' : _detection.lastTopLabel} ${_detection.lastTopScore.toStringAsFixed(2)})'
+            : 'Scanning surroundings';
+        return;
+      }
+
+      final now = DateTime.now();
+      if (now.difference(_lastAlertAt) < _alertCooldown) return;
+
+      final distanceMeters = _smoothDistance(
+        label: detection.label,
+        distanceMeters: detection.distanceMeters,
       );
+
+      _lastAlertAt = now;
+      statusText = '${detection.label} detected';
+      debugPrint(
+        'ObstacleScanner: ALERT ${detection.label} '
+        'dir=${detection.direction.name} '
+        'conf=${detection.confidence.toStringAsFixed(2)} '
+        'dist=${distanceMeters.toStringAsFixed(1)}m',
+      );
+      if (!_alerts.isClosed) {
+        _alerts.add(
+          ObstacleAlert(
+            label: detection.label,
+            distanceMeters: double.parse(distanceMeters.toStringAsFixed(1)),
+            confidence: detection.confidence,
+            bounds: detection.bounds,
+          ),
+        );
+      }
+    } catch (error) {
+      debugPrint('ObstacleScannerService scan error: $error');
+      statusText = 'Scanner error';
+    } finally {
+      _scanInFlight = false;
+      if (isRunning && _latestFrame != null) {
+        unawaited(_scanLatestFrame());
+      }
     }
   }
 
-  double _analyzeFrame(CameraImage image) {
-    if (image.planes.isEmpty) return 0;
-
-    final plane = image.planes.first;
-    final bytes = plane.bytes;
-    if (bytes.isEmpty) return 0;
-
-    final width = image.width;
-    final height = image.height;
-    final centerLeft = (width * 0.28).round();
-    final centerRight = (width * 0.72).round();
-    final centerTop = (height * 0.18).round();
-    final centerBottom = (height * 0.72).round();
-
-    var centerSum = 0.0;
-    var centerCount = 0;
-    var surroundSum = 0.0;
-    var surroundCount = 0;
-    var centerVariance = 0.0;
-
-    final samples = min(bytes.length, width * height);
-    final step = max(12, samples ~/ 1800);
-
-    for (var y = 0; y < height; y += step) {
-      for (var x = 0; x < width; x += step) {
-        final index = y * plane.bytesPerRow + x;
-        if (index < 0 || index >= bytes.length) continue;
-        final value = bytes[index].toDouble();
-
-        final inCenter = x >= centerLeft &&
-            x <= centerRight &&
-            y >= centerTop &&
-            y <= centerBottom;
-        if (inCenter) {
-          centerSum += value;
-          centerCount++;
-        } else {
-          surroundSum += value;
-          surroundCount++;
-        }
-      }
+  double _smoothDistance({
+    required String label,
+    required double distanceMeters,
+  }) {
+    if (_smoothedDistanceLabel != label) {
+      _smoothedDistanceLabel = label;
+      _smoothedDistanceMeters = distanceMeters;
+      return distanceMeters;
     }
 
-    if (centerCount == 0 || surroundCount == 0) return 0;
-
-    final centerAvg = centerSum / centerCount;
-    final surroundAvg = surroundSum / surroundCount;
-
-    for (var y = centerTop; y < centerBottom; y += step) {
-      for (var x = centerLeft; x < centerRight; x += step) {
-        final index = y * plane.bytesPerRow + x;
-        if (index < 0 || index >= bytes.length) continue;
-        final diff = bytes[index] - centerAvg;
-        centerVariance += diff * diff;
-      }
-    }
-    centerVariance /= centerCount;
-
-    final contrast = (centerAvg - surroundAvg).abs() / 255;
-    final texture = (centerVariance / 6500).clamp(0.0, 1.0);
-    return (contrast * 0.55 + texture * 0.45).clamp(0.0, 1.0);
+    final previous = _smoothedDistanceMeters ?? distanceMeters;
+    const alpha = 0.45;
+    final smoothed = previous + alpha * (distanceMeters - previous);
+    _smoothedDistanceMeters = smoothed;
+    return smoothed;
   }
 }
 
@@ -125,16 +179,23 @@ class ObstacleAlert {
     required this.label,
     required this.distanceMeters,
     required this.confidence,
+    this.bounds,
   });
 
   final String label;
   final double distanceMeters;
   final double confidence;
+  final ObstacleBounds? bounds;
+
+  ObstacleDirection get direction {
+    if (bounds == null) return ObstacleDirection.front;
+    return directionFromBounds(bounds!);
+  }
 
   String get message {
     final distanceText = distanceMeters.toStringAsFixed(
       distanceMeters.truncateToDouble() == distanceMeters ? 0 : 1,
     );
-    return "$label ahead $distanceText m";
+    return '$label on the ${direction.name}, $distanceText m';
   }
 }

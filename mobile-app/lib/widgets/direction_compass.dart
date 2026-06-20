@@ -37,14 +37,18 @@ class DirectionCompass extends StatelessWidget {
             Row(
               children: [
                 Icon(
-                  state.hasGpsFix ? Icons.gps_fixed : Icons.gps_not_fixed,
-                  color: state.hasGpsFix ? _accent : Colors.white38,
+                  state.walkMode ? Icons.directions_walk : Icons.explore,
+                  color: state.walkMode ? _accent : Colors.white38,
                   size: 18,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    state.hasGpsFix ? 'GPS active' : 'Starting GPS…',
+                    state.walkMode
+                        ? 'Walk mode'
+                        : state.hasGpsFix
+                            ? 'GPS active'
+                            : 'Starting GPS…',
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,

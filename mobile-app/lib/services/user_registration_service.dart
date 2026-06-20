@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/user_entity.dart';
+import '../models/voice_profile_data.dart';
 import 'phone_number_service.dart';
 
 class UserRegistrationService {
@@ -56,14 +57,11 @@ class UserRegistrationService {
       final normalizedPhrase = voicePassphrase.trim().toLowerCase();
       if (normalizedPhrase.isNotEmpty) {
         payload['voicePassphrase'] = normalizedPhrase;
-        payload['voiceProfile'] = {
-          'passphrase': normalizedPhrase,
-          if (voiceprintVector != null && voiceprintVector.isNotEmpty)
-            'voiceprintVector': voiceprintVector,
-          if (voiceFeatures != null && voiceFeatures.isNotEmpty)
-            'voiceFeatures': voiceFeatures,
-          'embeddingVersion': 1,
-        };
+        payload['voiceProfile'] = VoiceProfileData(
+          passphrase: normalizedPhrase,
+          voiceprintVector: voiceprintVector ?? const [],
+          voiceFeatures: voiceFeatures ?? const {},
+        ).toMap();
       }
 
       final trimmedPhone = phoneNumber.trim();

@@ -79,6 +79,8 @@ const DISPLAYABLE_MESSAGE_TYPES = new Set([
   "photo",
   "video",
   "document",
+  "call",
+  "voice",
 ]);
 
 function timestampToDate(value) {
@@ -87,6 +89,15 @@ function timestampToDate(value) {
   if (value instanceof Date) return value;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export function formatMessageDateKey(value) {
+  const date = timestampToDate(value);
+  if (!date) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function normalizeStatus(value) {
@@ -139,6 +150,7 @@ export function mapMessageDoc(docSnap) {
     messageType: normalizeStatus(data.messageType) || "Text",
     content: data.content || "",
     callDuration: data.callDuration ?? null,
+    callDurationSeconds: data.callDurationSeconds ?? null,
     timestamp: data.timestamp ?? data.Timestamp ?? null,
     deliveryStatus: normalizeStatus(data.deliveryStatus) || "Sent",
     deliveredAt: data.deliveredAt ?? null,
@@ -163,6 +175,12 @@ export function isMessageHiddenForUser(message, userId) {
   return (message.hiddenFor || []).includes(viewerId);
 }
 
+export function isMessageVisibleForViewer(message, viewerId) {
+  if (!message) return false;
+  if (message.deletedForEveryone) return false;
+  return !isMessageHiddenForUser(message, viewerId);
+}
+
 export function formatMessageDateTimeFull(value) {
   const date = timestampToDate(value);
   if (!date) return "Not available";
@@ -181,6 +199,8 @@ export function formatMessageDateTimeFull(value) {
 export function buildMessageCopyText(message) {
   if (!message || message.deletedForEveryone) return "";
   const kind = resolveMessageKind(message);
+  if (kind === "call") return formatCallMessageText(message);
+  if (kind === "voice") return voiceMessagePreviewLabel(message);
   if (kind === "text") return String(message.content || "").trim();
   const media = parseMediaMessageContent(message.content);
   if (!media) {
@@ -202,6 +222,7 @@ export function buildReplyPreview(message) {
   }
   if (parsed.kind === "photo") return "Photo";
   if (parsed.kind === "video") return "Video";
+  if (parsed.kind === "voice") return "Voice message";
   return parsed.fileName || "Document";
 }
 
@@ -370,7 +391,7 @@ async function reserveConversationId() {
   });
 }
 
-async function fetchLatestMessageByConversationIds(conversationIds) {
+async function fetchLatestMessageByConversationIds(conversationIds, viewerId = "") {
   const latestByConversation = new Map();
   if (conversationIds.length === 0) return latestByConversation;
 
@@ -381,16 +402,9 @@ async function fetchLatestMessageByConversationIds(conversationIds) {
         where("conversationId", "==", conversationId),
       );
       const snap = await getDocs(q);
-      const messages = snap.docs
-        .map(mapMessageDoc)
-        .filter((message) => MESSAGE_ID_PATTERN.test(message.messageId))
-        .sort(
-          (a, b) =>
-            (timestampToDate(b.timestamp)?.getTime() || 0) -
-            (timestampToDate(a.timestamp)?.getTime() || 0),
-        );
-      if (messages.length > 0) {
-        latestByConversation.set(conversationId, messages[0]);
+      const latest = latestVisibleMessageFromSnap(snap, viewerId);
+      if (latest) {
+        latestByConversation.set(conversationId, latest);
       }
     }),
   );
@@ -452,10 +466,11 @@ function filterConversationsForStaff(staffId, docs) {
     );
 }
 
-function latestMessageFromSnap(snap) {
+function latestVisibleMessageFromSnap(snap, viewerId = "") {
   const messages = snap.docs
     .map(mapMessageDoc)
     .filter((message) => MESSAGE_ID_PATTERN.test(message.messageId))
+    .filter((message) => isMessageVisibleForViewer(message, viewerId))
     .sort(
       (a, b) =>
         (timestampToDate(b.timestamp)?.getTime() || 0) -
@@ -477,6 +492,7 @@ export async function fetchAvailableConversationsForStaff(staffId) {
   });
   const latestByConversation = await fetchLatestMessageByConversationIds(
     available.map((c) => c.conversationId),
+    staffId,
   );
   return buildStaffConversationThreads(
     staffId,
@@ -519,7 +535,7 @@ export function subscribeAvailableConversationsForStaff(staffId, onData, onError
       const unsub = onSnapshot(
         q,
         (snap) => {
-          const latest = latestMessageFromSnap(snap);
+          const latest = latestVisibleMessageFromSnap(snap, trimmedStaffId);
           if (latest) latestByConversation.set(id, latest);
           else latestByConversation.delete(id);
           emit();
@@ -767,16 +783,62 @@ export function parseMediaMessageContent(content) {
 
 function resolveMessageKind(message) {
   const type = String(message.messageType || "Text").trim().toLowerCase();
+  if (type === "call") return "call";
+  if (type === "voice") return "voice";
   if (type === "photo" || type === "video" || type === "document") return type;
   return "text";
 }
 
+function formatCallDurationLabel(totalSeconds) {
+  const total = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatCallMessageText(message) {
+  const content = String(message.content || "").trim();
+  if (content) return content;
+
+  const seconds = Number(message.callDurationSeconds);
+  if (seconds > 0) {
+    return `Voice call · ${formatCallDurationLabel(seconds)}`;
+  }
+
+  const duration = message.callDuration;
+  if (duration) return `Voice call · ${duration} min`;
+  return "Voice call";
+}
+
 function parseMessageForRender(message) {
   const kind = resolveMessageKind(message);
+  if (kind === "call") {
+    return {
+      kind: "call",
+      text: formatCallMessageText(message),
+    };
+  }
   if (kind === "text") {
     return {
       kind: "text",
       text: String(message.content || "").trim() || "—",
+    };
+  }
+  if (kind === "voice") {
+    const media = parseMediaMessageContent(message.content);
+    const label = voiceMessagePreviewLabel(message);
+    if (!media) {
+      return {
+        kind: "voice",
+        text: label,
+      };
+    }
+    return {
+      kind: "voice",
+      url: media.url,
+      fileName: media.fileName,
+      mimeType: media.mimeType,
+      text: label,
     };
   }
   const media = parseMediaMessageContent(message.content);
@@ -838,12 +900,25 @@ export function validateMediaMessageFile(file, messageType) {
   return "Unsupported attachment type.";
 }
 
+function voiceMessagePreviewLabel(message) {
+  const raw = String(message.content || "").trim();
+  try {
+    const parsed = JSON.parse(raw);
+    const seconds = Number(parsed.durationSeconds) || 0;
+    if (seconds > 0) {
+      return `Voice message · ${formatCallDurationLabel(seconds)}`;
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  return "Voice message";
+}
+
 function formatMessagePreview(message) {
   const type = message.messageType.toLowerCase();
-  if (type === "voice") return "Voice message";
+  if (type === "voice") return voiceMessagePreviewLabel(message);
   if (type === "call") {
-    const duration = message.callDuration;
-    return duration ? `Call · ${duration} min` : "Call";
+    return formatCallMessageText(message).replace(/^Voice call/, "Call");
   }
   if (type === "photo") return "Photo";
   if (type === "video") return "Video";
@@ -870,7 +945,7 @@ function conversationMessagesFromSnap(snap, staffId = "") {
         String(message.messageType || "Text").trim().toLowerCase(),
       ),
     )
-    .filter((message) => !isMessageHiddenForUser(message, staffId))
+    .filter((message) => isMessageVisibleForViewer(message, staffId))
     .sort(
       (a, b) =>
         (timestampToDate(a.timestamp)?.getTime() || 0) -
@@ -927,8 +1002,10 @@ export function buildMessageRenderList(messages, staffId) {
 
   messages.forEach((message) => {
     const divider = formatDividerLabel(message.timestamp);
+    const dateKey = formatMessageDateKey(message.timestamp);
+    const timestampMs = timestampToDate(message.timestamp)?.getTime() || 0;
     if (divider !== lastDivider) {
-      items.push({ type: "divider", label: divider });
+      items.push({ type: "divider", label: divider, dateKey, timestampMs });
       lastDivider = divider;
     }
 
@@ -943,6 +1020,8 @@ export function buildMessageRenderList(messages, staffId) {
       kind: parsed.kind,
       messageId: message.messageId,
       sentAt: formatMessageDateTimeFull(message.timestamp),
+      dateKey,
+      timestampMs,
       deliveredAt: message.deliveredAt
         ? formatMessageDateTimeFull(message.deliveredAt)
         : "",
@@ -953,11 +1032,12 @@ export function buildMessageRenderList(messages, staffId) {
       forwardedFromMessageId: message.forwardedFromMessageId || "",
       isDeleted,
     };
-    if (parsed.kind === "text" || parsed.kind === "deleted") {
+    if (parsed.kind === "text" || parsed.kind === "deleted" || parsed.kind === "call") {
       items.push({ ...base, text: parsed.text });
     } else {
       items.push({
         ...base,
+        text: parsed.text || "",
         url: parsed.url,
         fileName: parsed.fileName,
         mimeType: parsed.mimeType,
@@ -988,6 +1068,8 @@ export function buildOptimisticOutgoingItem({
     kind: parsed.kind,
     messageId: messageId || `temp-${Date.now()}`,
     sentAt: formatMessageDateTimeFull(timestamp),
+    dateKey: formatMessageDateKey(timestamp),
+    timestampMs: timestampToDate(timestamp)?.getTime() || Date.now(),
     deliveredAt: "",
     readAt: "",
     deliveryStatus: "Sent",
@@ -1001,6 +1083,7 @@ export function buildOptimisticOutgoingItem({
   }
   return {
     ...base,
+    text: parsed.text || "",
     url: parsed.url,
     fileName: parsed.fileName,
     mimeType: parsed.mimeType,
@@ -1090,6 +1173,65 @@ export async function sendTextMessage({
     messageType: "Text",
     content: trimmedContent,
     replyPreview: messagePayload.replyPreview || "",
+  };
+}
+
+export async function sendCallMessage({
+  conversationId,
+  staffId,
+  patientId,
+  durationSeconds = 0,
+  status = "completed",
+}) {
+  if (!CONVERSATION_ID_PATTERN.test(conversationId)) {
+    throw new Error("Invalid conversation ID.");
+  }
+  if (!PARTICIPANT_ID_PATTERN.test(staffId)) {
+    throw new Error("Staff ID is missing or invalid.");
+  }
+  if (!/^U\d{5}$/.test(patientId)) {
+    throw new Error("Patient ID is missing or invalid.");
+  }
+
+  await assertConversationReady(conversationId);
+
+  const messageId = await reserveMessageId();
+  const now = serverTimestamp();
+  const connectedSeconds = Number(durationSeconds) || 0;
+  const callDuration =
+    connectedSeconds > 0 ? Math.max(1, Math.ceil(connectedSeconds / 60)) : null;
+  let content = "Voice call";
+  if (status === "unanswered" || status === "missed") {
+    content = "Voice call · Not answered";
+  } else if (status === "declined") {
+    content = "Voice call · Declined";
+  } else if (connectedSeconds > 0) {
+    content = `Voice call · ${formatCallDurationLabel(connectedSeconds)}`;
+  }
+
+  const messagePayload = {
+    messageId,
+    conversationId,
+    messageType: "Call",
+    content,
+    callDuration,
+    callDurationSeconds: connectedSeconds > 0 ? connectedSeconds : null,
+    timestamp: now,
+    deliveryStatus: "Sent",
+    senderId: staffId,
+    receiverId: patientId,
+    hiddenFor: [],
+    deletedForEveryone: false,
+  };
+
+  await setDoc(doc(db, MESSAGES_COLLECTION, messageId), messagePayload);
+
+  return {
+    messageId,
+    preview: "Call",
+    time: formatChatListTime(new Date()),
+    messageType: "Call",
+    content: messagePayload.content,
   };
 }
 
@@ -1284,8 +1426,21 @@ export async function deleteMessageForEveryone(messageId, staffId) {
   if (!PARTICIPANT_ID_PATTERN.test(actorId)) {
     throw new Error("Staff ID is missing or invalid.");
   }
+
+  const message = await fetchMessageById(trimmedId);
+  const participantIds = [
+    ...new Set(
+      [message.senderId, message.receiverId]
+        .map((id) => String(id || "").trim())
+        .filter((id) => PARTICIPANT_ID_PATTERN.test(id)),
+    ),
+  ];
+  if (participantIds.length === 0) {
+    throw new Error("Could not resolve message participants.");
+  }
+
   await updateDoc(doc(db, MESSAGES_COLLECTION, trimmedId), {
-    deletedForEveryone: true,
+    hiddenFor: arrayUnion(...participantIds),
     deletedAt: serverTimestamp(),
     deletedBy: actorId,
   });

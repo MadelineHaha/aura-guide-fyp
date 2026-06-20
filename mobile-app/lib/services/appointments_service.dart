@@ -8,6 +8,8 @@ import '../models/staff_option.dart';
 import '../utils/appointment_time_slots.dart';
 import '../utils/clinic_datetime.dart';
 import 'healthcare_staff_service.dart';
+import '../utils/localized_doctor_name.dart';
+import 'app_settings_service.dart';
 import 'user_profile_service.dart';
 
 class AppointmentsService {
@@ -60,11 +62,12 @@ class AppointmentsService {
     final name = (staff['name'] as String?)?.trim() ?? '';
     if (name.isEmpty) return staffId;
     final category = HealthcareStaffService.categoryFromData(staff);
-    if (category == HealthcareStaffService.roleDoctor && !name.startsWith('Dr.')) {
-      return 'Dr. $name';
-    }
-    if (name.startsWith('Dr.')) return name;
-    return name;
+    final languageCode = AppSettingsService.instance.settings.languageCode;
+    return LocalizedDoctorName.format(
+      name,
+      languageCode,
+      isDoctor: category == HealthcareStaffService.roleDoctor,
+    );
   }
 
   String _specialty(Map<String, dynamic>? staff) {

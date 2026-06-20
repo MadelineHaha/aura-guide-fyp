@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -98,9 +100,18 @@ class UserProfileService {
     required String uid,
     required Map<String, dynamic> preferences,
   }) async {
+    await saveUserSettings(uid: uid, settings: preferences);
+  }
+
+  /// Persists all app settings on `users/{uid}`.
+  Future<void> saveUserSettings({
+    required String uid,
+    required Map<String, dynamic> settings,
+  }) async {
     await doc(uid).set({
       'authUid': uid,
-      AccessibilityPreferences.fieldName: preferences,
+      AccessibilityPreferences.settingsFieldName: settings,
+      AccessibilityPreferences.legacyFieldName: settings,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
@@ -184,6 +195,78 @@ class UserProfileService {
     if (v == null) return '';
     if (v is String) return v;
     return v.toString();
+  }
+
+  /// First name for greetings (e.g. "Madeline Ong" → "Madeline").
+  static String greetingName(Map<String, dynamic> data) {
+    final full = (data['name'] as String?)?.trim() ?? '';
+    if (full.isEmpty) return '';
+    return full.split(RegExp(r'\s+')).first;
+  }
+
+  static String patientId(Map<String, dynamic> data) {
+    final id = (data['userId'] as String?)?.trim() ??
+        (data['patientId'] as String?)?.trim() ??
+        '';
+    return id;
+  }
+
+  static String avatarInitial(Map<String, dynamic> data) {
+    final name = greetingName(data);
+    if (name.isNotEmpty) return name[0].toUpperCase();
+    final id = patientId(data);
+    if (id.isNotEmpty) return id[0].toUpperCase();
+    return '?';
+  }
+
+  Stream<Map<String, dynamic>>? _watchCache;
+
+  /// Live `users/{uid}` for the signed-in patient.
+  Stream<Map<String, dynamic>> watchForCurrentUser() {
+    return _watchCache ??= _createWatchStream();
+  }
+
+  Stream<Map<String, dynamic>> _createWatchStream() {
+    return Stream.multi((controller) async {
+      StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? profileSub;
+      StreamSubscription<User?>? authSub;
+
+      Future<void> bindProfile(String? uid) async {
+        await profileSub?.cancel();
+        profileSub = null;
+        if (uid == null || uid.isEmpty) {
+          if (!controller.isClosed) controller.add({});
+          return;
+        }
+
+        profileSub = doc(uid).snapshots().listen(
+          (snap) {
+            if (controller.isClosed) return;
+            final data = snap.exists
+                ? Map<String, dynamic>.from(snap.data() ?? {})
+                : <String, dynamic>{};
+            data['authUid'] = uid;
+            controller.add(data);
+          },
+          onError: controller.addError,
+        );
+      }
+
+      await bindProfile(AuthSession.resolveUser()?.uid);
+
+      authSub = _auth.authStateChanges().listen((user) {
+        if (AuthSession.explicitSignOutRequested && user == null) {
+          bindProfile(null);
+          return;
+        }
+        bindProfile(user?.uid ?? AuthSession.resolveUser()?.uid);
+      });
+
+      controller.onCancel = () async {
+        await profileSub?.cancel();
+        await authSub?.cancel();
+      };
+    });
   }
 }
 

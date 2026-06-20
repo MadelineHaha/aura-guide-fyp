@@ -3,6 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../auth_session.dart';
 import '../models/health_record_item.dart';
+import '../utils/localized_doctor_name.dart';
+import 'app_settings_service.dart';
 import 'healthcare_staff_service.dart';
 import 'user_profile_service.dart';
 
@@ -62,10 +64,11 @@ class HealthRecordsService {
     final name = (staff['name'] as String?)?.trim() ?? '';
     if (name.isEmpty) return staffId;
     final role = HealthcareStaffService.categoryFromData(staff);
-    if (role == HealthcareStaffService.roleDoctor && !name.startsWith('Dr.')) {
-      return 'Dr. $name';
-    }
-    return name;
+    return LocalizedDoctorName.format(
+      name,
+      AppSettingsService.instance.settings.languageCode,
+      isDoctor: role == HealthcareStaffService.roleDoctor,
+    );
   }
 
   HealthRecordItem? _mapDoc(

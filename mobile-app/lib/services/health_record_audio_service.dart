@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
 import '../models/health_record_item.dart';
+import 'app_settings_service.dart';
 
 /// Reads health record text aloud (Firestore stores text/PDF, not audio files).
 class HealthRecordAudioService {
@@ -9,6 +10,7 @@ class HealthRecordAudioService {
 
   final FlutterTts _tts;
   bool _ready = false;
+  String? _appliedLanguageCode;
   String? playingRecordId;
 
   static const _pluginRestartHint =
@@ -16,17 +18,26 @@ class HealthRecordAudioService {
       'so audio can load.';
 
   Future<void> ensureReady() async {
-    if (_ready) return;
+    final languageCode =
+        AppSettingsService.instance.settings.languageCode;
+    if (_ready && _appliedLanguageCode == languageCode) return;
+
     try {
       await _tts.awaitSpeakCompletion(true);
       await _tts.setSpeechRate(0.48);
       await _tts.setPitch(1.0);
+      final ttsLocale = switch (languageCode) {
+        'ms' => 'ms-MY',
+        'zh' => 'zh-CN',
+        _ => 'en-US',
+      };
       try {
-        await _tts.setLanguage('en-US');
+        await _tts.setLanguage(ttsLocale);
       } catch (_) {
-        // Device default language is fine if en-US is unavailable.
+        // Device default language is fine if the locale is unavailable.
       }
       _ready = true;
+      _appliedLanguageCode = languageCode;
     } on MissingPluginException {
       throw StateError(_pluginRestartHint);
     } on PlatformException catch (e) {
@@ -39,10 +50,15 @@ class HealthRecordAudioService {
   }
 
   static String narrationFor(HealthRecordItem record) {
-    return '${record.recordType}. '
-        'Date ${record.dateCreated}. '
-        '${record.doctorName}. '
-        '${record.summary}';
+    return AppSettingsService.instance.localized(
+      'healthRecordNarration',
+      {
+        'recordType': record.recordType,
+        'dateCreated': record.dateCreated,
+        'doctorName': record.doctorName,
+        'summary': record.summary,
+      },
+    );
   }
 
   Future<void> play(HealthRecordItem record) async {

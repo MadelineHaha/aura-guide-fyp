@@ -1,13 +1,21 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 
+import 'l10n/app_localizations.dart';
 import 'firebase_auth_helper.dart';
 import 'models/user_entity.dart';
+import 'services/app_settings_service.dart';
+import 'services/field_speech_input.dart';
 import 'services/phone_number_service.dart';
 import 'services/user_registration_service.dart';
+import 'utils/spoken_date_parser.dart';
 import 'widgets/app_back_button.dart';
 import 'widgets/calendar_date_picker_dialog.dart';
 import 'widgets/date_select_field.dart';
+import 'widgets/listening_mic_button.dart';
 
 /// Manual registration: 4-step "Create Account" flow (name, date of birth, email, password).
 class ManualRegisterPage extends StatefulWidget {
@@ -26,6 +34,7 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
   DateTime? _birthDate;
 
   final _registration = UserRegistrationService();
+  final _fieldSpeech = FieldSpeechInput.instance;
   int _step = 0;
   bool _submitting = false;
 
@@ -35,10 +44,54 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
 
   static const int _totalSteps = 4;
 
-  void _voiceFieldHint(String field) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Voice input for $field will be available soon.')),
+  @override
+  void initState() {
+    super.initState();
+    _fieldSpeech.addListener(_onFieldSpeechChanged);
+  }
+
+  void _onFieldSpeechChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _dictateTo(
+    TextEditingController controller, {
+    ListenMode listenMode = ListenMode.dictation,
+  }) async {
+    final error = await _fieldSpeech.toggleForController(
+      controller,
+      listenMode: listenMode,
     );
+    if (error != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
+    }
+  }
+
+  Future<void> _dictateBirthDate() async {
+    final error = await _fieldSpeech.toggleForCallback(
+      onText: (heard) {
+        final parsed = parseSpokenBirthDate(heard);
+        if (!mounted) return;
+        if (parsed != null) {
+          setState(() => _birthDate = parsed);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Could not understand that date. Try saying something like 16 March 1990.',
+              ),
+            ),
+          );
+        }
+      },
+    );
+    if (error != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
+    }
   }
 
   String? _validateStep0() {
@@ -63,9 +116,9 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
     return null;
   }
 
-  String? _validateStep3() {
+  String? _validateStep3(AppLocalizations l10n) {
     final password = _passwordController.text;
-    if (password.isEmpty) return 'Please enter a password.';
+    if (password.isEmpty) return l10n.t('pleaseEnterPassword');
     if (!_hasMinLength(password)) return 'Password must be at least 8 characters.';
     if (password.length > 255) return 'Password must be at most 255 characters.';
     if (!_hasUppercase(password)) {
@@ -92,6 +145,7 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
 
   void _onContinue() {
     FocusScope.of(context).unfocus();
+    final l10n = context.l10n;
     String? err;
     switch (_step) {
       case 0:
@@ -104,7 +158,7 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
         err = _validateStep2();
         break;
       case 3:
-        err = _validateStep3();
+        err = _validateStep3(l10n);
         if (err != null) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(err)),
@@ -124,7 +178,8 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
   }
 
   Future<void> _register() async {
-    final err = _validateStep3();
+    final l10n = context.l10n;
+    final err = _validateStep3(l10n);
     if (err != null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
       return;
@@ -156,19 +211,21 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
           birthDate: _birthDate!,
           email: _emailController.text.trim(),
           phoneNumber: phoneNumber,
+          accessibilityPreferences:
+              AppSettingsService.instance.settings.toMap(),
         );
       } catch (e) {
         await _registration.deleteCurrentAuthUser();
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not save profile: $e')),
+          SnackBar(content: Text(l10n.t('couldNotSaveProfile', {'error': e}))),
         );
         return;
       }
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Account created')),
+        SnackBar(content: Text(l10n.t('accountCreated'))),
       );
       Navigator.of(context).popUntil((route) => route.isFirst);
     } on FirebaseAuthException catch (e) {
@@ -179,7 +236,7 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
+        SnackBar(content: Text(l10n.t('errorWithMessage', {'error': e}))),
       );
     } finally {
       if (mounted) setState(() => _submitting = false);
@@ -188,6 +245,8 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
 
   @override
   void dispose() {
+    _fieldSpeech.removeListener(_onFieldSpeechChanged);
+    unawaited(_fieldSpeech.stop());
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
@@ -207,7 +266,7 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
 
     final picked = await showCalendarDatePickerDialog(
       context: context,
-      title: 'Date of birth',
+      title: context.l10n.t('dateOfBirth'),
       initialDate: initial,
       firstDate: first,
       lastDate: last,
@@ -220,6 +279,8 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
@@ -227,9 +288,9 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
         foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          'Create Account',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        title: Text(
+          l10n.t('createAccount'),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
@@ -274,68 +335,70 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
   }
 
   Widget _buildStepBody() {
+    final l10n = context.l10n;
     switch (_step) {
       case 0:
-        return _buildNameStep();
+        return _buildNameStep(l10n);
       case 1:
-        return _buildBirthDateStep();
+        return _buildBirthDateStep(l10n);
       case 2:
-        return _buildEmailStep();
+        return _buildEmailStep(l10n);
       case 3:
-        return _buildPasswordStep();
+        return _buildPasswordStep(l10n);
       default:
         return const SizedBox.shrink();
     }
   }
 
-  Widget _buildNameStep() {
+  Widget _buildNameStep(AppLocalizations l10n) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'What is your name?',
+        Text(
+          l10n.t('whatIsYourName'),
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 24,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 10),
-        const Text(
-          'Enter your full name so your care team can identify you.',
+        Text(
+          l10n.t('enterFullNamePrompt'),
           textAlign: TextAlign.center,
-          style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+          style: const TextStyle(color: _subtext, fontSize: 15, height: 1.35),
         ),
         const SizedBox(height: 28),
         _DarkLabeledField(
           controller: _nameController,
-          hintText: 'e.g. Madeline Ong',
+          hintText: l10n.t('nameHint'),
           prefixIcon: Icons.person_outline,
-          onMic: () => _voiceFieldHint('name'),
+          onMic: () => _dictateTo(_nameController),
+          micListening: _fieldSpeech.isListeningFor(_nameController),
         ),
       ],
     );
   }
 
-  Widget _buildBirthDateStep() {
+  Widget _buildBirthDateStep(AppLocalizations l10n) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'What is your date of birth?',
+        Text(
+          l10n.t('whatIsYourDateOfBirth'),
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 24,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 10),
-        const Text(
-          'We use this to personalize care; your age updates automatically.',
+        Text(
+          l10n.t('dobPersonalizationNote'),
           textAlign: TextAlign.center,
-          style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+          style: const TextStyle(color: _subtext, fontSize: 15, height: 1.35),
         ),
         const SizedBox(height: 28),
         DateSelectField(
@@ -343,73 +406,81 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
           onTap: _pickBirthDate,
           trailing: Padding(
             padding: const EdgeInsets.only(right: 4),
-            child: _MicButton(onPressed: () => _voiceFieldHint('date of birth')),
+            child: _MicButton(
+              onPressed: _dictateBirthDate,
+              listening: _fieldSpeech.isCallbackListening,
+            ),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildEmailStep() {
+  Widget _buildEmailStep(AppLocalizations l10n) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'Your Email',
+        Text(
+          l10n.t('yourEmail'),
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 24,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 10),
-        const Text(
-          'Used for account security and health notifications.',
+        Text(
+          l10n.t('usedForAccountSecurity'),
           textAlign: TextAlign.center,
-          style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+          style: const TextStyle(color: _subtext, fontSize: 15, height: 1.35),
         ),
         const SizedBox(height: 28),
         _DarkLabeledField(
           controller: _emailController,
-          hintText: 'name@example.com',
+          hintText: l10n.t('emailHint'),
           prefixIcon: Icons.mail_outline,
           keyboardType: TextInputType.emailAddress,
           autofillHints: const [AutofillHints.email],
-          onMic: () => _voiceFieldHint('email'),
+          onMic: () => _dictateTo(
+            _emailController,
+            listenMode: ListenMode.search,
+          ),
+          micListening: _fieldSpeech.isListeningFor(_emailController),
         ),
       ],
     );
   }
 
-  Widget _buildPasswordStep() {
+  Widget _buildPasswordStep(AppLocalizations l10n) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'Secure Your Account',
+        Text(
+          l10n.t('secureYourAccount'),
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 24,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 10),
-        const Text(
-          'Create a strong password for your health data.',
+        Text(
+          l10n.t('createStrongPasswordNote'),
           textAlign: TextAlign.center,
-          style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+          style: const TextStyle(color: _subtext, fontSize: 15, height: 1.35),
         ),
         const SizedBox(height: 28),
         _DarkLabeledField(
           controller: _passwordController,
-          hintText: 'Create password',
+          hintText: l10n.t('createPassword'),
           prefixIcon: Icons.lock_outline,
           obscureText: true,
           autofillHints: const [AutofillHints.newPassword],
           onChanged: (_) => setState(() {}),
-          onMic: () => _voiceFieldHint('password'),
+          onMic: () => _dictateTo(_passwordController),
+          micListening: _fieldSpeech.isListeningFor(_passwordController),
         ),
         const SizedBox(height: 14),
         _PasswordRequirement(
@@ -435,18 +506,19 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
         const SizedBox(height: 20),
         _PrivacyNotice(
           accent: _accent,
+          privacyPolicyLabel: l10n.t('privacyPolicy'),
           onPrivacyTap: () {
             showDialog<void>(
               context: context,
-              builder: (context) => AlertDialog(
+              builder: (dialogContext) => AlertDialog(
                 backgroundColor: const Color(0xFF1E1E1E),
-                title: const Text(
-                  'Privacy Policy',
-                  style: TextStyle(color: Colors.white),
+                title: Text(
+                  l10n.t('privacyPolicy'),
+                  style: const TextStyle(color: Colors.white),
                 ),
-                content: const SingleChildScrollView(
+                content: SingleChildScrollView(
                   child: Text(
-                    'Aura Guide Privacy Policy\n\n'
+                    '${l10n.t('privacyPolicyBody')}\n\n'
                     '1. Information We Collect\n'
                     '- Account details (name, email, date of birth).\n'
                     '- Accessibility preferences you provide.\n'
@@ -464,13 +536,13 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
                     '- You may request account deletion and data removal.\n\n'
                     '5. Consent\n'
                     'By creating an account, you consent to this processing for service delivery.',
-                    style: TextStyle(color: _subtext, height: 1.45),
+                    style: const TextStyle(color: _subtext, height: 1.45),
                   ),
                 ),
                 actions: [
                   TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Close'),
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: Text(l10n.t('close')),
                   ),
                 ],
               ),
@@ -482,6 +554,7 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
   }
 
   Widget _buildContinueButton() {
+    final l10n = context.l10n;
     return FilledButton(
       onPressed: _submitting ? null : _onContinue,
       style: FilledButton.styleFrom(
@@ -501,9 +574,9 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
                 color: Colors.black,
               ),
             )
-          : const Text(
-              'Continue',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          : Text(
+              l10n.t('continueLabel'),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
     );
   }
@@ -548,6 +621,7 @@ class _DarkLabeledField extends StatelessWidget {
     required this.hintText,
     required this.prefixIcon,
     required this.onMic,
+    this.micListening = false,
     this.keyboardType,
     this.obscureText = false,
     this.autofillHints,
@@ -558,6 +632,7 @@ class _DarkLabeledField extends StatelessWidget {
   final String hintText;
   final IconData prefixIcon;
   final VoidCallback onMic;
+  final bool micListening;
   final TextInputType? keyboardType;
   final bool obscureText;
   final Iterable<String>? autofillHints;
@@ -587,6 +662,7 @@ class _DarkLabeledField extends StatelessWidget {
           padding: const EdgeInsets.only(right: 10),
           child: _MicButton(
             onPressed: onMic,
+            listening: micListening,
           ),
         ),
         suffixIconConstraints: const BoxConstraints(minHeight: 48, minWidth: 52),
@@ -605,26 +681,20 @@ class _DarkLabeledField extends StatelessWidget {
 }
 
 class _MicButton extends StatelessWidget {
-  const _MicButton({required this.onPressed});
+  const _MicButton({
+    required this.onPressed,
+    this.listening = false,
+  });
 
   final VoidCallback onPressed;
-
-  static const Color _micFill = Color(0xFF1D7278);
+  final bool listening;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: _micFill,
-      shape: const CircleBorder(),
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onPressed,
-        child: const SizedBox(
-          width: 40,
-          height: 40,
-          child: Icon(Icons.mic, color: Colors.white, size: 20),
-        ),
-      ),
+    return ListeningMicButton(
+      listening: listening,
+      onPressed: onPressed,
+      size: 40,
     );
   }
 }
@@ -666,9 +736,14 @@ class _PasswordRequirement extends StatelessWidget {
 }
 
 class _PrivacyNotice extends StatelessWidget {
-  const _PrivacyNotice({required this.accent, required this.onPrivacyTap});
+  const _PrivacyNotice({
+    required this.accent,
+    required this.privacyPolicyLabel,
+    required this.onPrivacyTap,
+  });
 
   final Color accent;
+  final String privacyPolicyLabel;
   final VoidCallback onPrivacyTap;
 
   static const Color _subtext = Color(0xFFB0B0B0);
@@ -699,7 +774,7 @@ class _PrivacyNotice extends StatelessWidget {
               child: GestureDetector(
                 onTap: onPrivacyTap,
                 child: Text(
-                  'Privacy Policy',
+                  privacyPolicyLabel,
                   style: TextStyle(
                     color: accent,
                     decoration: TextDecoration.underline,

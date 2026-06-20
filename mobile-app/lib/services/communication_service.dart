@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -10,6 +12,8 @@ import '../models/message_entity.dart';
 import '../models/staff_option.dart';
 import '../utils/chat_time_format.dart';
 import '../utils/clinic_datetime.dart';
+import '../utils/localized_doctor_name.dart';
+import 'app_settings_service.dart';
 import 'healthcare_staff_service.dart';
 import 'user_profile_service.dart';
 
@@ -152,6 +156,7 @@ class CommunicationService {
       'senderId': message.senderId,
       'receiverId': message.receiverId,
       'callDuration': message.callDuration,
+      'callDurationSeconds': message.callDurationSeconds,
       'deliveredAt': message.deliveredAt,
       'readAt': message.readAt,
       'hiddenFor': message.hiddenFor,
@@ -165,6 +170,7 @@ class CommunicationService {
     Map<String, dynamic> message,
     String patientId,
   ) {
+    if (message['deletedForEveryone'] == true) return false;
     final hiddenFor = message['hiddenFor'];
     if (hiddenFor is List && hiddenFor.map((e) => e.toString()).contains(patientId)) {
       return false;
@@ -184,10 +190,11 @@ class CommunicationService {
     if (staff == null) return staffId;
     final name = (staff['name'] as String?)?.trim() ?? staffId;
     final role = HealthcareStaffService.categoryFromData(staff);
-    if (role == HealthcareStaffService.roleDoctor && !name.startsWith('Dr.')) {
-      return 'Dr. $name';
-    }
-    return name;
+    return LocalizedDoctorName.format(
+      name,
+      AppSettingsService.instance.settings.languageCode,
+      isDoctor: role == HealthcareStaffService.roleDoctor,
+    );
   }
 
   String _initials(String name) {
@@ -280,6 +287,7 @@ class CommunicationService {
 
   Future<Map<String, Map<String, dynamic>>> _latestMessageByConversation(
     List<String> conversationIds,
+    String patientId,
   ) async {
     final latest = <String, Map<String, dynamic>>{};
     for (final conversationId in conversationIds) {
@@ -292,8 +300,10 @@ class CommunicationService {
       for (final doc in snap.docs) {
         final entity = _parseMessageDoc(doc);
         if (entity == null) continue;
-        if (entity.messageType.toLowerCase() != 'text') continue;
+        final type = entity.messageType.toLowerCase();
+        if (!_isDisplayableMessageType(type)) continue;
         final map = _messageToRenderMap(entity);
+        if (!_isMessageVisibleForPatient(map, patientId)) continue;
         final ms = _timestampMs(map['timestamp']);
         if (ms >= bestMs) {
           bestMs = ms;
@@ -303,6 +313,36 @@ class CommunicationService {
       if (best != null) latest[conversationId] = best;
     }
     return latest;
+  }
+
+  bool _isDisplayableMessageType(String type) {
+    return type == 'text' ||
+        type == 'voice' ||
+        type == 'call' ||
+        type == 'photo' ||
+        type == 'video' ||
+        type == 'document';
+  }
+
+  String _previewTextForMessage(Map<String, dynamic> message) {
+    final type = (message['messageType'] as String).toLowerCase();
+    switch (type) {
+      case 'voice':
+        final media = _parseVoiceMessageContent(message['content']);
+        final durationSeconds = _voiceDurationSeconds(message, media);
+        return _formatVoiceMessageLabel(durationSeconds);
+      case 'call':
+        return _formatCallMessageText(message);
+      case 'photo':
+        return 'Photo';
+      case 'video':
+        return 'Video';
+      case 'document':
+        return 'Document';
+      default:
+        final content = (message['content'] as String?)?.trim() ?? '';
+        return content.isEmpty ? 'Message' : content;
+    }
   }
 
   ConversationThread? _threadFromConversation({
@@ -327,14 +367,14 @@ class CommunicationService {
 
     final previewFromConversation =
         conversation['preview'] as String?;
-    final preview = previewFromConversation?.isNotEmpty == true
-        ? previewFromConversation!
-        : latestMessage != null
-            ? (latestMessage['content'] as String)
+    final preview = latestMessage != null
+        ? _previewTextForMessage(latestMessage)
+        : previewFromConversation?.isNotEmpty == true
+            ? previewFromConversation!
             : 'No messages yet';
 
-    final ts = conversation['previewTime'] ??
-        latestMessage?['timestamp'] ??
+    final ts = latestMessage?['timestamp'] ??
+        conversation['previewTime'] ??
         conversation['createdAt'];
     final lastMs = _timestampMs(ts);
 
@@ -369,17 +409,13 @@ class CommunicationService {
     if (conversations.isEmpty) return [];
 
     final staffLookup = await _staffLookup();
-    final needsMessageLookup = <String>[];
-    for (final conversation in conversations) {
-      final preview = conversation['preview'] as String?;
-      if (preview == null || preview.isEmpty) {
-        needsMessageLookup.add(conversation['conversationId'] as String);
-      }
-    }
-
-    final latestByConversation = needsMessageLookup.isEmpty
-        ? <String, Map<String, dynamic>>{}
-        : await _latestMessageByConversation(needsMessageLookup);
+    final conversationIds = conversations
+        .map((conversation) => conversation['conversationId'] as String)
+        .toList();
+    final latestByConversation = await _latestMessageByConversation(
+      conversationIds,
+      patientId,
+    );
 
     final threads = <ConversationThread>[];
     for (final conversation in conversations) {
@@ -498,8 +534,11 @@ class CommunicationService {
     List<Map<String, dynamic>> messages,
     String patientId,
   ) {
-    final textMessages = messages
-        .where((m) => (m['messageType'] as String).toLowerCase() == 'text')
+    final displayMessages = messages
+        .where((m) {
+          final type = (m['messageType'] as String).toLowerCase();
+          return type == 'text' || type == 'call' || type == 'voice';
+        })
         .where((m) => _isMessageVisibleForPatient(m, patientId))
         .toList()
       ..sort(
@@ -510,7 +549,7 @@ class CommunicationService {
 
     final items = <ChatListItem>[];
     String? lastDivider;
-    for (final message in textMessages) {
+    for (final message in displayMessages) {
       final divider = ChatTimeFormat.dividerLabel(message['timestamp']);
       if (divider != lastDivider) {
         items.add(ChatListItem.divider(label: divider));
@@ -518,6 +557,43 @@ class CommunicationService {
       }
       final isOutgoing = message['senderId'] == patientId;
       final clock = ChatTimeFormat.messageClock(message['timestamp']);
+      final type = (message['messageType'] as String).toLowerCase();
+      if (type == 'call') {
+        final text = _formatCallMessageText(message);
+        if (isOutgoing) {
+          items.add(ChatListItem.outgoing(text: text, time: clock));
+        } else {
+          items.add(ChatListItem.incoming(text: text, time: clock));
+        }
+        continue;
+      }
+
+      if (type == 'voice') {
+        final media = _parseVoiceMessageContent(message['content']);
+        final durationSeconds = _voiceDurationSeconds(message, media);
+        final label = _formatVoiceMessageLabel(durationSeconds);
+        if (isOutgoing) {
+          items.add(
+            ChatListItem.outgoingVoice(
+              label: label,
+              voiceUrl: media?.url,
+              durationSeconds: durationSeconds,
+              time: clock,
+            ),
+          );
+        } else {
+          items.add(
+            ChatListItem.incomingVoice(
+              label: label,
+              voiceUrl: media?.url,
+              durationSeconds: durationSeconds,
+              time: clock,
+            ),
+          );
+        }
+        continue;
+      }
+
       final deleted = message['deletedForEveryone'] == true;
       final replyPreview = (message['replyPreview'] as String?)?.trim();
       final forwarded =
@@ -538,6 +614,29 @@ class CommunicationService {
       }
     }
     return items;
+  }
+
+  String _formatCallDurationLabel(int totalSeconds) {
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  String _formatCallMessageText(Map<String, dynamic> message) {
+    final content = (message['content'] as String?)?.trim() ?? '';
+    if (content.isNotEmpty) return content;
+
+    final rawSeconds = message['callDurationSeconds'];
+    final seconds = rawSeconds is num ? rawSeconds.toInt() : 0;
+    if (seconds > 0) {
+      return 'Voice call · ${_formatCallDurationLabel(seconds)}';
+    }
+
+    final duration = message['callDuration'];
+    if (duration is num && duration > 0) {
+      return 'Voice call · ${duration.toInt()} min';
+    }
+    return 'Voice call';
   }
 
   Stream<List<ChatListItem>> watchMessages({
@@ -799,6 +898,169 @@ class CommunicationService {
     return persistMessage(message);
   }
 
+  static const _inlineVoiceMaxBytes = 900000;
+
+  Future<String> sendVoiceMessage({
+    required String conversationId,
+    required String staffId,
+    required Uint8List audioBytes,
+    required String mimeType,
+    required String fileName,
+    required int durationSeconds,
+  }) async {
+    final patientId = await _patientUserId();
+    if (patientId == null) {
+      throw StateError('Patient profile not found.');
+    }
+    if (audioBytes.isEmpty) {
+      throw StateError('Recording is empty.');
+    }
+    if (audioBytes.length > _inlineVoiceMaxBytes) {
+      throw StateError('Voice message is too long.');
+    }
+
+    final base64Audio = base64Encode(audioBytes);
+    final fileData = 'data:$mimeType;base64,$base64Audio';
+    final content = jsonEncode({
+      'fileData': fileData,
+      'fileName': fileName,
+      'mimeType': mimeType,
+      'durationSeconds': durationSeconds.clamp(0, 600),
+    });
+
+    final messageId = await _reserveMessageId();
+    final message = MessageEntity(
+      messageId: messageId,
+      conversationId: conversationId.trim(),
+      messageType: MessageEntity.messageTypeVoice,
+      content: content,
+      timestamp: FieldValue.serverTimestamp(),
+      deliveryStatus: MessageEntity.deliverySent,
+      senderId: patientId,
+      receiverId: staffId.trim(),
+      callDuration: durationSeconds > 0
+          ? (durationSeconds / 60).ceil().clamp(1, 9999)
+          : null,
+      callDurationSeconds: durationSeconds > 0 ? durationSeconds : null,
+    );
+
+    return persistMessage(message);
+  }
+
+  _ParsedVoiceMedia? _parseVoiceMessageContent(dynamic rawContent) {
+    final raw = rawContent?.toString().trim() ?? '';
+    if (raw.isEmpty) return null;
+    try {
+      final parsed = jsonDecode(raw);
+      if (parsed is! Map) return null;
+      final fileData = parsed['fileData']?.toString().trim();
+      if (fileData != null && fileData.isNotEmpty) {
+        return _ParsedVoiceMedia(
+          url: fileData,
+          fileName: parsed['fileName']?.toString() ?? 'Voice message',
+          mimeType: parsed['mimeType']?.toString() ?? '',
+        );
+      }
+      final url = parsed['url']?.toString().trim();
+      if (url != null && url.isNotEmpty) {
+        return _ParsedVoiceMedia(
+          url: url,
+          fileName: parsed['fileName']?.toString() ?? 'Voice message',
+          mimeType: parsed['mimeType']?.toString() ?? '',
+        );
+      }
+    } catch (_) {
+      if (raw.startsWith('data:') || raw.startsWith('http')) {
+        return _ParsedVoiceMedia(url: raw, fileName: 'Voice message', mimeType: '');
+      }
+    }
+    return null;
+  }
+
+  int _voiceDurationSeconds(
+    Map<String, dynamic> message,
+    _ParsedVoiceMedia? media,
+  ) {
+    final rawContent = message['content']?.toString() ?? '';
+    try {
+      final parsed = jsonDecode(rawContent);
+      if (parsed is Map) {
+        final fromContent = parsed['durationSeconds'];
+        if (fromContent is num) return fromContent.toInt().clamp(0, 600);
+      }
+    } catch (_) {}
+
+    final rawSeconds = message['callDurationSeconds'];
+    if (rawSeconds is num) return rawSeconds.toInt().clamp(0, 600);
+
+    final duration = message['callDuration'];
+    if (duration is num && duration > 0) {
+      return (duration * 60).round().clamp(0, 600);
+    }
+    return 0;
+  }
+
+  String _formatVoiceMessageLabel(int durationSeconds) {
+    if (durationSeconds <= 0) return 'Voice message';
+    return 'Voice message · ${_formatCallDurationLabel(durationSeconds)}';
+  }
+
+  Future<String> sendCallMessage({
+    required String conversationId,
+    required String staffId,
+    required int durationSeconds,
+    required String status,
+  }) async {
+    final patientId = await _patientUserId();
+    if (patientId == null) {
+      throw StateError('Patient profile not found.');
+    }
+
+    final connectedSeconds = durationSeconds.clamp(0, 86400);
+    final content = _buildCallMessageContent(connectedSeconds, status);
+    final callDuration = connectedSeconds > 0
+        ? (connectedSeconds / 60).ceil().clamp(1, 9999)
+        : null;
+
+    final messageId = await _reserveMessageId();
+    final message = MessageEntity(
+      messageId: messageId,
+      conversationId: conversationId.trim(),
+      messageType: MessageEntity.messageTypeCall,
+      content: content,
+      timestamp: FieldValue.serverTimestamp(),
+      deliveryStatus: MessageEntity.deliverySent,
+      senderId: patientId,
+      receiverId: staffId.trim(),
+      callDuration: callDuration,
+      callDurationSeconds: connectedSeconds > 0 ? connectedSeconds : null,
+    );
+
+    return persistMessage(message);
+  }
+
+  String _buildCallMessageContent(int connectedSeconds, String status) {
+    if (status == 'unanswered' || status == 'missed') {
+      return 'Voice call · Not answered';
+    }
+    if (status == 'declined') {
+      return 'Voice call · Declined';
+    }
+    if (connectedSeconds > 0) {
+      return 'Voice call · ${_formatCallDurationLabel(connectedSeconds)}';
+    }
+    return 'Voice call';
+  }
+
+  Future<String?> currentPatientUserId() => _patientUserId();
+
+  Future<String> resolveStaffDisplayName(String staffId) async {
+    final trimmed = staffId.trim();
+    if (trimmed.isEmpty) return staffId;
+    final lookup = await _staffLookup();
+    return _staffDisplayName(lookup[trimmed], trimmed);
+  }
+
   Future<List<StaffOption>> fetchCallableStaff() async {
     final grouped = await _staffService.fetchGroupedByRole();
     final doctors = grouped[HealthcareStaffService.roleDoctor] ?? [];
@@ -817,4 +1079,16 @@ class CommunicationService {
   /// Unread conversations for the main menu Communication tile subtitle.
   Stream<int> watchUnreadMessageCount() =>
       watchThreads().map(countUnread);
+}
+
+class _ParsedVoiceMedia {
+  const _ParsedVoiceMedia({
+    required this.url,
+    required this.fileName,
+    required this.mimeType,
+  });
+
+  final String url;
+  final String fileName;
+  final String mimeType;
 }

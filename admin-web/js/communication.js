@@ -16,13 +16,20 @@ import {
   subscribeMessagesForConversation,
   sendMediaMessage,
   sendTextMessage,
+  sendCallMessage,
 } from "./communication-service.js";
+import { VoiceCallController, subscribeStaffIncomingCalls } from "./voice-call-service.js";
+import { CallRingtone } from "./call-ringtone.js";
 import { releaseFirestoreListener } from "./firestore-realtime.js";
 
 let chatThreads = [];
 let activeThreadId = null;
 let chatFilter = "all";
 let searchQuery = "";
+let conversationSearchQuery = "";
+let conversationSearchOpen = false;
+let calendarViewYear = new Date().getFullYear();
+let calendarViewMonth = new Date().getMonth();
 let loggedInStaffId = "";
 let isLoadingThreads = false;
 let isLoadingMessages = false;
@@ -44,10 +51,44 @@ let forcedActiveThreadId = null;
 
 const threadListEl = document.getElementById("chat-thread-list");
 const messagesEl = document.getElementById("chat-messages");
+const scrollBottomBtnEl = document.getElementById("btn-chat-scroll-bottom");
 const panelHeaderEl = document.querySelector(".communication-panel-header");
 const activeNameEl = document.getElementById("active-chat-name");
 const activeAvatarEl = document.getElementById("active-chat-avatar");
 const searchEl = document.getElementById("chat-search");
+const conversationSearchEl = document.getElementById("chat-conversation-search");
+const conversationSearchInputEl = document.getElementById("chat-conversation-search-input");
+const conversationSearchCloseBtn = document.getElementById("chat-conversation-search-close");
+const conversationSearchBtnEl = document.getElementById("btn-chat-search");
+const calendarModalEl = document.getElementById("chat-calendar-modal");
+const calendarCloseBtn = document.getElementById("chat-calendar-close");
+const calendarPrevBtn = document.getElementById("chat-calendar-prev");
+const calendarNextBtn = document.getElementById("chat-calendar-next");
+const calendarMonthLabelEl = document.getElementById("chat-calendar-month-label");
+const calendarGridEl = document.getElementById("chat-calendar-grid");
+const calendarBtnEl = document.getElementById("btn-chat-calendar");
+const callModalEl = document.getElementById("chat-call-modal");
+const callCloseBtn = document.getElementById("chat-call-close");
+const callCancelBtn = document.getElementById("chat-call-cancel");
+const callStartBtn = document.getElementById("chat-call-start");
+const callAvatarEl = document.getElementById("chat-call-avatar");
+const callNameEl = document.getElementById("chat-call-name");
+const callPatientIdEl = document.getElementById("chat-call-patient-id");
+const callErrorEl = document.getElementById("chat-call-error");
+const voiceCallOverlayEl = document.getElementById("chat-voice-call-overlay");
+const voiceCallAvatarEl = document.getElementById("chat-voice-call-avatar");
+const voiceCallNameEl = document.getElementById("chat-voice-call-name");
+const voiceCallStatusEl = document.getElementById("chat-voice-call-status");
+const voiceCallTimerEl = document.getElementById("chat-voice-call-timer");
+const voiceCallMuteBtn = document.getElementById("chat-voice-call-mute");
+const voiceCallEndBtn = document.getElementById("chat-voice-call-end");
+const voiceCallRemoteAudioEl = document.getElementById("chat-voice-call-remote-audio");
+const incomingCallModalEl = document.getElementById("chat-incoming-call-modal");
+const incomingCallAvatarEl = document.getElementById("chat-incoming-call-avatar");
+const incomingCallTitleEl = document.getElementById("chat-incoming-call-title");
+const incomingCallHintEl = document.getElementById("chat-incoming-call-hint");
+const incomingCallAcceptBtn = document.getElementById("chat-incoming-call-accept");
+const incomingCallDeclineBtn = document.getElementById("chat-incoming-call-decline");
 const composeFormEl = document.getElementById("chat-compose-form");
 const composeInputEl = document.getElementById("chat-compose-input");
 const attachBtnEl = document.getElementById("btn-chat-attach");
@@ -114,6 +155,13 @@ let pendingForwardMessageIds = [];
 let pendingDeleteMessageIds = [];
 let selectedForwardPatientIds = new Set();
 let isMessageActionBusy = false;
+let voiceCallController = null;
+let voiceCallTimerInterval = null;
+let activeVoiceCallThread = null;
+let callRingtone = null;
+let staffInitiatedCall = false;
+let pendingIncomingCall = null;
+let unsubscribeIncomingCalls = null;
 
 function syncConversationPanelVisibility(thread) {
   const hasActiveThread = Boolean(thread);
@@ -122,6 +170,36 @@ function syncConversationPanelVisibility(thread) {
   composeFormEl.hidden = !hasActiveThread || inSelection;
   selectionToolbarEl.hidden = !inSelection;
   replyStripEl.hidden = !replyTarget || inSelection;
+  updateScrollToBottomButton();
+}
+
+function isNearMessagesBottom(element, threshold = 64) {
+  if (!element) return true;
+  const distance =
+    element.scrollHeight - element.scrollTop - element.clientHeight;
+  return distance <= threshold;
+}
+
+function conversationHasScrollableMessages() {
+  return Boolean(messagesEl.querySelector("[data-message-row]"));
+}
+
+function updateScrollToBottomButton() {
+  if (!scrollBottomBtnEl) return;
+  const shouldShow =
+    Boolean(activeThreadId) &&
+    !selectionMode &&
+    conversationHasScrollableMessages() &&
+    !isNearMessagesBottom(messagesEl);
+  scrollBottomBtnEl.hidden = !shouldShow;
+}
+
+function scrollMessagesToBottom({ smooth = true } = {}) {
+  if (!messagesEl) return;
+  messagesEl.scrollTo({
+    top: messagesEl.scrollHeight,
+    behavior: smooth ? "smooth" : "auto",
+  });
 }
 
 function syncBodyModalLock() {
@@ -131,7 +209,10 @@ function syncBodyModalLock() {
     !photoPreviewModalEl.hidden ||
     !messageInfoModalEl.hidden ||
     !forwardMessageModalEl.hidden ||
-    !deleteMessageModalEl.hidden;
+    !deleteMessageModalEl.hidden ||
+    (calendarModalEl && !calendarModalEl.hidden) ||
+    (callModalEl && !callModalEl.hidden) ||
+    (incomingCallModalEl && !incomingCallModalEl.hidden);
   document.body.classList.toggle("modal-open", anyOpen);
 }
 
@@ -139,6 +220,26 @@ function getMessageItemById(messageId) {
   const thread = getThreadById(activeThreadId);
   if (!thread?.messages) return null;
   return thread.messages.find((item) => item.messageId === messageId) || null;
+}
+
+function sortMessageIdsByConversationOrder(messageIds) {
+  const idSet = new Set((messageIds || []).filter(Boolean));
+  if (idSet.size === 0) return [];
+
+  const thread = getThreadById(activeThreadId);
+  if (!thread?.messages?.length) return [...idSet];
+
+  const ordered = [];
+  for (const item of thread.messages) {
+    if (item.type === "divider" || !item.messageId) continue;
+    if (idSet.has(item.messageId)) ordered.push(item.messageId);
+  }
+
+  for (const id of idSet) {
+    if (!ordered.includes(id)) ordered.push(id);
+  }
+
+  return ordered;
 }
 
 function closeAllMessageMenus() {
@@ -179,7 +280,7 @@ function enterSelectionMode(messageId) {
   updateSelectionToolbar();
   const thread = getThreadById(activeThreadId);
   syncConversationPanelVisibility(thread);
-  renderMessages(thread);
+  renderMessages(thread, { preserveScroll: true });
 }
 
 function exitSelectionMode() {
@@ -187,7 +288,7 @@ function exitSelectionMode() {
   selectedMessageIds = new Set();
   const thread = getThreadById(activeThreadId);
   syncConversationPanelVisibility(thread);
-  renderMessages(thread);
+  renderMessages(thread, { preserveScroll: true });
 }
 
 function toggleMessageSelection(messageId) {
@@ -203,7 +304,7 @@ function toggleMessageSelection(messageId) {
   }
   updateSelectionToolbar();
   const thread = getThreadById(activeThreadId);
-  renderMessages(thread);
+  renderMessages(thread, { preserveScroll: true });
 }
 
 function setReplyTarget(item) {
@@ -254,7 +355,7 @@ function closeMessageInfoModal() {
 }
 
 async function openForwardModal(messageIds) {
-  const ids = [...new Set((messageIds || []).filter(Boolean))];
+  const ids = sortMessageIdsByConversationOrder(messageIds);
   if (ids.length === 0) return;
   pendingForwardMessageIds = ids;
   selectedForwardPatientIds = new Set();
@@ -302,7 +403,7 @@ function closeForwardModal() {
 }
 
 function openDeleteModal(messageIds) {
-  const ids = [...new Set((messageIds || []).filter(Boolean))];
+  const ids = sortMessageIdsByConversationOrder(messageIds);
   if (ids.length === 0) return;
   pendingDeleteMessageIds = ids;
   deleteMessageModalEl.hidden = false;
@@ -316,7 +417,7 @@ function closeDeleteModal() {
 }
 
 async function copySelectedMessages() {
-  const items = [...selectedMessageIds]
+  const items = sortMessageIdsByConversationOrder([...selectedMessageIds])
     .map((id) => getMessageItemById(id))
     .filter((item) => item && !item.isDeleted);
   if (items.length === 0) return;
@@ -609,6 +710,578 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;");
 }
 
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getConversationSearchTerms(query) {
+  return String(query || "")
+    .trim()
+    .split(/\s+/)
+    .filter((term) => term.length > 0);
+}
+
+function highlightSearchText(text, query = conversationSearchQuery) {
+  const raw = String(text ?? "");
+  const terms = getConversationSearchTerms(query);
+  if (terms.length === 0) return escapeHtml(raw);
+
+  const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
+  const parts = raw.split(pattern);
+  return parts
+    .map((part) => {
+      if (!part) return "";
+      const isMatch = terms.some(
+        (term) => part.toLowerCase() === term.toLowerCase(),
+      );
+      const safe = escapeHtml(part);
+      return isMatch
+        ? `<mark class="chat-search-highlight">${safe}</mark>`
+        : safe;
+    })
+    .join("");
+}
+
+function syncConversationSearchUi() {
+  if (!conversationSearchEl || !conversationSearchBtnEl) return;
+  conversationSearchEl.hidden = !conversationSearchOpen;
+  conversationSearchBtnEl.classList.toggle("is-active", conversationSearchOpen);
+  conversationSearchBtnEl.setAttribute(
+    "aria-expanded",
+    conversationSearchOpen ? "true" : "false",
+  );
+}
+
+function openConversationSearch() {
+  if (!activeThreadId) return;
+  conversationSearchOpen = true;
+  syncConversationSearchUi();
+  conversationSearchInputEl?.focus();
+}
+
+function closeConversationSearch({ rerender = true } = {}) {
+  conversationSearchOpen = false;
+  conversationSearchQuery = "";
+  if (conversationSearchInputEl) conversationSearchInputEl.value = "";
+  syncConversationSearchUi();
+  if (!rerender) return;
+  const thread = getThreadById(activeThreadId);
+  if (thread) renderMessages(thread, { preserveScroll: true });
+}
+
+function scrollToFirstSearchHighlight() {
+  if (!conversationSearchQuery.trim()) return;
+  const firstMatch = messagesEl.querySelector(".chat-search-highlight");
+  if (!firstMatch) return;
+  firstMatch.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+function getConversationMessageDateKeys(thread = getThreadById(activeThreadId)) {
+  const dates = new Set();
+  for (const item of thread?.messages || []) {
+    if (item.type === "divider" || !item.dateKey) continue;
+    dates.add(item.dateKey);
+  }
+  return dates;
+}
+
+function getConversationDateBounds(thread = getThreadById(activeThreadId)) {
+  const keys = [...getConversationMessageDateKeys(thread)].sort();
+  if (keys.length === 0) return null;
+  const [minYear, minMonth] = keys[0].split("-").map(Number);
+  const [maxYear, maxMonth] = keys[keys.length - 1].split("-").map(Number);
+  return {
+    minYear,
+    minMonth: minMonth - 1,
+    maxYear,
+    maxMonth: maxMonth - 1,
+  };
+}
+
+function formatCalendarMonthLabel(year, month) {
+  return new Date(year, month, 1).toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function buildDateKey(year, month, day) {
+  return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function getTodayDateKey() {
+  const now = new Date();
+  return buildDateKey(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+function setCalendarViewMonth(year, month) {
+  calendarViewYear = year;
+  calendarViewMonth = month;
+  renderConversationCalendar();
+}
+
+function renderConversationCalendar() {
+  if (!calendarGridEl || !calendarMonthLabelEl) return;
+
+  const thread = getThreadById(activeThreadId);
+  const messageDates = getConversationMessageDateKeys(thread);
+  const bounds = getConversationDateBounds(thread);
+  const todayKey = getTodayDateKey();
+
+  calendarMonthLabelEl.textContent = formatCalendarMonthLabel(
+    calendarViewYear,
+    calendarViewMonth,
+  );
+
+  if (calendarPrevBtn) {
+    calendarPrevBtn.disabled = !bounds
+      || (calendarViewYear === bounds.minYear && calendarViewMonth <= bounds.minMonth);
+  }
+  if (calendarNextBtn) {
+    calendarNextBtn.disabled = !bounds
+      || (calendarViewYear === bounds.maxYear && calendarViewMonth >= bounds.maxMonth);
+  }
+
+  const firstOfMonth = new Date(calendarViewYear, calendarViewMonth, 1);
+  const startOffset = firstOfMonth.getDay();
+  const daysInMonth = new Date(calendarViewYear, calendarViewMonth + 1, 0).getDate();
+  const cells = [];
+
+  for (let i = 0; i < startOffset; i += 1) {
+    cells.push({ outside: true, day: 0, dateKey: "" });
+  }
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const dateKey = buildDateKey(calendarViewYear, calendarViewMonth, day);
+    cells.push({
+      outside: false,
+      day,
+      dateKey,
+      hasMessages: messageDates.has(dateKey),
+      isToday: dateKey === todayKey,
+    });
+  }
+  while (cells.length % 7 !== 0) {
+    cells.push({ outside: true, day: 0, dateKey: "" });
+  }
+
+  calendarGridEl.innerHTML = cells
+    .map((cell) => {
+      if (cell.outside) {
+        return '<span class="chat-calendar-day is-outside" aria-hidden="true"></span>';
+      }
+      const classes = ["chat-calendar-day"];
+      if (cell.hasMessages) classes.push("has-messages");
+      if (cell.isToday) classes.push("is-today");
+      const disabled = cell.hasMessages ? "" : " disabled";
+      const aria = cell.hasMessages
+        ? ` aria-label="Jump to messages on ${cell.day}"`
+        : ` aria-label="${cell.day}"`;
+      return `<button type="button" class="${classes.join(" ")}" data-calendar-date="${escapeHtml(cell.dateKey)}"${disabled}${aria}>${cell.day}</button>`;
+    })
+    .join("");
+}
+
+function scrollToFirstMessageOnDate(dateKey) {
+  if (!dateKey || !messagesEl) return false;
+
+  const divider = messagesEl.querySelector(`[data-divider-date="${dateKey}"]`);
+  if (divider) {
+    divider.scrollIntoView({ block: "start", behavior: "smooth" });
+    return true;
+  }
+
+  const row = messagesEl.querySelector(`[data-message-date="${dateKey}"]`);
+  if (!row) return false;
+
+  row.scrollIntoView({ block: "start", behavior: "smooth" });
+  return true;
+}
+
+function openConversationCalendarModal() {
+  if (!activeThreadId || !calendarModalEl) return;
+
+  const thread = getThreadById(activeThreadId);
+  if (getConversationMessageDateKeys(thread).size === 0) {
+    window.alert("No messages in this conversation yet.");
+    return;
+  }
+
+  const anchorKey = [...getConversationMessageDateKeys(thread)].sort().pop();
+  if (anchorKey) {
+    const [year, month] = anchorKey.split("-").map(Number);
+    calendarViewYear = year;
+    calendarViewMonth = month - 1;
+  } else {
+    const now = new Date();
+    calendarViewYear = now.getFullYear();
+    calendarViewMonth = now.getMonth();
+  }
+
+  renderConversationCalendar();
+  calendarModalEl.hidden = false;
+  calendarBtnEl?.classList.add("is-active");
+  syncBodyModalLock();
+}
+
+function closeConversationCalendarModal() {
+  if (!calendarModalEl) return;
+  calendarModalEl.hidden = true;
+  calendarBtnEl?.classList.remove("is-active");
+  syncBodyModalLock();
+}
+
+function handleCalendarDateSelect(dateKey) {
+  if (!dateKey) return;
+  closeConversationCalendarModal();
+  requestAnimationFrame(() => {
+    if (!scrollToFirstMessageOnDate(dateKey)) {
+      window.alert("No messages were found for the selected date.");
+    }
+  });
+}
+
+function formatCallTimer(totalSeconds) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function stopCallRingtone() {
+  if (callRingtone) {
+    callRingtone.stop();
+    callRingtone = null;
+  }
+}
+
+function startOutgoingCallRingtone() {
+  stopCallRingtone();
+  callRingtone = new CallRingtone("outgoing");
+  callRingtone.start();
+}
+
+function startIncomingCallRingtone() {
+  stopCallRingtone();
+  callRingtone = new CallRingtone("incoming");
+  callRingtone.start();
+}
+
+function setVoiceCallTimerVisible(visible) {
+  if (!voiceCallTimerEl) return;
+  voiceCallTimerEl.hidden = !visible;
+  if (!visible) voiceCallTimerEl.textContent = "00:00";
+}
+
+function setVoiceCallMuteVisible(visible) {
+  if (!voiceCallMuteBtn) return;
+  voiceCallMuteBtn.hidden = !visible;
+  if (!visible) {
+    voiceCallMuteBtn.classList.remove("is-muted");
+    const label = voiceCallMuteBtn.querySelector("span");
+    if (label) label.textContent = "Mute";
+  }
+}
+
+function stopVoiceCallTimer() {
+  if (voiceCallTimerInterval) {
+    clearInterval(voiceCallTimerInterval);
+    voiceCallTimerInterval = null;
+  }
+}
+
+function startVoiceCallTimer(startedAtMs) {
+  stopVoiceCallTimer();
+  setVoiceCallTimerVisible(true);
+  const update = () => {
+    const elapsed = Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
+    if (voiceCallTimerEl) voiceCallTimerEl.textContent = formatCallTimer(elapsed);
+  };
+  update();
+  voiceCallTimerInterval = setInterval(update, 1000);
+}
+
+function showVoiceCallOverlay(thread) {
+  if (!voiceCallOverlayEl || !thread) return;
+  activeVoiceCallThread = thread;
+  voiceCallNameEl.textContent = thread.name || thread.patientId;
+  voiceCallAvatarEl.textContent = getInitials(thread.name || thread.patientId);
+  voiceCallAvatarEl.className = `chat-voice-call-avatar chat-avatar chat-avatar--${thread.avatarColor || "teal"}`;
+  voiceCallStatusEl.textContent = "Connecting…";
+  setVoiceCallTimerVisible(false);
+  setVoiceCallMuteVisible(false);
+  voiceCallMuteBtn?.classList.remove("is-muted");
+  if (voiceCallMuteBtn) {
+    voiceCallMuteBtn.querySelector("span").textContent = "Mute";
+  }
+  voiceCallOverlayEl.hidden = false;
+}
+
+function hideVoiceCallOverlay() {
+  stopCallRingtone();
+  stopVoiceCallTimer();
+  setVoiceCallTimerVisible(false);
+  setVoiceCallMuteVisible(false);
+  if (voiceCallOverlayEl) voiceCallOverlayEl.hidden = true;
+  activeVoiceCallThread = null;
+}
+
+function getVoiceCallController() {
+  if (!voiceCallController) {
+    voiceCallController = new VoiceCallController();
+    voiceCallController.setRemoteAudioElement(voiceCallRemoteAudioEl);
+    voiceCallController.onStateChange = (payload) => {
+      void handleVoiceCallStateChange(payload);
+    };
+  }
+  return voiceCallController;
+}
+
+async function handleVoiceCallStateChange({ state, reason, durationSeconds, wasConnected }) {
+  if (state === "connecting") {
+    stopCallRingtone();
+    voiceCallStatusEl.textContent = "Connecting…";
+    setVoiceCallTimerVisible(false);
+    setVoiceCallMuteVisible(false);
+    return;
+  }
+  if (state === "ringing") {
+    voiceCallStatusEl.textContent = "Calling…";
+    setVoiceCallTimerVisible(false);
+    setVoiceCallMuteVisible(false);
+    startOutgoingCallRingtone();
+    return;
+  }
+  if (state === "connected") {
+    stopCallRingtone();
+    voiceCallStatusEl.textContent = "Connected";
+    setVoiceCallMuteVisible(true);
+    const startedAtMs = voiceCallController?.connectedAt || Date.now();
+    startVoiceCallTimer(startedAtMs);
+    return;
+  }
+  if (state === "ended") {
+    stopCallRingtone();
+    const thread = activeVoiceCallThread || getThreadById(activeThreadId);
+    hideVoiceCallOverlay();
+    hideIncomingCallModal();
+    if (callStartBtn) callStartBtn.disabled = false;
+    const shouldLogCall = staffInitiatedCall;
+    staffInitiatedCall = false;
+    pendingIncomingCall = null;
+    if (thread && shouldLogCall) {
+      try {
+        let callStatus = "completed";
+        if (reason === "unanswered") callStatus = "unanswered";
+        else if (reason === "missed") callStatus = "missed";
+        else if (reason === "declined") callStatus = "declined";
+        else if (!wasConnected) callStatus = "unanswered";
+
+        await sendCallMessage({
+          conversationId: thread.conversationId,
+          staffId: loggedInStaffId,
+          patientId: thread.patientId,
+          durationSeconds: wasConnected ? durationSeconds : 0,
+          status: callStatus,
+        });
+      } catch {
+        /* call log failure should not block UI reset */
+      }
+    }
+  }
+}
+
+function resolveThreadForIncomingCall(call) {
+  if (!call) return null;
+  return (
+    chatThreads.find(
+      (thread) =>
+        thread.conversationId === call.conversationId &&
+        thread.patientId === call.patientId,
+    ) ||
+    chatThreads.find((thread) => thread.patientId === call.patientId) ||
+    null
+  );
+}
+
+function showIncomingCallModal(call) {
+  if (!incomingCallModalEl || !call) return;
+  if (pendingIncomingCall?.callId === call.callId && !incomingCallModalEl.hidden) {
+    return;
+  }
+  pendingIncomingCall = call;
+  const thread = resolveThreadForIncomingCall(call);
+  const displayName = thread?.name || call.patientId || "Patient";
+  incomingCallTitleEl.textContent = displayName;
+  incomingCallAvatarEl.textContent = getInitials(displayName);
+  incomingCallAvatarEl.className = `chat-call-avatar chat-avatar chat-avatar--${thread?.avatarColor || "teal"}`;
+  incomingCallHintEl.textContent = `${displayName} is calling you.`;
+  incomingCallModalEl.hidden = false;
+  startIncomingCallRingtone();
+  syncBodyModalLock();
+}
+
+function hideIncomingCallModal({ stopRingtone = true } = {}) {
+  if (!incomingCallModalEl) return;
+  incomingCallModalEl.hidden = true;
+  if (stopRingtone) stopCallRingtone();
+  syncBodyModalLock();
+}
+
+function stopIncomingCallWatcher() {
+  releaseFirestoreListener(unsubscribeIncomingCalls);
+  unsubscribeIncomingCalls = null;
+}
+
+function startIncomingCallWatcher() {
+  stopIncomingCallWatcher();
+  if (!loggedInStaffId) return;
+
+  unsubscribeIncomingCalls = subscribeStaffIncomingCalls(loggedInStaffId, {
+    onIncoming: (call) => {
+      if (
+        voiceCallController?.state &&
+        !["idle", "ended"].includes(voiceCallController.state)
+      ) {
+        return;
+      }
+      showIncomingCallModal(call);
+    },
+    onCleared: () => {
+      pendingIncomingCall = null;
+      hideIncomingCallModal();
+    },
+  });
+}
+
+async function acceptIncomingCall() {
+  const call = pendingIncomingCall;
+  if (!call || incomingCallAcceptBtn?.disabled) return;
+
+  if (incomingCallAcceptBtn) incomingCallAcceptBtn.disabled = true;
+  if (incomingCallDeclineBtn) incomingCallDeclineBtn.disabled = true;
+
+  try {
+    const thread = resolveThreadForIncomingCall(call);
+    if (thread && thread.id !== activeThreadId) {
+      await selectThread(thread.id);
+    }
+
+    hideIncomingCallModal({ stopRingtone: true });
+    staffInitiatedCall = false;
+    pendingIncomingCall = null;
+
+    if (thread) {
+      showVoiceCallOverlay(thread);
+    } else {
+      activeVoiceCallThread = {
+        conversationId: call.conversationId,
+        patientId: call.patientId,
+        name: call.patientId,
+      };
+      voiceCallNameEl.textContent = call.patientId;
+      voiceCallAvatarEl.textContent = getInitials(call.patientId);
+      voiceCallOverlayEl.hidden = false;
+    }
+
+    await getVoiceCallController().answerIncoming({
+      callId: call.callId,
+      conversationId: call.conversationId,
+      staffId: loggedInStaffId,
+      patientId: call.patientId,
+      offer: call.offer,
+    });
+  } catch (error) {
+    hideVoiceCallOverlay();
+    window.alert(error?.message || "Could not answer the call.");
+  } finally {
+    if (incomingCallAcceptBtn) incomingCallAcceptBtn.disabled = false;
+    if (incomingCallDeclineBtn) incomingCallDeclineBtn.disabled = false;
+  }
+}
+
+async function declineIncomingCall() {
+  const call = pendingIncomingCall;
+  if (!call) {
+    hideIncomingCallModal();
+    return;
+  }
+  await getVoiceCallController().declineIncoming(call.callId);
+  pendingIncomingCall = null;
+  hideIncomingCallModal();
+}
+
+function closeCallModal() {
+  if (!callModalEl) return;
+  callModalEl.hidden = true;
+  if (callErrorEl) {
+    callErrorEl.hidden = true;
+    callErrorEl.textContent = "";
+  }
+  if (callStartBtn) callStartBtn.disabled = false;
+  syncBodyModalLock();
+}
+
+function openCallModal() {
+  const thread = getThreadById(activeThreadId);
+  if (!thread?.patientId || !callModalEl) return;
+
+  callModalEl.hidden = false;
+  callErrorEl.hidden = true;
+  callErrorEl.textContent = "";
+  callNameEl.textContent = thread.name || thread.patientId;
+  callAvatarEl.textContent = getInitials(thread.name || thread.patientId);
+  callAvatarEl.className = `chat-call-avatar chat-avatar chat-avatar--${thread.avatarColor || "teal"}`;
+  if (callPatientIdEl) {
+    callPatientIdEl.textContent = thread.patientId;
+  }
+  callStartBtn.disabled = false;
+  syncBodyModalLock();
+}
+
+async function startVoiceCall() {
+  const thread = getThreadById(activeThreadId);
+  if (!thread?.patientId || callStartBtn?.disabled) return;
+  if (voiceCallController?.state && !["idle", "ended"].includes(voiceCallController.state)) {
+    window.alert("A call is already in progress.");
+    return;
+  }
+
+  callStartBtn.disabled = true;
+  staffInitiatedCall = true;
+  try {
+    closeCallModal();
+    showVoiceCallOverlay(thread);
+    await getVoiceCallController().startOutgoing({
+      conversationId: thread.conversationId,
+      staffId: loggedInStaffId,
+      patientId: thread.patientId,
+    });
+  } catch (error) {
+    staffInitiatedCall = false;
+    hideVoiceCallOverlay();
+    window.alert(error?.message || "Could not start the voice call.");
+    callStartBtn.disabled = false;
+  }
+}
+
+async function endActiveVoiceCall() {
+  if (!voiceCallController || voiceCallController.state === "idle") {
+    hideVoiceCallOverlay();
+    return;
+  }
+  const wasConnected = Boolean(voiceCallController.connectedAt);
+  await voiceCallController.hangUp({
+    reason: wasConnected ? "ended" : "unanswered",
+  });
+}
+
+function toggleVoiceCallMute() {
+  if (!voiceCallController || voiceCallController.state !== "connected") return;
+  const muted = voiceCallController.toggleMute();
+  voiceCallMuteBtn?.classList.toggle("is-muted", muted);
+  const label = voiceCallMuteBtn?.querySelector("span");
+  if (label) label.textContent = muted ? "Unmute" : "Mute";
+}
+
 function getThreadById(id) {
   return chatThreads.find((thread) => thread.id === id);
 }
@@ -763,7 +1436,13 @@ function renderThreadList() {
     .join("");
 }
 
-function renderMessages(thread) {
+function renderMessages(thread, options = {}) {
+  const { scrollToBottom = false, preserveScroll = false } = options;
+  const previousScrollTop = messagesEl.scrollTop;
+  const wasNearBottom = isNearMessagesBottom(messagesEl);
+  const shouldScrollToBottom =
+    scrollToBottom || (!preserveScroll && thread && wasNearBottom);
+
   syncConversationPanelVisibility(thread);
 
   if (!thread) {
@@ -806,7 +1485,10 @@ function renderMessages(thread) {
   messagesEl.innerHTML = items
     .map((item) => {
       if (item.type === "divider") {
-        return `<p class="chat-divider" role="separator">${escapeHtml(item.label)}</p>`;
+        const dividerDateAttr = item.dateKey
+          ? ` data-divider-date="${escapeHtml(item.dateKey)}"`
+          : "";
+        return `<p class="chat-divider" role="separator"${dividerDateAttr}>${escapeHtml(item.label)}</p>`;
       }
       const bubbleClass =
         item.type === "out" ? "chat-bubble chat-bubble--out" : "chat-bubble chat-bubble--in";
@@ -825,7 +1507,7 @@ function renderMessages(thread) {
         : "";
       const menuMarkup = selectionMode ? "" : renderMessageMenu(item.messageId);
       return `
-        <div class="${rowClass}${selectionClass}${selectedClass}" data-message-row="${escapeHtml(item.messageId)}">
+        <div class="${rowClass}${selectionClass}${selectedClass}" data-message-row="${escapeHtml(item.messageId)}"${item.dateKey ? ` data-message-date="${escapeHtml(item.dateKey)}"` : ""}>
           ${selectionMarkup}
           <div class="chat-bubble-shell">
             <div class="${bubbleClass}">
@@ -852,7 +1534,13 @@ function renderMessages(thread) {
     }
   }
 
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  if (shouldScrollToBottom) {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  } else {
+    messagesEl.scrollTop = previousScrollTop;
+  }
+
+  requestAnimationFrame(() => updateScrollToBottomButton());
 }
 
 function renderMessageMetaBlocks(item) {
@@ -861,7 +1549,7 @@ function renderMessageMetaBlocks(item) {
     blocks.push(`
       <div class="chat-bubble-reply">
         <span class="chat-bubble-reply-label">Replying to</span>
-        <span class="chat-bubble-reply-text">${escapeHtml(item.replyPreview)}</span>
+        <span class="chat-bubble-reply-text">${highlightSearchText(item.replyPreview)}</span>
       </div>
     `);
   }
@@ -879,7 +1567,7 @@ function renderMessageMetaBlocks(item) {
 function renderMessageBubbleBody(item) {
   const meta = renderMessageMetaBlocks(item);
   if (item.kind === "deleted" || item.isDeleted) {
-    return `${meta}<p class="chat-bubble-deleted">${escapeHtml(item.text || "This message was deleted")}</p>`;
+    return `${meta}<p class="chat-bubble-deleted">${highlightSearchText(item.text || "This message was deleted")}</p>`;
   }
   if (item.kind === "photo" && item.url) {
     const photoAlt = escapeHtml(item.fileName || "Photo");
@@ -904,11 +1592,29 @@ function renderMessageBubbleBody(item) {
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
           <polyline points="14 2 14 8 20 8" />
         </svg>
-        <span class="chat-bubble-document-name">${escapeHtml(item.fileName || "Document")}</span>
+        <span class="chat-bubble-document-name">${highlightSearchText(item.fileName || "Document")}</span>
       </a>
     `;
   }
-  return `${meta}<p class="chat-bubble-text">${escapeHtml(item.text || "—")}</p>`;
+  if (item.kind === "voice" && item.url) {
+    return `${meta}
+      <div class="chat-bubble-voice">
+        <audio class="chat-bubble-audio" src="${escapeHtml(item.url)}" controls preload="metadata"></audio>
+        <span class="chat-bubble-voice-label">${highlightSearchText(item.text || "Voice message")}</span>
+      </div>
+    `;
+  }
+  if (item.kind === "call") {
+    return `${meta}
+      <p class="chat-bubble-call">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
+        </svg>
+        <span>${highlightSearchText(item.text || "Voice call")}</span>
+      </p>
+    `;
+  }
+  return `${meta}<p class="chat-bubble-text">${highlightSearchText(item.text || "—")}</p>`;
 }
 
 function closeAttachMenu() {
@@ -1164,7 +1870,7 @@ async function handleAttachmentFileSelected(file, intent) {
     thread.messages = [...(thread.messages || []), optimisticItem];
     clearReplyTarget();
     renderThreadList();
-    renderMessages(thread);
+    renderMessages(thread, { scrollToBottom: true });
   } catch (error) {
     window.alert(error?.message || "Could not send attachment.");
   } finally {
@@ -1200,6 +1906,8 @@ function selectThread(threadId) {
   selectionMode = false;
   selectedMessageIds = new Set();
   replyTarget = null;
+  closeConversationSearch({ rerender: false });
+  closeConversationCalendarModal();
   closeAllMessageMenus();
   activeThreadId = threadId;
   thread.unread = false;
@@ -1208,7 +1916,7 @@ function selectThread(threadId) {
 
   stopMessagesRealtime();
   isLoadingMessages = true;
-  renderMessages(thread);
+  renderMessages(thread, { scrollToBottom: true });
 
   unsubscribeMessages = subscribeMessagesForConversation(
     thread.conversationId,
@@ -1255,7 +1963,7 @@ function applyChatThreads(threads) {
         if (previousMessages) forcedThread.messages = previousMessages;
         setActiveHeader(forcedThread);
         renderThreadList();
-        renderMessages(forcedThread);
+        renderMessages(forcedThread, { preserveScroll: true });
       }
       return;
     }
@@ -1302,7 +2010,7 @@ function applyChatThreads(threads) {
     if (!unsubscribeMessages) {
       selectThread(activeThreadId);
     } else {
-      renderMessages(thread);
+      renderMessages(thread, { preserveScroll: true });
     }
   }
 }
@@ -1375,7 +2083,7 @@ async function handleComposeSubmit(event) {
     thread.unread = false;
 
     renderThreadList();
-    renderMessages(thread);
+    renderMessages(thread, { scrollToBottom: true });
   } catch (error) {
     window.alert(error?.message || "Could not send message.");
   } finally {
@@ -1393,6 +2101,68 @@ threadListEl.addEventListener("click", (event) => {
 searchEl.addEventListener("input", () => {
   searchQuery = searchEl.value.trim();
   renderThreadList();
+});
+
+conversationSearchBtnEl?.addEventListener("click", () => {
+  if (conversationSearchOpen) {
+    closeConversationSearch();
+    return;
+  }
+  openConversationSearch();
+});
+
+conversationSearchCloseBtn?.addEventListener("click", () => {
+  closeConversationSearch();
+});
+
+conversationSearchInputEl?.addEventListener("input", () => {
+  conversationSearchQuery = conversationSearchInputEl.value.trim();
+  const thread = getThreadById(activeThreadId);
+  if (thread) renderMessages(thread, { preserveScroll: true });
+  requestAnimationFrame(() => scrollToFirstSearchHighlight());
+});
+
+conversationSearchInputEl?.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeConversationSearch();
+  }
+});
+
+calendarBtnEl?.addEventListener("click", () => {
+  if (!calendarModalEl?.hidden) {
+    closeConversationCalendarModal();
+    return;
+  }
+  openConversationCalendarModal();
+});
+
+calendarCloseBtn?.addEventListener("click", closeConversationCalendarModal);
+calendarModalEl?.addEventListener("click", (event) => {
+  if (event.target === calendarModalEl) closeConversationCalendarModal();
+});
+calendarPrevBtn?.addEventListener("click", () => {
+  if (calendarPrevBtn.disabled) return;
+  const nextMonth = calendarViewMonth - 1;
+  if (nextMonth < 0) {
+    setCalendarViewMonth(calendarViewYear - 1, 11);
+  } else {
+    setCalendarViewMonth(calendarViewYear, nextMonth);
+  }
+});
+calendarNextBtn?.addEventListener("click", () => {
+  if (calendarNextBtn.disabled) return;
+  const nextMonth = calendarViewMonth + 1;
+  if (nextMonth > 11) {
+    setCalendarViewMonth(calendarViewYear + 1, 0);
+  } else {
+    setCalendarViewMonth(calendarViewYear, nextMonth);
+  }
+});
+calendarGridEl?.addEventListener("click", (event) => {
+  const dayBtn = event.target.closest("[data-calendar-date]");
+  if (!dayBtn || dayBtn.disabled) return;
+  handleCalendarDateSelect(dayBtn.dataset.calendarDate);
 });
 
 filterBtns.forEach((btn) => {
@@ -1447,6 +2217,15 @@ cameraSendBtn.addEventListener("click", () => {
 cameraModalEl.addEventListener("click", (event) => {
   if (event.target === cameraModalEl) closeCameraCapture();
 });
+messagesEl.addEventListener("scroll", () => {
+  updateScrollToBottomButton();
+}, { passive: true });
+
+scrollBottomBtnEl?.addEventListener("click", () => {
+  scrollMessagesToBottom({ smooth: true });
+  requestAnimationFrame(() => updateScrollToBottomButton());
+});
+
 messagesEl.addEventListener("click", (event) => {
   const actionBtn = event.target.closest("[data-message-action]");
   if (actionBtn) {
@@ -1595,6 +2374,18 @@ document.addEventListener("keydown", (event) => {
     closeDeleteModal();
     return;
   }
+  if (calendarModalEl && !calendarModalEl.hidden) {
+    closeConversationCalendarModal();
+    return;
+  }
+  if (callModalEl && !callModalEl.hidden) {
+    closeCallModal();
+    return;
+  }
+  if (incomingCallModalEl && !incomingCallModalEl.hidden) {
+    void declineIncomingCall();
+    return;
+  }
   if (selectionMode) {
     exitSelectionMode();
     return;
@@ -1605,9 +2396,37 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.getElementById("btn-chat-call")?.addEventListener("click", () => {
+  openCallModal();
+});
+
+callCloseBtn?.addEventListener("click", closeCallModal);
+callCancelBtn?.addEventListener("click", closeCallModal);
+callModalEl?.addEventListener("click", (event) => {
+  if (event.target === callModalEl) closeCallModal();
+});
+callStartBtn?.addEventListener("click", () => {
+  void startVoiceCall();
+});
+voiceCallEndBtn?.addEventListener("click", () => {
+  void endActiveVoiceCall();
+});
+voiceCallMuteBtn?.addEventListener("click", toggleVoiceCallMute);
+incomingCallAcceptBtn?.addEventListener("click", () => {
+  void acceptIncomingCall();
+});
+incomingCallDeclineBtn?.addEventListener("click", () => {
+  void declineIncomingCall();
+});
+incomingCallModalEl?.addEventListener("click", (event) => {
+  if (event.target === incomingCallModalEl) {
+    void declineIncomingCall();
+  }
+});
+
+document.getElementById("btn-chat-video")?.addEventListener("click", () => {
   const thread = getThreadById(activeThreadId);
   if (thread) {
-    window.alert(`Call ${thread.name} — voice calls will be available in a future update.`);
+    window.alert(`Video call ${thread.name} — video calls will be available in a future update.`);
   }
 });
 
@@ -1615,6 +2434,7 @@ initStaffAuth(async (profile) => {
   loggedInStaffId =
     profile?.staffID?.trim() || getStaffSession()?.staffID?.trim() || "";
   startConversationsRealtime();
+  startIncomingCallWatcher();
   if (pendingOpenPatientId) {
     await resolveAndOpenPendingPatient();
   }

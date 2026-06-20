@@ -1,10 +1,16 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:speech_to_text/speech_to_text.dart';
+
+import 'l10n/app_localizations.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/listening_mic_button.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_auth_helper.dart';
 import 'main_menu_page.dart';
 import 'password_recovery_page.dart';
+import 'services/field_speech_input.dart';
 
 class ManualLoginPage extends StatefulWidget {
   const ManualLoginPage({super.key});
@@ -16,6 +22,7 @@ class ManualLoginPage extends StatefulWidget {
 class _ManualLoginPageState extends State<ManualLoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _fieldSpeech = FieldSpeechInput.instance;
   int _step = 0;
   bool _submitting = false;
 
@@ -29,19 +36,47 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
     r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$',
   );
 
-  String? _validateEmail(String email) {
-    if (email.isEmpty) return 'Please enter your email.';
-    if (!_emailRegex.hasMatch(email)) return 'Please enter a valid email.';
+  @override
+  void initState() {
+    super.initState();
+    _fieldSpeech.addListener(_onFieldSpeechChanged);
+  }
+
+  void _onFieldSpeechChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _dictateTo(
+    TextEditingController controller, {
+    ListenMode listenMode = ListenMode.dictation,
+  }) async {
+    final error = await _fieldSpeech.toggleForController(
+      controller,
+      listenMode: listenMode,
+    );
+    if (error != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
+    }
+  }
+
+  String? _validateEmail(AppLocalizations l10n, String email) {
+    if (email.isEmpty) return l10n.t('pleaseEnterRegisteredEmail');
+    if (!_emailRegex.hasMatch(email)) {
+      return l10n.t('pleaseEnterRegisteredEmail');
+    }
     return null;
   }
 
-  String? _validatePassword(String password) {
-    if (password.isEmpty) return 'Please enter your password.';
+  String? _validatePassword(AppLocalizations l10n, String password) {
+    if (password.isEmpty) return l10n.t('pleaseEnterPassword');
     return null;
   }
 
   Future<void> _login() async {
-    final passwordError = _validatePassword(_passwordController.text);
+    final l10n = context.l10n;
+    final passwordError = _validatePassword(l10n, _passwordController.text);
     if (passwordError != null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(passwordError)));
       return;
@@ -62,7 +97,7 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Signed in successfully')),
+        SnackBar(content: Text(l10n.t('signedInSuccessfully'))),
       );
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute<void>(
@@ -78,7 +113,7 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
+        SnackBar(content: Text(l10n.t('errorWithMessage', {'error': e}))),
       );
     } finally {
       if (mounted) setState(() => _submitting = false);
@@ -86,7 +121,8 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
   }
 
   void _onContinue() {
-    final emailError = _validateEmail(_emailController.text.trim());
+    final l10n = context.l10n;
+    final emailError = _validateEmail(l10n, _emailController.text.trim());
     if (emailError != null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(emailError)));
       return;
@@ -94,14 +130,10 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
     setState(() => _step = 1);
   }
 
-  void _showVoiceHint(String field) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Voice input for $field will be available soon.')),
-    );
-  }
-
   @override
   void dispose() {
+    _fieldSpeech.removeListener(_onFieldSpeechChanged);
+    unawaited(_fieldSpeech.stop());
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -109,6 +141,8 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
@@ -116,9 +150,9 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
         foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          'Login Account',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
+        title: Text(
+          l10n.t('loginAccount'),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
         ),
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
@@ -147,7 +181,7 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
                   duration: const Duration(milliseconds: 200),
                   child: KeyedSubtree(
                     key: ValueKey<int>(_step),
-                    child: _step == 0 ? _buildEmailStep() : _buildPasswordStep(),
+                    child: _step == 0 ? _buildEmailStep(l10n) : _buildPasswordStep(l10n),
                   ),
                 ),
               ),
@@ -174,7 +208,7 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
                         ),
                       )
                     : Text(
-                        _step == 0 ? 'Continue' : 'Sign In',
+                        _step == 0 ? l10n.t('continueLabel') : l10n.t('signIn'),
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 16,
@@ -188,62 +222,67 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
     );
   }
 
-  Widget _buildEmailStep() {
+  Widget _buildEmailStep(AppLocalizations l10n) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'Manual Login',
+        Text(
+          l10n.t('manualLogin'),
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 20,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 12),
-        const Text(
-          'Please enter your registered email address',
+        Text(
+          l10n.t('pleaseEnterRegisteredEmail'),
           textAlign: TextAlign.center,
-          style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+          style: const TextStyle(color: _subtext, fontSize: 15, height: 1.35),
         ),
         const SizedBox(height: 32),
         _LoginInputField(
           controller: _emailController,
-          hintText: 'name@example.com',
+          hintText: l10n.t('emailHint'),
           prefixIcon: Icons.mail_outline,
-          onMic: () => _showVoiceHint('email'),
+          onMic: () => _dictateTo(
+            _emailController,
+            listenMode: ListenMode.search,
+          ),
+          micListening: _fieldSpeech.isListeningFor(_emailController),
           keyboardType: TextInputType.emailAddress,
         ),
       ],
     );
   }
 
-  Widget _buildPasswordStep() {
+  Widget _buildPasswordStep(AppLocalizations l10n) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'Manual Login',
+        Text(
+          l10n.t('manualLogin'),
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 20,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 12),
-        const Text(
-          'Please enter your password',
+        Text(
+          l10n.t('pleaseEnterPassword'),
           textAlign: TextAlign.center,
-          style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+          style: const TextStyle(color: _subtext, fontSize: 15, height: 1.35),
         ),
         const SizedBox(height: 32),
         _LoginInputField(
           controller: _passwordController,
-          hintText: 'Enter password',
+          hintText: l10n.t('enterPassword'),
           prefixIcon: Icons.lock_outline,
-          onMic: () => _showVoiceHint('password'),
+          onMic: () => _dictateTo(_passwordController),
+          micListening: _fieldSpeech.isListeningFor(_passwordController),
           obscureText: true,
         ),
         const SizedBox(height: 18),
@@ -262,10 +301,10 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
               padding: EdgeInsets.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: const Text(
-              'Forgot password? Use password recovery',
+            child: Text(
+              l10n.t('forgotPasswordUseRecovery'),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
             ),
           ),
         ),
@@ -280,6 +319,7 @@ class _LoginInputField extends StatelessWidget {
     required this.hintText,
     required this.prefixIcon,
     required this.onMic,
+    this.micListening = false,
     this.keyboardType,
     this.obscureText = false,
   });
@@ -288,6 +328,7 @@ class _LoginInputField extends StatelessWidget {
   final String hintText;
   final IconData prefixIcon;
   final VoidCallback onMic;
+  final bool micListening;
   final TextInputType? keyboardType;
   final bool obscureText;
 
@@ -306,18 +347,10 @@ class _LoginInputField extends StatelessWidget {
         prefixIcon: Icon(prefixIcon, color: Colors.white, size: 26),
         suffixIcon: Padding(
           padding: const EdgeInsets.only(right: 8),
-          child: Material(
-            color: const Color(0xFF1D7278),
-            shape: const CircleBorder(),
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: onMic,
-              child: const SizedBox(
-                width: 44,
-                height: 44,
-                child: Icon(Icons.mic, color: Colors.white, size: 20),
-              ),
-            ),
+          child: ListeningMicButton(
+            listening: micListening,
+            onPressed: onMic,
+            size: 44,
           ),
         ),
         contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 4),

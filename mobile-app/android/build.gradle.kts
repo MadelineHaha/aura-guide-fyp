@@ -6,6 +6,15 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // flutter_webrtc needs com.github.davidliu:audioswitch from JitPack.
+        exclusiveContent {
+            forRepository {
+                maven { url = uri("https://jitpack.io") }
+            }
+            filter {
+                includeGroupByRegex("com\\.github.*")
+            }
+        }
     }
 }
 

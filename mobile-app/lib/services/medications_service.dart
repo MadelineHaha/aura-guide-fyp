@@ -129,7 +129,7 @@ class MedicationsService {
         .where('userId', isEqualTo: patientId)
         .get();
 
-    final items = <MedicationItem>[];
+    final paired = <({Timestamp time, MedicationItem item})>[];
     for (final doc in reminderSnap.docs) {
       final reminder = MedicationReminderEntity.fromFirestore(
         doc.id,
@@ -145,15 +145,25 @@ class MedicationsService {
         medication: medication,
         today: today,
       );
-      if (item != null) items.add(item);
+      if (item != null) {
+        paired.add((time: reminder.reminderTime, item: item));
+      }
     }
 
-    items.sort((a, b) => a.scheduledTime.compareTo(b.scheduledTime));
-    return items;
+    paired.sort((a, b) => a.time.compareTo(b.time));
+    return paired.map((entry) => entry.item).toList();
   }
 
   static int countRemainingToday(List<MedicationItem> items) =>
       items.where((m) => !m.takenToday).length;
+
+  /// Next untaken medication for today (sorted by scheduled time).
+  static MedicationItem? nextPendingToday(List<MedicationItem> items) {
+    for (final item in items) {
+      if (!item.takenToday) return item;
+    }
+    return null;
+  }
 
   Future<List<MedicationItem>> fetchTodayForCurrentPatient() async {
     final patientId = await _patientUserId();

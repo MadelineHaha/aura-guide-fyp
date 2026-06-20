@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'l10n/app_localizations.dart';
 import 'firebase_auth_helper.dart';
 import 'main_menu_page.dart';
 import 'services/phone_number_service.dart';
@@ -60,10 +61,11 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
 
   Future<void> _attemptVoiceLogin() async {
     if (_enteringDashboard) return;
+    final l10n = context.l10n;
 
     setState(() {
       _enteringDashboard = true;
-      _statusMessage = 'Verifying your voiceprint...';
+      _statusMessage = l10n.t('voiceLoginChecking');
       _showPhoneBackup = false;
     });
 
@@ -78,13 +80,10 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
         _controller.resetSample();
         setState(() {
           _enteringDashboard = false;
-          _statusMessage =
-              'Voice does not match any registered profile. Please try again.';
+          _statusMessage = l10n.t('voiceNoMatch');
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Voice does not match any registered profile.'),
-          ),
+          SnackBar(content: Text(l10n.t('voiceNoMatch'))),
         );
         return;
       }
@@ -97,7 +96,8 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
           _showPhoneBackup = true;
           _phoneBackupCandidates = verification.candidates;
           _statusMessage =
-              'Your voice sounds different. Verify with your registered phone number as a backup.';
+              'Your voice does not match the voice profile on this account. '
+              'Only the registered owner can sign in with voice.';
         });
         return;
       }
@@ -123,18 +123,19 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
       _controller.resetSample();
       setState(() {
         _enteringDashboard = false;
-        _statusMessage = 'Voice login failed. Please try again.';
+        _statusMessage = context.l10n.t('voiceLoginFailed', {'error': e});
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Voice login failed: $e')),
+        SnackBar(content: Text(context.l10n.t('voiceLoginFailed', {'error': e}))),
       );
     }
   }
 
   Future<void> _verifyWithPhone() async {
+    final l10n = context.l10n;
     setState(() {
       _enteringDashboard = true;
-      _statusMessage = 'Verifying registered phone number...';
+      _statusMessage = l10n.t('voiceLoginChecking');
     });
 
     try {
@@ -185,12 +186,13 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
       if (!mounted) return;
       setState(() {
         _enteringDashboard = false;
-        _statusMessage = 'Phone verification failed. Please try again.';
+        _statusMessage = context.l10n.t('voiceLoginFailed', {'error': e});
       });
     }
   }
 
   Future<void> _signInWithProfile(Map<String, dynamic> matched) async {
+    final l10n = context.l10n;
     final matchedUid = (matched['authUid'] as String?)?.trim() ?? '';
     if (matchedUid.isEmpty) {
       throw StateError('Matched profile is missing an account id.');
@@ -220,13 +222,18 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
     }
 
     if (!mounted) return;
+    final name = matched['name']?.toString().trim();
     setState(() {
       _enteringDashboard = false;
       _showPhoneBackup = false;
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Welcome ${matched['name'] ?? 'User'}!'),
+        content: Text(l10n.t('voiceVerifiedWelcome', {
+          'name': (name != null && name.isNotEmpty)
+              ? name
+              : l10n.t('userFallback'),
+        })),
       ),
     );
     Navigator.of(context).pushAndRemoveUntil(
@@ -246,6 +253,10 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    const instructions =
+        'Double tap the button below and say Sign me in. Your voiceprint will be verified.';
+
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
@@ -256,9 +267,9 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: const Text(
-          'Login Account',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
+        title: Text(
+          l10n.t('loginAccount'),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
         ),
       ),
       body: SafeArea(
@@ -268,20 +279,26 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 36),
-              const Text(
-                'Voice Login',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+              Semantics(
+                header: true,
+                child: Text(
+                  l10n.t('voiceLogin'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
-              const Text(
-                'Double tap the button below and say Sign me in. Your voiceprint will be verified.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+              Semantics(
+                label: instructions,
+                child: Text(
+                  instructions,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+                ),
               ),
               const SizedBox(height: 34),
               ListenableBuilder(
@@ -305,10 +322,13 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
                   ),
                 )
               else if (_statusMessage != null)
-                Text(
-                  _statusMessage!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: _subtext, fontSize: 15),
+                Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    _statusMessage!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: _subtext, fontSize: 15),
+                  ),
                 ),
               if (_showPhoneBackup && !_enteringDashboard) ...[
                 const SizedBox(height: 20),

@@ -92,8 +92,8 @@
       "collectionGroup": "emergencyalerts",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "userId", "order": "ASCENDING" },
-        { "fieldPath": "status", "order": "ASCENDING" }
+        { "fieldPath": "UserID", "order": "ASCENDING" },
+        { "fieldPath": "Status", "order": "ASCENDING" }
       ]
     }
   ],

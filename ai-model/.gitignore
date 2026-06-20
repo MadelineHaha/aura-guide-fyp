@@ -1,0 +1,8 @@
+venv/
+tfenv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+dataset/raw-images/
+datasets/AuraGuide/

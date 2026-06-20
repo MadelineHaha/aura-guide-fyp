@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'book_appointment_page.dart';
+import 'l10n/app_localizations.dart';
 import 'models/appointment_item.dart';
 import 'services/appointments_service.dart';
 import 'widgets/accessible_focus_region.dart';
@@ -60,23 +61,33 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
   List<AppointmentItem> get _visible => _tabIndex == 0 ? _upcoming : _past;
 
   Future<void> _onCancel(AppointmentItem item) async {
+    final l10n = context.l10n;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1A1A1A),
-        title: const Text('Cancel appointment?', style: TextStyle(color: Colors.white)),
+        title: Text(
+          l10n.t('cancelAppointmentQuestion'),
+          style: const TextStyle(color: Colors.white),
+        ),
         content: Text(
-          'Cancel your visit with ${item.doctorName} on ${item.dateLabel}?',
+          l10n.t('cancelVisitWithDoctor', {
+            'doctorName': item.doctorName,
+            'dateLabel': item.dateLabel,
+          }),
           style: const TextStyle(color: Color(0xFFB0B0B0)),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Keep'),
+            child: Text(l10n.t('keep')),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Cancel visit', style: TextStyle(color: _cancelRed)),
+            child: Text(
+              l10n.t('cancelVisit'),
+              style: const TextStyle(color: _cancelRed),
+            ),
           ),
         ],
       ),
@@ -86,20 +97,24 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
       await _service.cancelAppointment(item.id);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Appointment cancelled')),
+        SnackBar(content: Text(context.l10n.t('appointmentCancelled'))),
       );
       await _load();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not cancel: $e')),
+        SnackBar(content: Text(context.l10n.t('couldNotCancel', {'error': e}))),
       );
     }
   }
 
   void _onReschedule(AppointmentItem item) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Reschedule for ${item.doctorName} is coming soon.')),
+      SnackBar(
+        content: Text(
+          context.l10n.t('rescheduleComingSoon', {'doctorName': item.doctorName}),
+        ),
+      ),
     );
   }
 
@@ -114,6 +129,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
@@ -124,9 +140,9 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
-        title: const Text(
-          'Appointments',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+        title: Text(
+          l10n.t('appointments'),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
         ),
       ),
       body: SafeArea(
@@ -158,8 +174,13 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                               itemBuilder: (context, index) {
                                 final item = _visible[index];
                                 return AccessibleFocusRegion(
-                                  label:
-                                      '${item.doctorName}. ${item.specialty}. ${item.dateLabel}. ${item.timeLabel}. ${item.locationDisplay}',
+                                  label: context.l10n.t('appointmentItemA11y', {
+                                    'doctorName': item.doctorName,
+                                    'specialty': item.specialty,
+                                    'dateLabel': item.dateLabel,
+                                    'timeLabel': item.timeLabel,
+                                    'location': item.locationDisplay,
+                                  }),
                                   child: _AppointmentCard(
                                     item: item,
                                     showActions: _tabIndex == 0,
@@ -173,21 +194,21 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
               child: AccessibleFocusRegion(
-                label: 'Book Appointment',
+                label: l10n.t('bookAppointment'),
                 onActivate: _onBook,
                 child: FilledButton(
                   onPressed: _onBook,
-                style: FilledButton.styleFrom(
-                  backgroundColor: _accent,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _accent,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                   ),
-                ),
-                  child: const Text(
-                    'Book Appointment',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  child: Text(
+                    l10n.t('bookAppointment'),
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                   ),
                 ),
               ),
@@ -217,14 +238,17 @@ class _TabBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final upcomingLabel = l10n.t('upcomingSection', {'count': upcomingCount});
+    final pastLabel = l10n.t('pastSection', {'count': pastCount});
     return Row(
       children: [
         Expanded(
           child: AccessibleFocusRegion(
-            label: 'Upcoming ($upcomingCount)',
+            label: upcomingLabel,
             onActivate: () => onChanged(0),
             child: _TabChip(
-              label: 'Upcoming ($upcomingCount)',
+              label: upcomingLabel,
               selected: selectedIndex == 0,
               onTap: () => onChanged(0),
             ),
@@ -233,10 +257,10 @@ class _TabBar extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(
           child: AccessibleFocusRegion(
-            label: 'Past ($pastCount)',
+            label: pastLabel,
             onActivate: () => onChanged(1),
             child: _TabChip(
-              label: 'Past ($pastCount)',
+              label: pastLabel,
               selected: selectedIndex == 1,
               onTap: () => onChanged(1),
             ),
@@ -303,6 +327,7 @@ class _AppointmentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -334,9 +359,9 @@ class _AppointmentCard extends StatelessWidget {
                 color: const Color(0xFF3D3520),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Text(
-                'Pending — awaiting staff confirmation',
-                style: TextStyle(color: Color(0xFFE8C547), fontSize: 13),
+              child: Text(
+                l10n.t('pendingStaffConfirmation'),
+                style: const TextStyle(color: Color(0xFFE8C547), fontSize: 13),
               ),
             ),
           ],
@@ -361,9 +386,9 @@ class _AppointmentCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(24),
                       ),
                     ),
-                    child: const Text(
-                      'Cancel',
-                      style: TextStyle(fontWeight: FontWeight.bold),
+                    child: Text(
+                      l10n.t('cancel'),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ),
                 ),
@@ -380,9 +405,9 @@ class _AppointmentCard extends StatelessWidget {
                           borderRadius: BorderRadius.circular(24),
                         ),
                       ),
-                      child: const Text(
-                        'Reschedule',
-                        style: TextStyle(fontWeight: FontWeight.bold),
+                      child: Text(
+                        l10n.t('reschedule'),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
                   ),
@@ -466,15 +491,13 @@ class _DetailRow extends StatelessWidget {
 class _EmptyState extends StatelessWidget {
   const _EmptyState();
 
-  static const _message = 'There is no available appointment yet.';
-
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Text(
-          _message,
+          context.l10n.t('noAppointmentsYet'),
           textAlign: TextAlign.center,
           style: const TextStyle(color: Color(0xFFB0B0B0), fontSize: 16),
         ),
@@ -505,7 +528,7 @@ class _ErrorState extends StatelessWidget {
             const SizedBox(height: 16),
             TextButton(
               onPressed: onRetry,
-              child: const Text('Retry'),
+              child: Text(context.l10n.t('retry')),
             ),
           ],
         ),

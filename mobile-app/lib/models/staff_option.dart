@@ -1,3 +1,5 @@
+import '../utils/localized_doctor_name.dart';
+
 class StaffOption {
   StaffOption({
     required this.staffId,
@@ -20,11 +22,14 @@ class StaffOption {
   final double rating;
   final String location;
 
-  String get displayName {
-    if (category == 'doctor' && !name.startsWith('Dr.')) {
-      return 'Dr. $name';
-    }
-    return name;
+  String get displayName => localizedDisplayName('en');
+
+  String localizedDisplayName(String languageCode) {
+    return LocalizedDoctorName.format(
+      name,
+      languageCode,
+      isDoctor: category == 'doctor',
+    );
   }
 
   String get initials {

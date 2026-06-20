@@ -5,8 +5,10 @@ import 'package:flutter/scheduler.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import '../models/voice_capture_result.dart';
+import '../utils/accessibility_announcement.dart';
 import 'app_settings_service.dart';
 import 'device_permissions_service.dart';
+import 'system_accessibility_service.dart';
 import 'voice_audio_recorder_service.dart';
 import 'voice_embedding_service.dart';
 import 'voice_passphrase.dart';
@@ -43,6 +45,9 @@ class VoicePassphraseController extends ChangeNotifier {
   List<double> _voiceprintVector = const [];
   Map<String, dynamic> _voiceFeatures = const {};
   Timer? _finalizeTimer;
+  Timer? _recordingLimitTimer;
+
+  static const _recordingLimit = Duration(seconds: 8);
 
   bool get isRecording => _isRecording;
   bool get hasValidSample => _hasValidSample;
@@ -66,6 +71,7 @@ class VoicePassphraseController extends ChangeNotifier {
     if (_hasValidSample && !allowOverwrite) return null;
 
     _finalizeTimer?.cancel();
+    _recordingLimitTimer?.cancel();
     _cancelFeedback();
     _accessibilityMessage = null;
     _invalidFeedbackSpoken = false;
@@ -109,9 +115,16 @@ class VoicePassphraseController extends ChangeNotifier {
       await _speech.cancel();
     } catch (_) {}
 
+    await _discardAudioCapture();
+    try {
+      await _audioRecorder.start();
+    } catch (error) {
+      debugPrint('VoicePassphraseController audio start failed: $error');
+    }
+
     await _speech.listen(
-      listenFor: const Duration(seconds: 12),
-      pauseFor: const Duration(seconds: 4),
+      listenFor: _recordingLimit,
+      pauseFor: const Duration(seconds: 2),
       localeId: _passphraseLocaleId,
       listenOptions: SpeechListenOptions(
         partialResults: true,
@@ -139,7 +152,17 @@ class VoicePassphraseController extends ChangeNotifier {
       },
     );
 
+    _startRecordingLimitTimer();
+
     return null;
+  }
+
+  void _startRecordingLimitTimer() {
+    _recordingLimitTimer?.cancel();
+    _recordingLimitTimer = Timer(_recordingLimit, () {
+      if (_captureProcessed || !_isRecording) return;
+      unawaited(_finalizeCapture(requireHeardSpeech: true));
+    });
   }
 
   Future<String?> _resolvePassphraseLocale() async {
@@ -175,16 +198,27 @@ class VoicePassphraseController extends ChangeNotifier {
 
   Future<void> _acceptCapture(String phrase) async {
     if (_captureProcessed) return;
-    _captureProcessed = true;
     _finalizeTimer?.cancel();
 
     await _finishRecording();
+    await _finalizeVoiceprintFromAudio();
 
+    if (!VoiceEmbeddingService.isUsableVoiceprint(_voiceprintVector)) {
+      await _rejectCapture(
+        debugHeard: phrase,
+        message: AppSettingsService.instance
+            .localized('voicePassphraseCaptureFailed'),
+      );
+      return;
+    }
+
+    _captureProcessed = true;
     _capturedPhrase = VoicePassphrase.normalize(phrase);
     _hasValidSample = true;
     notifyListeners();
-    unawaited(_captureVoiceprintAfterPhrase());
-    await _announceFeedback(VoicePassphrase.captureSuccessMessage);
+    await _announceFeedback(
+      AppSettingsService.instance.localized('voicePassphraseCaptureSuccess'),
+    );
 
     final result = captureResult;
     if (result != null) {
@@ -218,15 +252,19 @@ class VoicePassphraseController extends ChangeNotifier {
     );
   }
 
-  Future<void> _captureVoiceprintAfterPhrase() async {
+  Future<void> _finalizeVoiceprintFromAudio() async {
     try {
-      await _audioRecorder.start();
-      await Future<void>.delayed(const Duration(milliseconds: 900));
       final wavBytes = await _audioRecorder.stop();
       _applyAudioEmbedding(wavBytes);
-    } catch (e) {
-      debugPrint('VoicePassphraseController voiceprint capture failed: $e');
+    } catch (error) {
+      debugPrint('VoicePassphraseController voiceprint finalize failed: $error');
     }
+  }
+
+  Future<void> _discardAudioCapture() async {
+    try {
+      await _audioRecorder.stop();
+    } catch (_) {}
   }
 
   String _pickPhrase(String? preferredPhrase) {
@@ -243,6 +281,7 @@ class VoicePassphraseController extends ChangeNotifier {
   }
 
   Future<void> _finishRecording() async {
+    _recordingLimitTimer?.cancel();
     if (!_isRecording) return;
     try {
       await _speech.stop();
@@ -271,9 +310,13 @@ class VoicePassphraseController extends ChangeNotifier {
     return ((sampleCount / 16000) * 1000).round();
   }
 
-  Future<void> _rejectCapture({String debugHeard = ''}) async {
+  Future<void> _rejectCapture({
+    String debugHeard = '',
+    String? message,
+  }) async {
     if (_invalidFeedbackSpoken) return;
 
+    await _discardAudioCapture();
     _captureProcessed = true;
     _capturedPhrase = debugHeard;
     _bestPhrase = '';
@@ -287,7 +330,8 @@ class VoicePassphraseController extends ChangeNotifier {
     }
 
     await _announceFeedback(
-      VoicePassphrase.retakeMessage,
+      message ??
+          AppSettingsService.instance.localized('voicePassphraseRetake'),
       invalidOnlyOnce: true,
     );
   }
@@ -315,6 +359,11 @@ class VoicePassphraseController extends ChangeNotifier {
       _invalidFeedbackSpoken = true;
     }
 
+    if (SystemAccessibilityService.instance.isScreenReaderActive) {
+      await AccessibilityAnnouncement.announce(message);
+      return;
+    }
+
     await AppSettingsService.instance.speak(message);
   }
 
@@ -330,7 +379,9 @@ class VoicePassphraseController extends ChangeNotifier {
 
   void resetSample() {
     _finalizeTimer?.cancel();
+    _recordingLimitTimer?.cancel();
     _cancelFeedback();
+    unawaited(_discardAudioCapture());
     _captureProcessed = false;
     _hasValidSample = false;
     _capturedPhrase = '';
@@ -345,6 +396,7 @@ class VoicePassphraseController extends ChangeNotifier {
   @override
   void dispose() {
     _finalizeTimer?.cancel();
+    _recordingLimitTimer?.cancel();
     _cancelFeedback();
     _speech.stop();
     unawaited(_audioRecorder.dispose());

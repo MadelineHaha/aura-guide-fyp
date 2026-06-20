@@ -3,10 +3,12 @@ import {
   doc,
   getDocs,
   onSnapshot,
+  query,
   runTransaction,
   serverTimestamp,
   Timestamp,
   updateDoc,
+  where,
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { auth, db } from "./firebase.js";
 import { trackFirestoreListener } from "./firestore-realtime.js";
@@ -62,6 +64,7 @@ export function mapUserDoc(docSnap) {
     phone: data.phone || data.emergencyContact || "",
     address: data.address || "",
     birthDate,
+    createdAt: birthDateFromFirestore(data.createdAt),
     accountStatus: data.status || "Active",
   };
 }
@@ -73,6 +76,22 @@ function sortPatients(patients) {
 export async function fetchPatients() {
   const snap = await getDocs(collection(db, USERS_COLLECTION));
   return sortPatients(snap.docs.map(mapUserDoc));
+}
+
+export async function fetchPatientByUserId(patientUserId) {
+  const trimmedId = String(patientUserId || "").trim();
+  if (!trimmedId) return null;
+
+  for (const field of ["userId", "userID"]) {
+    const snap = await getDocs(
+      query(collection(db, USERS_COLLECTION), where(field, "==", trimmedId)),
+    );
+    if (!snap.empty) {
+      return mapUserDoc(snap.docs[0]);
+    }
+  }
+
+  return null;
 }
 
 /** Real-time patient list; fires when any user document changes. */
@@ -125,7 +144,20 @@ export async function createPatient({ name, email, birthDate, address }) {
       address: address.trim(),
       voiceProfile: "",
       emergencyContact: "",
-      accessibilityPreferences: "",
+      settings: {
+        fontScale: 1.0,
+        notificationsEnabled: true,
+        fallDetectionEnabled: true,
+        voiceAssistantEnabled: true,
+        languageCode: "en",
+      },
+      accessibilityPreferences: {
+        fontScale: 1.0,
+        notificationsEnabled: true,
+        fallDetectionEnabled: true,
+        voiceAssistantEnabled: true,
+        languageCode: "en",
+      },
       status: "Active",
       createdAt: serverTimestamp(),
       registeredByStaff: staffUid,

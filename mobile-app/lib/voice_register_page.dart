@@ -1,15 +1,23 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 
+import 'l10n/app_localizations.dart';
 import 'firebase_auth_helper.dart';
 import 'main_menu_page.dart';
 import 'models/voice_capture_result.dart';
+import 'services/field_speech_input.dart';
 import 'services/phone_number_service.dart';
+import 'services/app_settings_service.dart';
 import 'services/user_registration_service.dart';
+import 'services/voice_embedding_service.dart';
 import 'services/voice_auth_credentials_service.dart';
 import 'services/voice_passphrase_controller.dart';
 import 'services/voice_profile_service.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/listening_mic_button.dart';
 import 'widgets/voice_record_button.dart';
 
 class VoiceRegisterPage extends StatefulWidget {
@@ -20,11 +28,13 @@ class VoiceRegisterPage extends StatefulWidget {
 }
 
 class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
+  final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _voiceProfiles = VoiceProfileService();
   late final VoicePassphraseController _voiceController;
   final _registration = UserRegistrationService();
+  final _fieldSpeech = FieldSpeechInput.instance;
 
   int _step = 0;
   bool _submitting = false;
@@ -35,7 +45,7 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
   static const Color _fieldFill = Color(0xFF141414);
   static const Color _fieldBorder = Color(0xFF3A3A3A);
 
-  static const int _steps = 3;
+  static const int _steps = 4;
   static final RegExp _emailRegex = RegExp(
     r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$',
   );
@@ -46,6 +56,24 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
     _voiceController = VoicePassphraseController(
       onValidCapture: _onVoiceCaptured,
     );
+    _fieldSpeech.addListener(_onFieldSpeechChanged);
+  }
+
+  void _onFieldSpeechChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _dictateTo(
+    TextEditingController controller, {
+    ListenMode listenMode = ListenMode.dictation,
+  }) async {
+    final error = await _fieldSpeech.toggleForController(
+      controller,
+      listenMode: listenMode,
+    );
+    if (error != null && mounted) {
+      _showValidation(error);
+    }
   }
 
   Future<void> _onVoiceCaptured(VoiceCaptureResult result) async {
@@ -80,6 +108,28 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
 
   VoiceCaptureResult? get _captureResult => _voiceController.captureResult;
 
+  String? _validateVoiceCapture(AppLocalizations l10n, VoiceCaptureResult? capture) {
+    if (capture == null) {
+      return l10n.t('pleaseRecordVoiceSample');
+    }
+    if (!VoiceEmbeddingService.isUsableVoiceprint(capture.voiceprintVector)) {
+      return 'Voice profile was not captured. Please record your voice again.';
+    }
+    return null;
+  }
+
+  Future<void> _persistRegisteredVoiceProfile({
+    required String uid,
+    required VoiceCaptureResult capture,
+  }) async {
+    await _voiceProfiles.saveVoiceProfile(
+      uid: uid,
+      passphrase: capture.phrase,
+      voiceprintVector: capture.voiceprintVector,
+      voiceFeatures: capture.voiceFeatures,
+    );
+  }
+
   Future<void> _retakeVoiceSample() async {
     _voiceController.resetSample();
     await _startRecording();
@@ -96,16 +146,16 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
     }
   }
 
-  void _showVoiceHint(String field) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Voice input for $field will be available soon.')),
-    );
-  }
-
   void _showValidation(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+
+  String? _validateName(String name) {
+    if (name.isEmpty) return 'Please enter your name.';
+    if (name.length > 100) return 'Name must be at most 100 characters.';
+    return null;
   }
 
   String? _validateEmail(String email) {
@@ -115,8 +165,8 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
     return null;
   }
 
-  String? _validatePassword(String password) {
-    if (password.isEmpty) return 'Please enter a password.';
+  String? _validatePassword(AppLocalizations l10n, String password) {
+    if (password.isEmpty) return l10n.t('pleaseEnterPassword');
     if (!_hasMinLength(password)) return 'Password must be at least 8 characters.';
     if (password.length > 255) return 'Password must be at most 255 characters.';
     if (!_hasUppercase(password)) {
@@ -142,14 +192,22 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
       RegExp(r'[!@#$%^&*(),.?":{}|<>_\-\\/\[\];+=~`]').hasMatch(password);
 
   Future<void> _completeVoiceOnly() async {
+    final l10n = context.l10n;
     if (!_voiceController.hasValidSample) {
-      _showValidation('Please record your voice sample first.');
+      _showValidation(l10n.t('pleaseRecordVoiceSample'));
+      return;
+    }
+
+    final nameError = _validateName(_nameController.text.trim());
+    if (nameError != null) {
+      _showValidation(nameError);
       return;
     }
 
     final capture = _captureResult;
-    if (capture == null) {
-      _showValidation('Please record your voice sample first.');
+    final captureError = _validateVoiceCapture(l10n, capture);
+    if (captureError != null) {
+      _showValidation(captureError);
       return;
     }
 
@@ -162,19 +220,22 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
 
       await _registration.createUserProfile(
         uid: uid,
-        name: 'Voice User',
+        name: _nameController.text.trim(),
         birthDate: DateTime(2000, 1, 1),
         email: account.profileEmail,
-        voicePassphrase: capture.phrase,
+        voicePassphrase: capture!.phrase,
         voiceprintVector: capture.voiceprintVector,
         voiceFeatures: capture.voiceFeatures,
         phoneNumber: phoneNumber,
+        accessibilityPreferences:
+            AppSettingsService.instance.settings.toMap(),
       );
+      await _persistRegisteredVoiceProfile(uid: uid, capture: capture);
 
       if (!mounted) return;
       setState(() => _submitting = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Voice registration completed.')),
+        SnackBar(content: Text(l10n.t('voiceRegistrationCompleted'))),
       );
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute<void>(builder: (context) => const MainMenuPage()),
@@ -191,13 +252,20 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
       await FirebaseAuth.instance.signOut();
       if (!mounted) return;
       setState(() => _submitting = false);
-      _showValidation('Could not complete voice registration: $e');
+      _showValidation(l10n.t('errorWithMessage', {'error': e}));
     }
   }
 
   Future<void> _submitWithEmailPassword() async {
+    final l10n = context.l10n;
     if (!_voiceController.hasValidSample) {
-      _showValidation('Please record your voice sample first.');
+      _showValidation(l10n.t('pleaseRecordVoiceSample'));
+      return;
+    }
+
+    final nameError = _validateName(_nameController.text.trim());
+    if (nameError != null) {
+      _showValidation(nameError);
       return;
     }
 
@@ -210,15 +278,16 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
       return;
     }
 
-    final passwordError = _validatePassword(password);
+    final passwordError = _validatePassword(l10n, password);
     if (passwordError != null) {
       _showValidation(passwordError);
       return;
     }
 
     final capture = _captureResult;
-    if (capture == null) {
-      _showValidation('Please record your voice sample first.');
+    final captureError = _validateVoiceCapture(l10n, capture);
+    if (captureError != null) {
+      _showValidation(captureError);
       return;
     }
 
@@ -235,19 +304,22 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
 
       await _registration.createUserProfile(
         uid: uid,
-        name: 'Voice User',
+        name: _nameController.text.trim(),
         birthDate: DateTime(2000, 1, 1),
         email: email,
-        voicePassphrase: capture.phrase,
+        voicePassphrase: capture!.phrase,
         voiceprintVector: capture.voiceprintVector,
         voiceFeatures: capture.voiceFeatures,
         phoneNumber: phoneNumber,
+        accessibilityPreferences:
+            AppSettingsService.instance.settings.toMap(),
       );
+      await _persistRegisteredVoiceProfile(uid: uid, capture: capture);
 
       if (!mounted) return;
       setState(() => _submitting = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Voice registration setup completed.')),
+        SnackBar(content: Text(l10n.t('voiceRegistrationSetupCompleted'))),
       );
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute<void>(builder: (context) => const MainMenuPage()),
@@ -261,13 +333,16 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
       await _registration.deleteCurrentAuthUser();
       if (!mounted) return;
       setState(() => _submitting = false);
-      _showValidation('Could not save voice profile: $e');
+      _showValidation(l10n.t('voiceCaptureFailed', {'error': e}));
     }
   }
 
   @override
   void dispose() {
+    _fieldSpeech.removeListener(_onFieldSpeechChanged);
+    unawaited(_fieldSpeech.stop());
     _voiceController.dispose();
+    _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -275,6 +350,8 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
@@ -282,9 +359,9 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
         foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          'Create Account',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
+        title: Text(
+          l10n.t('createAccount'),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
         ),
         automaticallyImplyLeading: false,
         leadingWidth: AppBackButton.appBarLeadingWidth,
@@ -301,6 +378,7 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
       resizeToAvoidBottomInset: true,
       body: SafeArea(
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
               padding: const EdgeInsets.only(top: 8, bottom: 24),
@@ -309,59 +387,70 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: _buildStepBody(),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: KeyedSubtree(
+                    key: ValueKey<int>(_step),
+                    child: _buildStepBody(),
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                24,
+                8,
+                24,
+                16 + MediaQuery.viewInsetsOf(context).bottom,
+              ),
+              child: ListenableBuilder(
+                listenable: _voiceController,
+                builder: (context, _) => _buildStepButton(),
               ),
             ),
           ],
-        ),
-      ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            _step == 0 ? 16 : 24,
-            8,
-            _step == 0 ? 16 : 24,
-            16 + MediaQuery.viewInsetsOf(context).bottom,
-          ),
-          child: ListenableBuilder(
-            listenable: _voiceController,
-            builder: (context, _) => _buildStepButton(),
-          ),
         ),
       ),
     );
   }
 
   Widget _buildStepBody() {
+    final l10n = context.l10n;
     switch (_step) {
       case 0:
-        return _buildRecordStep();
+        return _buildRecordStep(l10n);
       case 1:
-        return _buildEmailChoiceStep();
+        return _buildNameStep(l10n);
       case 2:
-        return _buildPasswordStep();
+        return _buildEmailChoiceStep(l10n);
+      case 3:
+        return _buildPasswordStep(l10n);
       default:
         return const SizedBox.shrink();
     }
   }
 
-  Widget _buildRecordStep() {
+  Widget _buildRecordStep(AppLocalizations l10n) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        const Text(
-          'Voice Register',
-          style: TextStyle(
+        Text(
+          l10n.t('voiceRegister'),
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 20,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 12),
-        const Text(
-          'Set up your voice profile to log in hands-free next time.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+        Semantics(
+          label:
+              'Set up your voice profile to log in hands-free next time.',
+          child: const Text(
+            'Set up your voice profile to log in hands-free next time.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+          ),
         ),
         const SizedBox(height: 34),
         ListenableBuilder(
@@ -383,62 +472,138 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
     );
   }
 
-  Widget _buildEmailChoiceStep() {
+  Widget _buildNameStep(AppLocalizations l10n) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'Voice Register',
+        Text(
+          l10n.t('whatIsYourName'),
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 20,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 12),
-        const Text(
-          'Would you like to add an email and password for extra security?',
+        Text(
+          l10n.t('enterFullNamePrompt'),
           textAlign: TextAlign.center,
-          style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+          style: const TextStyle(color: _subtext, fontSize: 15, height: 1.35),
         ),
         const SizedBox(height: 32),
         _VoiceField(
-          controller: _emailController,
-          hintText: 'name@example.com',
-          prefixIcon: Icons.mail_outline,
-          onMic: () => _showVoiceHint('email'),
-          keyboardType: TextInputType.emailAddress,
+          controller: _nameController,
+          hintText: l10n.t('nameHint'),
+          prefixIcon: Icons.person_outline,
+          onMic: () => _dictateTo(_nameController),
+          micListening: _fieldSpeech.isListeningFor(_nameController),
+          keyboardType: TextInputType.name,
+          textCapitalization: TextCapitalization.words,
         ),
       ],
     );
   }
 
-  Widget _buildPasswordStep() {
+  Widget _buildEmailChoiceStep(AppLocalizations l10n) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'Voice Register',
+        Text(
+          l10n.t('voiceRegister'),
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 20,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 12),
-        const Text(
-          'Create a strong password for your health data.',
+        Text(
+          l10n.t('addEmailSecurityPrompt'),
           textAlign: TextAlign.center,
-          style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+          style: const TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+        ),
+        const SizedBox(height: 32),
+        _VoiceField(
+          controller: _emailController,
+          hintText: l10n.t('emailHint'),
+          prefixIcon: Icons.mail_outline,
+          onMic: () => _dictateTo(
+            _emailController,
+            listenMode: ListenMode.search,
+          ),
+          micListening: _fieldSpeech.isListeningFor(_emailController),
+          keyboardType: TextInputType.emailAddress,
+        ),
+        const SizedBox(height: 28),
+        FilledButton(
+          onPressed: _submitting
+              ? null
+              : () {
+                  final emailError =
+                      _validateEmail(_emailController.text.trim());
+                  if (emailError != null) {
+                    _showValidation(emailError);
+                    return;
+                  }
+                  setState(() => _step = 3);
+                },
+          style: _secondaryButtonStyle(),
+          child: Text(
+            l10n.t('addEmail'),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+        ),
+        const SizedBox(height: 14),
+        FilledButton(
+          onPressed: _submitting ? null : _completeVoiceOnly,
+          style: _filledStyle(),
+          child: _submitting
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.black,
+                  ),
+                )
+              : Text(
+                  l10n.t('continueWithVoiceOnly'),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  Widget _buildPasswordStep(AppLocalizations l10n) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          l10n.t('voiceRegister'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          l10n.t('createStrongPasswordNote'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: _subtext, fontSize: 15, height: 1.35),
         ),
         const SizedBox(height: 32),
         _VoiceField(
           controller: _passwordController,
-          hintText: 'Create password',
+          hintText: l10n.t('createPassword'),
           prefixIcon: Icons.lock_outline,
-          onMic: () => _showVoiceHint('password'),
+          onMic: () => _dictateTo(_passwordController),
+          micListening: _fieldSpeech.isListeningFor(_passwordController),
           obscureText: true,
           hintFontSize: 20,
           onChanged: (_) => setState(() {}),
@@ -469,6 +634,7 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
   }
 
   Widget _buildStepButton() {
+    final l10n = context.l10n;
     if (_step == 0) {
       final canContinue = _voiceController.hasValidSample && !_submitting;
       return FilledButton(
@@ -476,96 +642,86 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
             ? () => setState(() => _step = 1)
             : () {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
+                  SnackBar(
                     content: Text(
-                      'Please record your voice sample first.',
-                      style: TextStyle(fontSize: 15),
+                      l10n.t('pleaseRecordVoiceSample'),
+                      style: const TextStyle(fontSize: 15),
                     ),
                   ),
                 );
               },
         style: _filledStyle(),
         child: Text(
-          _voiceController.hasValidSample ? 'Continue' : 'Record voice first',
+          _voiceController.hasValidSample
+              ? l10n.t('continueLabel')
+              : l10n.t('pleaseRecordVoiceSample'),
           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
         ),
       );
     }
 
     if (_step == 1) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          FilledButton(
-            onPressed: _submitting
-                ? null
-                : () {
-                    final emailError =
-                        _validateEmail(_emailController.text.trim());
-                    if (emailError != null) {
-                      _showValidation(emailError);
-                      return;
-                    }
-                    setState(() => _step = 2);
-                  },
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF575C5F),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            child: const Text(
-              'Add Email',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-          ),
-          const SizedBox(height: 14),
-          FilledButton(
-            onPressed: _submitting ? null : _completeVoiceOnly,
-            style: _filledStyle(),
-            child: _submitting
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.black,
-                    ),
-                  )
-                : const Text(
-                    'Continue with Voice Only',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-          ),
-        ],
+      return FilledButton(
+        onPressed: _submitting
+            ? null
+            : () {
+                final nameError = _validateName(_nameController.text.trim());
+                if (nameError != null) {
+                  _showValidation(nameError);
+                  return;
+                }
+                setState(() => _step = 2);
+              },
+        style: _filledStyle(),
+        child: Text(
+          l10n.t('continueLabel'),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
       );
     }
 
-    return FilledButton(
-      onPressed: _submitting ? null : _submitWithEmailPassword,
-      style: _filledStyle(),
-      child: _submitting
-          ? const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.black,
+    if (_step == 2) {
+      return const SizedBox.shrink();
+    }
+
+    if (_step == 3) {
+      return FilledButton(
+        onPressed: _submitting ? null : _submitWithEmailPassword,
+        style: _filledStyle(),
+        child: _submitting
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.black,
+                ),
+              )
+            : Text(
+                l10n.t('continueLabel'),
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
-            )
-          : const Text(
-              'Continue',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-    );
+      );
+    }
+
+    return const SizedBox.shrink();
   }
 
   ButtonStyle _filledStyle() => FilledButton.styleFrom(
         backgroundColor: _accent,
         foregroundColor: Colors.black,
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 50),
+        minimumSize: const Size.fromHeight(52),
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      );
+
+  ButtonStyle _secondaryButtonStyle() => FilledButton.styleFrom(
+        backgroundColor: const Color(0xFF575C5F),
+        foregroundColor: Colors.white,
+        minimumSize: const Size.fromHeight(52),
+        padding: const EdgeInsets.symmetric(vertical: 14),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
         ),
@@ -578,20 +734,24 @@ class _VoiceField extends StatelessWidget {
     required this.hintText,
     required this.prefixIcon,
     required this.onMic,
+    this.micListening = false,
     this.obscureText = false,
     this.keyboardType,
     this.hintFontSize = 16,
     this.onChanged,
+    this.textCapitalization = TextCapitalization.none,
   });
 
   final TextEditingController controller;
   final String hintText;
   final IconData prefixIcon;
   final VoidCallback onMic;
+  final bool micListening;
   final bool obscureText;
   final TextInputType? keyboardType;
   final double hintFontSize;
   final ValueChanged<String>? onChanged;
+  final TextCapitalization textCapitalization;
 
   @override
   Widget build(BuildContext context) {
@@ -599,6 +759,7 @@ class _VoiceField extends StatelessWidget {
       controller: controller,
       obscureText: obscureText,
       keyboardType: keyboardType,
+      textCapitalization: textCapitalization,
       onChanged: onChanged,
       style: const TextStyle(color: Colors.white, fontSize: 16),
       decoration: InputDecoration(
@@ -612,18 +773,10 @@ class _VoiceField extends StatelessWidget {
         prefixIcon: Icon(prefixIcon, color: Colors.white, size: 26),
         suffixIcon: Padding(
           padding: const EdgeInsets.only(right: 8),
-          child: Material(
-            color: const Color(0xFF1D7278),
-            shape: const CircleBorder(),
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: onMic,
-              child: const SizedBox(
-                width: 44,
-                height: 44,
-                child: Icon(Icons.mic, color: Colors.white, size: 20),
-              ),
-            ),
+          child: ListeningMicButton(
+            listening: micListening,
+            onPressed: onMic,
+            size: 44,
           ),
         ),
         contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 4),

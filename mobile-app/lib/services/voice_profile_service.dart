@@ -92,54 +92,37 @@ class VoiceProfileService {
     required String passphrase,
     required List<double> probeVector,
   }) async {
+    if (!VoiceEmbeddingService.isUsableVoiceprint(probeVector)) {
+      return VoiceVerificationResult.voiceMismatch(
+        candidates: const [],
+        score: 0,
+      );
+    }
+
     final candidates = await _findPassphraseCandidates(passphrase);
     if (candidates.isEmpty) {
       return VoiceVerificationResult.phraseNotFound();
     }
 
     Map<String, dynamic>? bestProfile;
-    List<double> bestVector = const [];
     var bestScore = -1.0;
 
     for (final candidate in candidates) {
       final data = candidate.profile;
       final voiceData = VoiceProfileData.fromFirestore(data['voiceProfile']);
       final enrolled = voiceData?.voiceprintVector ?? const [];
-      if (enrolled.isEmpty) continue;
+      if (!VoiceEmbeddingService.isUsableVoiceprint(enrolled)) continue;
 
       final score = _embeddings.cosineSimilarity(enrolled, probeVector);
       if (score > bestScore) {
         bestScore = score;
         bestProfile = data;
-        bestVector = enrolled;
       }
     }
 
     if (bestProfile != null &&
-        bestVector.isNotEmpty &&
         bestScore >= VoiceEmbeddingService.matchThreshold) {
       return VoiceVerificationResult.success(bestProfile, bestScore);
-    }
-
-    final phraseOnlyCandidates = candidates.where((candidate) {
-      final voiceData =
-          VoiceProfileData.fromFirestore(candidate.profile['voiceProfile']);
-      return voiceData != null && !voiceData.hasVoiceprint;
-    }).toList();
-
-    if (probeVector.every((value) => value == 0) &&
-        phraseOnlyCandidates.length == 1) {
-      return VoiceVerificationResult.success(
-        phraseOnlyCandidates.first.profile,
-        1,
-      );
-    }
-
-    if (phraseOnlyCandidates.length == 1 && bestProfile == null) {
-      return VoiceVerificationResult.success(
-        phraseOnlyCandidates.first.profile,
-        1,
-      );
     }
 
     return VoiceVerificationResult.voiceMismatch(

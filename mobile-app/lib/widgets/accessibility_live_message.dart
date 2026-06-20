@@ -22,6 +22,8 @@ class AccessibilityLiveMessage extends StatelessWidget {
       padding: const EdgeInsets.only(top: 16),
       child: Semantics(
         liveRegion: true,
+        label: text,
+        excludeSemantics: true,
         child: Text(
           text,
           textAlign: TextAlign.center,

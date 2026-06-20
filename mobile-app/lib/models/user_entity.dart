@@ -22,6 +22,8 @@ class UserEntity {
   static Map<String, dynamic> _defaultAccessibilityPreferences() => {
         'fontScale': 1.0,
         'notificationsEnabled': true,
+        'fallDetectionEnabled': true,
+        'voiceAssistantEnabled': true,
         'languageCode': 'en',
       };
 
@@ -64,6 +66,7 @@ class UserEntity {
       if (voiceProfile.isNotEmpty) 'voiceProfile': voiceProfile,
       'emergencyContact': emergencyContact,
       'accessibilityPreferences': accessibilityPreferences,
+      'settings': accessibilityPreferences,
       'status': status == UserStatus.active ? 'Active' : 'Inactive',
       'createdAt': FieldValue.serverTimestamp(),
     };
