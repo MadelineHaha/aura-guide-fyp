@@ -1,0 +1,38 @@
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 31
+
+names:
+  0: Bike
+  1: Building
+  2: Car
+  3: Person
+  4: Stairs
+  5: Traffic sign
+  6: Electrical Pole
+  7: Road
+  8: Motorcycle
+  9: Dustbin
+  10: Dog
+  11: Manhole
+  12: Tree
+  13: Guard rail
+  14: Pedestrian crosswalk
+  15: Truck
+  16: Bus
+  17: Bench
+  18: Traffic Cone
+  19: Fire hydrant
+  20: Teraffic Barrel
+  21: Plant Pot
+  22: Electrical Box
+  23: Chair
+  24: Bicycle Rack
+  25: door
+  26: elevator
+  27: escalator
+  28: lift_icon
+  29: surau_icon
+  30: toilet_icon
