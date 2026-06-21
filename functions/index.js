@@ -1,5 +1,6 @@
 const admin = require("firebase-admin");
 const functions = require("firebase-functions");
+const { dispatchMedicationReminders, sendPushToToken } = require("./medication-reminders");
 
 admin.initializeApp();
 
@@ -65,5 +66,43 @@ exports.syncMyAuthProfile = functions.https.onCall(async (_, context) => {
     email: user.email || "",
     emailVerified: !!user.emailVerified,
   };
+});
+
+/**
+ * Sends FCM medication reminders when clinic clock matches reminderTime.
+ * Runs every minute in Asia/Kuala_Lumpur (UTC+8).
+ */
+exports.dispatchMedicationReminders = functions.pubsub
+  .schedule("every 1 minutes")
+  .timeZone("Asia/Kuala_Lumpur")
+  .onRun(async () => dispatchMedicationReminders());
+
+/**
+ * Sends an immediate test push to the signed-in patient's device.
+ */
+exports.sendTestMedicationPush = functions.https.onCall(async (_data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError("unauthenticated", "Sign-in required.");
+  }
+
+  const uid = context.auth.uid;
+  const userDoc = await db.collection("users").doc(uid).get();
+  const data = userDoc.data() || {};
+  const token = String(data.fcmToken || "").trim();
+
+  if (!token) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      "No fcmToken on your user profile. Tap Notification on the home screen first.",
+    );
+  }
+
+  await sendPushToToken(
+    token,
+    "This is a test medication reminder from Aura Guide.",
+    { reminderId: "TEST", medicationId: "TEST" },
+  );
+
+  return { ok: true };
 });
 

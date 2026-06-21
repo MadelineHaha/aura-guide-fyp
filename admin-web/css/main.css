@@ -2345,6 +2345,33 @@ body.staff-app {
   color: #868e96;
 }
 
+.medication-tag--cancelled {
+  background-color: #ffe3e3;
+  color: #c92a2a;
+}
+
+.add-medication-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.add-medication-footer .btn-cancel-medication {
+  width: 100%;
+  border-color: #ffc9c9;
+  color: #c92a2a;
+}
+
+.add-medication-footer .btn-cancel-medication:hover {
+  background-color: #fff5f5;
+  border-color: #ffa8a8;
+}
+
+.add-medication-footer .btn-cancel-medication:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .medications-modal-footer {
   padding-top: 4px;
 }

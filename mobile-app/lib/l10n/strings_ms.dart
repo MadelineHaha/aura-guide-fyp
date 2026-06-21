@@ -176,6 +176,7 @@ const Map<String, String> stringsMs = <String, String>{
   'medicationDueAt': '{name} perlu diambil pada {time}',
   'medicationItemA11y': '{name}. {time}. {dosage}. {status}',
   'medicationNotTaken': 'Not taken',
+  'medicationOverdue': 'Lewat',
   'medicationPercentTaken': '{percent}%',
   'medicationReminder': 'Peringatan ubat',
   'medicationReminderA11y': 'Peringatan ubat. Vitamin D perlu diambil pada 12:00 PTG.',
@@ -233,6 +234,30 @@ const Map<String, String> stringsMs = <String, String>{
   'notSetYet': 'Belum ditetapkan',
   'notification': 'Pemberitahuan',
   'notificationsComingSoon': 'Pemberitahuan akan datang tidak lama lagi.',
+  'noNotifications':
+      'Tiada pemberitahuan lagi. Peringatan ubat akan dipaparkan di sini.',
+  'couldNotLoadNotifications': 'Gagal memuatkan pemberitahuan. {error}',
+  'notificationItemA11y': '{title}. {time}. {body}. {status}',
+  'notificationStatusDelivered': 'Dihantar',
+  'notificationStatusCompleted': 'Selesai',
+  'notificationStatusMissed': 'Terlepas',
+  'notificationStatusUpcoming': 'Akan datang',
+  'notificationStatusPending': 'Due now',
+  'notificationExactAlarmHint':
+      'Untuk amaran ubat tepat pada masanya, benarkan Alarm & peringatan untuk Aura Guide.',
+  'openAlarmSettings': 'Benarkan',
+  'pushTokenSaved': 'Peringatan ubat didayakan ({preview}).',
+  'pushTokenSavedWithTest':
+      'Peringatan didayakan. Semak bandeja pemberitahuan untuk ujian.',
+  'pushTokenTestSent':
+      'Pemberitahuan ujian dihantar. Semak bandeja pemberitahuan.',
+  'pushTokenSavedShort': 'Peringatan ubat didayakan pada peranti ini.',
+  'pushTokenAlreadySaved': 'Token push sudah didaftarkan.',
+  'pushTokenEnableNotifications': 'Hidupkan Pemberitahuan dalam Tetapan dahulu.',
+  'pushTokenSignInRequired': 'Log masuk sebagai pesakit untuk mendaftar peringatan.',
+  'pushTokenUnavailable':
+      'Token push tidak tersedia. Gunakan telefon dengan Google Play Services dan cuba butang Pemberitahuan.',
+  'pushTokenSaveFailed': 'Gagal menyimpan token push ke Firestore.',
   'notificationsSubtitle': 'Dapatkan pemberitahuan serta-merta',
   'notificationsTitle': 'PEMBERITAHUAN',
   'obstacleAhead': '{label} di hadapan {distance} m',

@@ -21,6 +21,8 @@ import 'widgets/voice_assistant_host.dart';
 import 'services/emergency_ai_service.dart';
 import 'services/voice_assistant_coordinator.dart';
 import 'services/activity_log_service.dart';
+import 'services/medication_push_service.dart';
+import 'services/medication_local_reminder_service.dart';
 import 'services/step_tracking_service.dart';
 
 Future<void> main() async {
@@ -33,8 +35,18 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  await MedicationLocalReminderService.instance.ensureTimezoneReady();
+
+  MedicationPushService.registerBackgroundHandler();
+
   await configureFirebaseAuth();
   await AppSettingsService.instance.load();
+  AppSettingsService.instance.registerNotificationsPreferenceHandler(
+    MedicationPushService.instance.onNotificationsPreferenceChanged,
+  );
+  AppSettingsService.instance.registerAfterSettingsSyncHandler(
+    () => MedicationPushService.instance.syncToken(forceSave: true),
+  );
   unawaited(ActivityLogService.instance.warmUp());
   await DevicePermissionsService.instance.requestMicAndCameraOnLaunch();
 
@@ -96,14 +108,19 @@ class _AuthGateState extends State<_AuthGate> {
   User? _user;
   bool _initializing = true;
 
+  Future<void> _bootstrapSignedInUser(User user) async {
+    AuthSession.updateSignedInUser(user);
+    await AppSettingsService.instance.syncFromFirestore(user.uid);
+    unawaited(StepTrackingService.instance.start());
+    await MedicationPushService.instance.start();
+  }
+
   @override
   void initState() {
     super.initState();
     _user = FirebaseAuth.instance.currentUser;
     if (_user != null) {
-      AuthSession.updateSignedInUser(_user!);
-      unawaited(AppSettingsService.instance.syncFromFirestore(_user!.uid));
-      unawaited(StepTrackingService.instance.start());
+      unawaited(_bootstrapSignedInUser(_user!));
     }
     _authSub = FirebaseAuth.instance.authStateChanges().listen(_onAuthChanged);
   }
@@ -112,9 +129,8 @@ class _AuthGateState extends State<_AuthGate> {
     if (!mounted) return;
 
     if (user != null) {
-      AuthSession.updateSignedInUser(user);
-      unawaited(AppSettingsService.instance.syncFromFirestore(user.uid));
-      unawaited(StepTrackingService.instance.start());
+      await _bootstrapSignedInUser(user);
+      if (!mounted) return;
       setState(() {
         _user = user;
         _initializing = false;
@@ -129,6 +145,7 @@ class _AuthGateState extends State<_AuthGate> {
       AppSettingsService.instance.clearCloudSync();
       unawaited(PatientCallSession.instance.disposeOnSignOut());
       unawaited(StepTrackingService.instance.disposeOnSignOut());
+      unawaited(MedicationPushService.instance.disposeOnSignOut());
       setState(() {
         _user = null;
         _initializing = false;
@@ -143,9 +160,8 @@ class _AuthGateState extends State<_AuthGate> {
         final recovered = FirebaseAuth.instance.currentUser;
         if (!mounted) return;
         if (recovered != null) {
-          AuthSession.updateSignedInUser(recovered);
-          unawaited(AppSettingsService.instance.syncFromFirestore(recovered.uid));
-          unawaited(StepTrackingService.instance.start());
+          await _bootstrapSignedInUser(recovered);
+          if (!mounted) return;
           setState(() => _user = recovered);
           return;
         }

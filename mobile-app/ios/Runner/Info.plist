@@ -53,5 +53,9 @@
 	<string>Your location is shared with healthcare staff during an emergency SOS alert.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Camera access is used for AR navigation and AI obstacle detection.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>

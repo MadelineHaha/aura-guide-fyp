@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'l10n/app_localizations.dart';
@@ -20,18 +22,30 @@ class _MedicationsPageState extends State<MedicationsPage> {
 
   final _service = MedicationsService();
   late final Stream<List<MedicationItem>> _medicationsStream;
+  Timer? _overdueRefreshTimer;
 
   @override
   void initState() {
     super.initState();
     _medicationsStream = _service.watchForCurrentPatient();
+    _overdueRefreshTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _overdueRefreshTimer?.cancel();
+    super.dispose();
   }
 
   String _medicationLabel(BuildContext context, MedicationItem item) {
     final l10n = context.l10n;
     final status = item.takenToday
         ? l10n.t('medicationTaken')
-        : l10n.t('medicationNotTaken');
+        : item.isOverdue
+            ? l10n.t('medicationOverdue')
+            : l10n.t('medicationNotTaken');
     return l10n.t('medicationItemA11y', {
       'name': item.name,
       'time': item.scheduledTime,
@@ -276,22 +290,52 @@ class _MedicationCard extends StatelessWidget {
   static const Color _card = Color(0xFF1A1A1A);
   static const Color _subtext = Color(0xFFB0B0B0);
   static const Color _lime = Color(0xFF9DDC3D);
+  static const Color _overdue = Color(0xFFE13636);
+  static const Color _overdueCard = Color(0xFF3C1111);
 
   @override
   Widget build(BuildContext context) {
     final taken = item.takenToday;
-    final titleColor = taken ? Colors.black87 : Colors.white;
-    final detailColor = taken ? Colors.black54 : _subtext;
-    final iconBg = taken ? Colors.white : _lime;
+    final overdue = !taken && item.isOverdue;
+
+    final titleColor = taken
+        ? Colors.black87
+        : overdue
+            ? Colors.white
+            : Colors.white;
+    final detailColor = taken
+        ? Colors.black54
+        : overdue
+            ? const Color(0xFFFFB4B4)
+            : _subtext;
+    final cardColor = taken
+        ? _lime
+        : overdue
+            ? _overdueCard
+            : _card;
+    final borderColor = taken
+        ? _lime
+        : overdue
+            ? _overdue
+            : _lime;
+    final iconBg = taken
+        ? Colors.white
+        : overdue
+            ? _overdue
+            : _lime;
     final checkBg = taken ? Colors.black87 : Colors.transparent;
-    final checkIconColor = taken ? _lime : _lime;
+    final checkIconColor = taken
+        ? _lime
+        : overdue
+            ? _overdue
+            : _lime;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       decoration: BoxDecoration(
-        color: taken ? _lime : _card,
+        color: cardColor,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _lime, width: 1.4),
+        border: Border.all(color: borderColor, width: overdue ? 2 : 1.4),
       ),
       child: Row(
         children: [
@@ -302,9 +346,9 @@ class _MedicationCard extends StatelessWidget {
               color: iconBg,
               shape: BoxShape.circle,
             ),
-            child: const Icon(
+            child: Icon(
               Icons.medication_outlined,
-              color: Colors.black87,
+              color: taken ? Colors.black87 : Colors.white,
               size: 26,
             ),
           ),

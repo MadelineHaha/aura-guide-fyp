@@ -18,6 +18,8 @@ import 'services/appointments_service.dart';
 import 'services/communication_service.dart';
 import 'services/health_records_service.dart';
 import 'services/medications_service.dart';
+import 'services/medication_push_service.dart';
+import 'notifications_page.dart';
 import 'services/patient_call_session.dart';
 import 'services/step_tracking_service.dart';
 import 'widgets/daily_step_card.dart';
@@ -46,6 +48,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
     super.initState();
     PatientCallSession.instance.ensureStarted();
     unawaited(StepTrackingService.instance.start());
+    unawaited(MedicationPushService.instance.registerForReminders());
   }
 
   @override
@@ -241,16 +244,23 @@ class _MenuButton extends StatelessWidget {
 class _NotificationButton extends StatelessWidget {
   const _NotificationButton();
 
+  void _openNotifications(BuildContext context) {
+    unawaited(MedicationPushService.instance.registerForReminders());
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const NotificationsPage()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return AccessibleFocusRegion(
       label: context.l10n.t('notification'),
-      onActivate: () => _showComingSoon(context),
+      onActivate: () => _openNotifications(context),
       child: Material(
         color: const Color(0xFF50BDC5),
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
-          onTap: () => _showComingSoon(context),
+          onTap: () => _openNotifications(context),
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -265,12 +275,6 @@ class _NotificationButton extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-
-  static void _showComingSoon(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.l10n.t('notificationsComingSoon'))),
     );
   }
 }

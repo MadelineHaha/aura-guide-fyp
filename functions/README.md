@@ -13,6 +13,10 @@ This folder contains backend sync logic to keep Authentication and Firestore pro
 - `syncMyAuthProfile` (Callable HTTPS)  
   Lets the app trigger immediate sync for the currently signed-in user.
 
+- `dispatchMedicationReminders` (Pub/Sub schedule, every 1 minute)  
+  Sends FCM push notifications to patients when a `medicationreminders` entry is due
+  (clinic time UTC+8). Requires the mobile app to save `users/{uid}.fcmToken`.
+
 ## One-time setup
 
 1. Install Firebase CLI globally (if not installed):
@@ -28,6 +32,9 @@ This folder contains backend sync logic to keep Authentication and Firestore pro
 From repo root:
 
 - `firebase deploy --only functions`
+
+After first deploy, enable the Cloud Scheduler job for `dispatchMedicationReminders`
+in Google Cloud Console if it is paused.
 
 ## Notes
 
