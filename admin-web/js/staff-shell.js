@@ -5,7 +5,10 @@ import {
   saveStaffSession,
   signOutStaff,
 } from "./staff-auth.js";
+import { LOG_ACTIONS } from "./activity-log-actions.js";
+import { logSecurityAudit } from "./activity-logs-service.js";
 import { initEmergencyAlertsWatcher } from "./emergency-alerts-watcher.js";
+import { formatStaffDisplayName } from "./staff-name-format.js";
 
 const NAV_SCROLL_STORAGE_KEY = "staffNavScrollLeft";
 
@@ -137,7 +140,9 @@ export function renderStaffNav(profile) {
   const menuNameEl = document.getElementById("menu-staff-name");
   const menuRoleEl = document.getElementById("menu-staff-role");
   if (avatarInitialsEl) avatarInitialsEl.textContent = getInitials(profile.name);
-  if (menuNameEl) menuNameEl.textContent = profile.name || "—";
+  if (menuNameEl) {
+    menuNameEl.textContent = formatStaffDisplayName(profile) || profile.name || "—";
+  }
   if (menuRoleEl) menuRoleEl.textContent = profile.role || "—";
 }
 
@@ -158,7 +163,14 @@ export function initStaffAuth(onProfile) {
       renderStaffNav(profile);
       initEmergencyAlertsWatcher();
       if (onProfile) onProfile(profile);
-    } catch {
+    } catch (error) {
+      await logSecurityAudit({
+        action: LOG_ACTIONS.UNAUTHORIZED_ACCESS,
+        details: error?.message || "Inactive or invalid staff account attempted portal access.",
+        userName: user.email || "Unknown",
+        userId: user.uid,
+        source: "admin",
+      });
       window.location.href = "login.html";
     }
   });

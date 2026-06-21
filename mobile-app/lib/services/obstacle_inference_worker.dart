@@ -30,7 +30,7 @@ class ObstacleInferenceWorker {
     if (_interpreter != null) return true;
 
     try {
-      final options = InterpreterOptions()..threads = 2;
+      final options = InterpreterOptions()..threads = 4;
       _interpreter = await _loadInterpreter(options);
       _isolateInterpreter = await IsolateInterpreter.create(
         address: _interpreter!.address,
@@ -174,6 +174,35 @@ class ObstacleInferenceWorker {
     } catch (error, stack) {
       debugPrint('ObstacleInferenceWorker run failed: $error\n$stack');
       return null;
+    }
+  }
+
+  Future<void> warmUpInference() async {
+    final isolateInterpreter = _isolateInterpreter;
+    final inputShape = _inputShape;
+    final outputShape = _outputShape;
+    if (isolateInterpreter == null ||
+        inputShape == null ||
+        outputShape == null ||
+        _inputLength <= 0) {
+      return;
+    }
+
+    try {
+      const padValue = 114 / 255.0;
+      final inputFlat = Float32List(_inputLength)..fillRange(0, _inputLength, padValue);
+      _outputBuffer ??= List<double>.filled(_outputLength, 0);
+      _reshapedOutput ??= _outputBuffer!.reshape(outputShape);
+      await _runInference(
+        isolateInterpreter,
+        inputShape,
+        outputShape,
+        inputFlat,
+        frameWidth: _inputSize,
+        frameHeight: _inputSize,
+      );
+    } catch (error) {
+      debugPrint('ObstacleInferenceWorker warmUpInference failed: $error');
     }
   }
 
@@ -414,9 +443,9 @@ ObstacleDetectionResult? _parseOutput(
       case 8: // Dog
       case 23: // Chair
       case 17: // Bench
-        return 0.36;
+        return 0.30;
       default:
-        return 0.40;
+        return 0.34;
     }
   }
 

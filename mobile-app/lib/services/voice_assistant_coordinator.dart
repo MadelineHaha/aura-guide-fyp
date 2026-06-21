@@ -101,6 +101,10 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
   void setTopRouteLabel(String? label) {
     if (_topRouteLabel == label) return;
     _topRouteLabel = label;
+    if (!_canRun) {
+      unawaited(_stopListening());
+      return;
+    }
     _ensureListening();
   }
 
@@ -161,6 +165,7 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
       'VoiceLoginPage',
       'VoiceRegisterPage',
       'VoiceProfileSetupPage',
+      'NavigationArPage',
     ];
     return blocked.any(routeLabel.contains);
   }

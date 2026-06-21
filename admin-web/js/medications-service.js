@@ -17,7 +17,7 @@ import {
   todayDateString,
 } from "./appointments-service.js";
 import { formatTypedSentence } from "./text-format.js";
-import { trackFirestoreListener } from "./firestore-realtime.js";
+import { formatStaffDisplayName } from "./staff-name-format.js";
 import { HEALTHCARE_STAFF_COLLECTION } from "./staff-auth.js";
 
 export const MEDICATIONS_COLLECTION = "medications";
@@ -437,12 +437,7 @@ export async function updateMedicationWithReminder({
 }
 
 function staffDisplayName(staff) {
-  if (!staff?.name) return staff?.staffID || "—";
-  const role = (staff.role || "").toLowerCase();
-  if (role.includes("doctor") || role.includes("dr")) {
-    return staff.name.startsWith("Dr.") ? staff.name : `Dr. ${staff.name}`;
-  }
-  return staff.name;
+  return formatStaffDisplayName(staff);
 }
 
 export function isMedicationActiveOnDate(startDate, endDate, yyyyMmDd) {

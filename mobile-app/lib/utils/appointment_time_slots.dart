@@ -97,9 +97,11 @@ class AppointmentTimeSlots {
     );
   }
 
-  static List<DateTime> defaultSlotsOnDate(DateTime calendarDate) {
-    const hours = [9, 11, 13, 14, 16, 17];
-    return hours
+  static const clinicSlotHours = [9, 10, 11, 13, 14, 15, 16, 17, 18];
+
+  /// Standard clinic hours: 9–11 AM and 1–6 PM.
+  static List<DateTime> clinicSlotsOnDate(DateTime calendarDate) {
+    return clinicSlotHours
         .map(
           (h) => DateTime(
             calendarDate.year,
@@ -111,4 +113,7 @@ class AppointmentTimeSlots {
         )
         .toList();
   }
+
+  static List<DateTime> defaultSlotsOnDate(DateTime calendarDate) =>
+      clinicSlotsOnDate(calendarDate);
 }

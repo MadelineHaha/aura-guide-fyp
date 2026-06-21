@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'l10n/app_localizations.dart';
 import 'firebase_auth_helper.dart';
 import 'main_menu_page.dart';
+import 'services/activity_log_actions.dart';
+import 'services/activity_log_service.dart';
 import 'services/phone_number_service.dart';
 import 'services/voice_auth_credentials_service.dart';
 import 'services/voice_passphrase_controller.dart';
@@ -113,10 +117,10 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
       _controller.resetSample();
       setState(() {
         _enteringDashboard = false;
-        _statusMessage = firebaseAuthErrorMessage(e);
+        _statusMessage = firebaseLoginErrorMessage(e);
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(firebaseAuthErrorMessage(e))),
+        SnackBar(content: Text(firebaseLoginErrorMessage(e))),
       );
     } catch (e) {
       if (!mounted) return;
@@ -180,7 +184,7 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
       if (!mounted) return;
       setState(() {
         _enteringDashboard = false;
-        _statusMessage = firebaseAuthErrorMessage(e);
+        _statusMessage = firebaseLoginErrorMessage(e);
       });
     } catch (e) {
       if (!mounted) return;
@@ -220,6 +224,15 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
         password: credentials.password,
       );
     }
+
+    unawaited(
+      ActivityLogService.instance.log(
+        action: ActivityLogActions.login,
+        details: 'Successful voice login to mobile app.',
+        userName: matched['name']?.toString(),
+        userId: matched['userId']?.toString(),
+      ),
+    );
 
     if (!mounted) return;
     final name = matched['name']?.toString().trim();

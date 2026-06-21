@@ -24,7 +24,7 @@
         <a class="staff-nav-link is-active" href="appointments.html">Appointments</a>
         <a class="staff-nav-link" href="patients.html">Patients</a>
         <a class="staff-nav-link" href="emergencies.html">Emergencies</a>
-        <a class="staff-nav-link" href="#">Reports</a>
+        <a class="staff-nav-link" href="reports.html">Reports</a>
         <a class="staff-nav-link" href="communication.html">Communication</a>
         <a class="staff-nav-link" href="logs.html">Logs</a>
       </nav>
@@ -175,7 +175,9 @@
           </label>
           <label class="form-field">
             <span class="form-field-label">Time</span>
-            <input class="form-field-input" type="time" id="add-appointment-time" required />
+            <select class="form-field-input form-field-select" id="add-appointment-time" required disabled>
+              <option value="">Select date first</option>
+            </select>
           </label>
           <label class="form-field form-field--full">
             <span class="form-field-label">Notes</span>

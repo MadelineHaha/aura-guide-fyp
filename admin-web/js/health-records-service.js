@@ -29,8 +29,7 @@ import { formatTypedSentence } from "./text-format.js";
 import { fetchActiveStaff } from "./staff-list-service.js";
 import { HEALTHCARE_STAFF_COLLECTION } from "./staff-auth.js";
 import { trackFirestoreListener } from "./firestore-realtime.js";
-
-
+import { formatStaffDisplayName } from "./staff-name-format.js";
 
 export const HEALTH_RECORDS_COLLECTION = "healthrecords";
 
@@ -162,22 +161,8 @@ export function resolveFileType(fileName) {
 
 
 function staffDisplayName(staff) {
-
-  if (!staff?.name) return staff?.staffID || "—";
-
-  const role = (staff.role || "").toLowerCase();
-
-  if (role.includes("doctor") || role.includes("dr")) {
-
-    return staff.name.startsWith("Dr.") ? staff.name : `Dr. ${staff.name}`;
-
-  }
-
-  return staff.name;
-
+  return formatStaffDisplayName(staff);
 }
-
-
 
 function readFileAsBase64(file) {
 
@@ -715,20 +700,6 @@ export function subscribeHealthRecordsByUserId(userId, onData, onError) {
   return stopAll;
 }
 
-
-
-function formatStaffDoctorName(name) {
-
-  const trimmed = String(name || "").trim();
-
-  if (!trimmed) return "Staff";
-
-  return trimmed.startsWith("Dr.") ? trimmed : `Dr. ${trimmed}`;
-
-}
-
-
-
 export async function createHealthRecord({
 
   userId,
@@ -742,6 +713,8 @@ export async function createHealthRecord({
   file,
 
   staffName = "",
+
+  staffRole = "",
 
   onPhase,
 
@@ -855,7 +828,11 @@ export async function createHealthRecord({
 
     description: trimmedTitle,
 
-    doctor: formatStaffDoctorName(staffName),
+    doctor: formatStaffDisplayName({
+      name: staffName,
+      role: staffRole,
+      staffID: staffId,
+    }),
 
     dateCreated,
 
@@ -929,6 +906,7 @@ export async function updateHealthRecord({
   file,
   staffId,
   staffName = "",
+  staffRole = "",
   onPhase,
 }) {
   const validationError = validateHealthRecordInput({
@@ -968,7 +946,11 @@ export async function updateHealthRecord({
     recordId,
     type: trimmedType,
     description: trimmedTitle,
-    doctor: formatStaffDoctorName(staffName),
+    doctor: formatStaffDisplayName({
+      name: staffName,
+      role: staffRole,
+      staffID: staffId,
+    }),
     dateCreated: existing?.dateCreated || "",
     fileType: file ? resolveFileType(file.name) : existing?.fileType || "",
     filePath: payload.filePath || existing?.filePath || "",

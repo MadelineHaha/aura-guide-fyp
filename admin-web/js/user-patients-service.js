@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   onSnapshot,
   query,
@@ -11,6 +12,8 @@ import {
   where,
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { auth, db } from "./firebase.js";
+import { LOG_ACTIONS } from "./activity-log-actions.js";
+import { logStaffActivity } from "./activity-logs-service.js";
 import { trackFirestoreListener } from "./firestore-realtime.js";
 
 export const USERS_COLLECTION = "users";
@@ -175,7 +178,22 @@ export function dateToInputValue(date) {
   return `${y}-${m}-${d}`;
 }
 
+export function patientUserIdFromData(data, fallback = "—") {
+  return (
+    data?.userId ||
+    data?.userID ||
+    data?.patientId ||
+    fallback
+  );
+}
+
 export async function updatePatient(docId, fields) {
+  const patientRef = doc(db, USERS_COLLECTION, docId);
+  const beforeSnap = await getDoc(patientRef);
+  const patientUserId = beforeSnap.exists()
+    ? patientUserIdFromData(beforeSnap.data(), docId)
+    : docId;
+
   const payload = { updatedAt: serverTimestamp() };
 
   if (Object.hasOwn(fields, "email")) {
@@ -206,7 +224,12 @@ export async function updatePatient(docId, fields) {
     payload.status = fields.status;
   }
 
-  await updateDoc(doc(db, USERS_COLLECTION, docId), payload);
+  await updateDoc(patientRef, payload);
+  await logStaffActivity({
+    action: LOG_ACTIONS.UPDATE_PATIENT,
+    details: `Updated patient profile ${patientUserId}.`,
+    type: "info",
+  });
 }
 
 export async function deactivatePatient(docId) {

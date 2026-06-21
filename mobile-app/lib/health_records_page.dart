@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'l10n/app_localizations.dart';
 import 'models/health_record_item.dart';
+import 'services/activity_log_actions.dart';
+import 'services/activity_log_service.dart';
 import 'services/health_record_audio_service.dart';
 import 'services/health_records_service.dart';
 import 'widgets/accessible_focus_region.dart';
@@ -30,6 +34,12 @@ class _HealthRecordsPageState extends State<HealthRecordsPage> {
   void initState() {
     super.initState();
     _recordsStream = _service.watchForCurrentPatient();
+    unawaited(
+      ActivityLogService.instance.log(
+        action: ActivityLogActions.healthRecordViewed,
+        details: 'Opened health records page.',
+      ),
+    );
   }
 
   @override

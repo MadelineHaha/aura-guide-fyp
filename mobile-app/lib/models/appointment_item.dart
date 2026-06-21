@@ -3,16 +3,18 @@ import '../utils/clinic_datetime.dart';
 class AppointmentItem {
   AppointmentItem({
     required this.id,
+    required this.staffId,
     required this.doctorName,
-    required this.specialty,
+    required this.appointmentType,
     required this.dateTime,
     required this.location,
     required this.status,
   });
 
   final String id;
+  final String staffId;
   final String doctorName;
-  final String specialty;
+  final String appointmentType;
   final DateTime dateTime;
   final String location;
   final String status;

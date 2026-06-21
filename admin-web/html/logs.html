@@ -24,7 +24,7 @@
         <a class="staff-nav-link" href="appointments.html">Appointments</a>
         <a class="staff-nav-link" href="patients.html">Patients</a>
         <a class="staff-nav-link" href="emergencies.html">Emergencies</a>
-        <a class="staff-nav-link" href="#">Reports</a>
+        <a class="staff-nav-link" href="reports.html">Reports</a>
         <a class="staff-nav-link" href="communication.html">Communication</a>
         <a class="staff-nav-link is-active" href="logs.html">Logs</a>
       </nav>
@@ -76,6 +76,15 @@
           autocomplete="off"
         />
       </label>
+      <label class="logs-date-range-field">
+        <span class="logs-date-range-label">Date range</span>
+        <select class="logs-date-range-select" id="logs-date-range" aria-label="Filter logs by date range">
+          <option value="7">Past 7 days</option>
+          <option value="30" selected>Past 30 days</option>
+          <option value="60">Past 60 days</option>
+          <option value="all">All time</option>
+        </select>
+      </label>
       <div class="filter-tabs logs-filter-tabs" role="tablist" aria-label="Filter logs by type">
         <button type="button" class="filter-tab is-active" data-type="all">All</button>
         <button type="button" class="filter-tab" data-type="info">Info</button>
@@ -98,6 +107,7 @@
         </thead>
         <tbody id="logs-tbody"></tbody>
       </table>
+      <p class="table-empty" id="logs-loading">Loading activity logs…</p>
       <p class="table-empty" id="logs-empty" hidden>No logs match your filters.</p>
     </div>
   </main>

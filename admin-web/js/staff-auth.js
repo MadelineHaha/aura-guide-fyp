@@ -4,10 +4,12 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
 import { doc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { auth, db } from "./firebase.js";
+import { LOG_ACTIONS } from "./activity-log-actions.js";
+import { logStaffActivity, logSecurityAudit } from "./activity-logs-service.js";
 
 export const HEALTHCARE_STAFF_COLLECTION = "healthcarestaff";
 export const STAFF_SESSION_KEY = "staffSession";
-export const LOGIN_ERROR_MESSAGE = "The email or password is invalid.";
+export const LOGIN_ERROR_MESSAGE = "Invalid credential";
 
 export function saveStaffSession(profile) {
   sessionStorage.setItem(STAFF_SESSION_KEY, JSON.stringify(profile));
@@ -52,10 +54,24 @@ export async function signInStaff(email, password) {
   const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
   const profile = await verifyActiveStaff(credential.user.uid);
   saveStaffSession(profile);
+  void logStaffActivity({
+    action: LOG_ACTIONS.LOGIN,
+    details: "Successful login to staff portal.",
+    type: "info",
+  });
   return profile;
 }
 
 export async function signOutStaff() {
+  try {
+    await logStaffActivity({
+      action: LOG_ACTIONS.LOGOUT,
+      details: "Signed out of staff portal.",
+      type: "info",
+    });
+  } catch (error) {
+    console.warn("Could not write logout activity log:", error);
+  }
   clearStaffSession();
   await signOut(auth);
 }

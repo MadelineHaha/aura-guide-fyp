@@ -16,6 +16,7 @@ import 'widgets/app_back_button.dart';
 import 'widgets/calendar_date_picker_dialog.dart';
 import 'widgets/date_select_field.dart';
 import 'widgets/listening_mic_button.dart';
+import 'widgets/password_field_suffix.dart';
 
 /// Manual registration: 4-step "Create Account" flow (name, date of birth, email, password).
 class ManualRegisterPage extends StatefulWidget {
@@ -615,7 +616,7 @@ class _StepProgress extends StatelessWidget {
   }
 }
 
-class _DarkLabeledField extends StatelessWidget {
+class _DarkLabeledField extends StatefulWidget {
   const _DarkLabeledField({
     required this.controller,
     required this.hintText,
@@ -638,6 +639,13 @@ class _DarkLabeledField extends StatelessWidget {
   final Iterable<String>? autofillHints;
   final ValueChanged<String>? onChanged;
 
+  @override
+  State<_DarkLabeledField> createState() => _DarkLabeledFieldState();
+}
+
+class _DarkLabeledFieldState extends State<_DarkLabeledField> {
+  var _obscured = true;
+
   static const Color _accent = Color(0xFF66C2BD);
   static const Color _fieldFill = Color(0xFF141414);
   static const Color _fieldBorder = Color(0xFF3A3A3A);
@@ -645,26 +653,36 @@ class _DarkLabeledField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPassword = widget.obscureText;
+
     return TextField(
-      controller: controller,
-      obscureText: obscureText,
-      keyboardType: keyboardType,
-      autofillHints: autofillHints,
-      onChanged: onChanged,
+      controller: widget.controller,
+      obscureText: isPassword ? _obscured : false,
+      keyboardType: widget.keyboardType,
+      autofillHints: widget.autofillHints,
+      onChanged: widget.onChanged,
       style: const TextStyle(color: Colors.white, fontSize: 16),
       decoration: InputDecoration(
         filled: true,
         fillColor: _fieldFill,
-        hintText: hintText,
+        hintText: widget.hintText,
         hintStyle: const TextStyle(color: _subtext, fontSize: 15),
-        prefixIcon: Icon(prefixIcon, color: Colors.white70, size: 22),
-        suffixIcon: Padding(
-          padding: const EdgeInsets.only(right: 10),
-          child: _MicButton(
-            onPressed: onMic,
-            listening: micListening,
-          ),
-        ),
+        prefixIcon: Icon(widget.prefixIcon, color: Colors.white70, size: 22),
+        suffixIcon: isPassword
+            ? PasswordFieldSuffix(
+                obscured: _obscured,
+                onToggleObscured: () => setState(() => _obscured = !_obscured),
+                onMic: widget.onMic,
+                micListening: widget.micListening,
+                micSize: 40,
+              )
+            : Padding(
+                padding: const EdgeInsets.only(right: 10),
+                child: _MicButton(
+                  onPressed: widget.onMic,
+                  listening: widget.micListening,
+                ),
+              ),
         suffixIconConstraints: const BoxConstraints(minHeight: 48, minWidth: 52),
         contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 4),
         enabledBorder: OutlineInputBorder(

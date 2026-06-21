@@ -45,16 +45,28 @@ class ObstacleDetectionService {
   bool get isReady => _workerReady;
   bool _workerReady = false;
   bool _initializing = false;
+  Completer<bool>? _initCompleter;
 
   Future<bool> initialize() async {
     if (_workerReady) return true;
-    if (_initializing) return false;
+    if (_initializing) {
+      return _initCompleter?.future ?? Future.value(false);
+    }
 
     _initializing = true;
+    _initCompleter = Completer<bool>();
     try {
       _workerReady = await _worker.start();
+      if (_workerReady) {
+        await _worker.warmUpInference();
+      }
       debugPrint('ObstacleDetectionService worker ready=$_workerReady');
+      _initCompleter!.complete(_workerReady);
       return _workerReady;
+    } catch (error, stack) {
+      debugPrint('ObstacleDetectionService initialize failed: $error\n$stack');
+      _initCompleter!.complete(false);
+      return false;
     } finally {
       _initializing = false;
     }

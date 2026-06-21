@@ -24,8 +24,8 @@ class ObstacleScannerService {
   double? _smoothedDistanceMeters;
   String _smoothedDistanceLabel = '';
 
-  static const _scanInterval = Duration(milliseconds: 450);
-  static const _alertCooldown = Duration(milliseconds: 900);
+  static const _scanInterval = Duration(milliseconds: 220);
+  static const _alertCooldown = Duration(milliseconds: 650);
 
   bool isRunning = false;
   bool modelReady = false;

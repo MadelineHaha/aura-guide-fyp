@@ -23,8 +23,13 @@ service cloud.firestore {
     function patientUserId() {
       let profile = patientProfile();
       return profile.userId != null ? profile.userId
+        : profile.userID != null ? profile.userID
         : profile.patientId != null ? profile.patientId
         : profile.UserID;
+    }
+
+    function isValidStepCount(value) {
+      return value is int || value is float;
     }
 
     function emergencyAlertPatientId(data) {
@@ -86,6 +91,39 @@ service cloud.firestore {
         && request.resource.data.staffId is string;
     }
 
+    function isValidActivityLogCreate() {
+      return request.resource.data.action is string
+        && request.resource.data.details is string
+        && request.resource.data.userName is string
+        && request.resource.data.userId is string
+        && request.resource.data.type in ['info', 'warning', 'security']
+        && request.resource.data.source in ['mobile', 'admin', 'system']
+        && request.resource.data.ipAddress is string
+        && request.resource.data.timestamp is timestamp;
+    }
+
+    function isStaffAppointmentCreate() {
+      return isActiveStaff()
+        && request.resource.data.userId is string
+        && request.resource.data.staffId is string
+        && request.resource.data.status is string
+        && request.resource.data.dateTime is timestamp
+        && request.resource.data.appointmentType is string;
+    }
+
+    // Patient reschedules a confirmed appointment (date/time only).
+    function isPatientRescheduleUpdate() {
+      return isOwnPatientAppointment()
+        && resource.data.status in ['Scheduled', 'Rescheduled']
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.appointmentType == resource.data.appointmentType
+        && request.resource.data.status == 'Rescheduled'
+        && request.resource.data.dateTime is timestamp
+        && request.resource.data.dateTime > request.time
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['dateTime', 'status', 'updatedAt']);
+    }
+
     match /appointments/{appointmentId} {
       // Single-doc reads (detail screens).
       allow get: if request.auth != null
@@ -100,10 +138,11 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && resource.data.userId == patientUserId();
 
-      allow create: if isActiveStaff() || isPatientBookingCreate();
+      allow create: if isStaffAppointmentCreate() || isPatientBookingCreate();
       allow delete: if isActiveStaff();
       allow update: if isActiveStaff()
         || isPatientClaimAppointmentSlot()
+        || isPatientRescheduleUpdate()
         || (isOwnPatientAppointment()
             && request.resource.data.status == 'Cancelled'
             && request.resource.data.diff(resource.data).affectedKeys()
@@ -517,6 +556,73 @@ service cloud.firestore {
 
     match /system/{document=**} {
       allow read, write: if request.auth != null;
+    }
+
+    function isSecurityAuditLogCreate() {
+      return request.resource.data.type == 'security'
+        && request.resource.data.action in [
+          'Failed Login',
+          'Unauthorized Access Attempt',
+          'Account Lockout',
+          'Password Change'
+        ]
+        && request.resource.data.userName is string
+        && request.resource.data.userId is string
+        && request.resource.data.details is string
+        && request.resource.data.source in ['mobile', 'admin', 'system']
+        && request.resource.data.ipAddress is string
+        && request.resource.data.timestamp is timestamp;
+    }
+
+    function isPatientActivityWrite() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && patientUserId() != ''
+        && request.resource.data.userId == patientUserId()
+        && request.resource.data.date is string
+        && isValidStepCount(request.resource.data.steps)
+        && request.resource.data.steps >= 0;
+    }
+
+    match /activity/{activityId} {
+      allow read, list: if isActiveStaff();
+
+      allow get: if hasPatientProfile()
+        && (!exists(/databases/$(database)/documents/activity/$(activityId))
+            || resource.data.userId == patientUserId());
+      allow list: if hasPatientProfile()
+        && resource.data.userId == patientUserId();
+
+      allow create, update: if isPatientActivityWrite();
+    }
+
+    function isPatientDailyMetricWrite() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && patientUserId() != ''
+        && request.resource.data.userId == patientUserId()
+        && request.resource.data.date is string
+        && isValidStepCount(request.resource.data.steps)
+        && request.resource.data.steps >= 0
+        && (!('source' in request.resource.data)
+            || request.resource.data.source == 'device');
+    }
+
+    match /patientdailymetrics/{metricId} {
+      allow read, list: if isActiveStaff();
+
+      allow get: if hasPatientProfile()
+        && resource.data.userId == patientUserId();
+      allow list: if hasPatientProfile()
+        && resource.data.userId == patientUserId();
+
+      allow create, update: if isPatientDailyMetricWrite();
+    }
+
+    match /activityLogs/{logId} {
+      allow create: if (request.auth != null && isValidActivityLogCreate())
+        || isSecurityAuditLogCreate();
+      allow read, list: if isActiveStaff();
     }
   }
 }

@@ -58,6 +58,7 @@ dependencies:
   flutter_webrtc: ^1.5.1
   sensors_plus: ^6.1.1
   tflite_flutter: ^0.11.0
+  pedometer_2: ^5.0.4
 
 dev_dependencies:
   flutter_test:

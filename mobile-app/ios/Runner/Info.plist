@@ -48,7 +48,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Microphone access is used for voice login, voice registration, emergency SOS, fall detection voice check-in, and navigation voice commands.</string>
 	<key>NSMotionUsageDescription</key>
-	<string>Motion sensors are used to detect sudden falls while you are using the app.</string>
+	<string>Motion sensors are used to detect sudden falls and to track daily step counts for health reports.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Your location is shared with healthcare staff during an emergency SOS alert.</string>
 	<key>NSCameraUsageDescription</key>
