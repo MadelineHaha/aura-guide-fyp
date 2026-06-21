@@ -116,16 +116,21 @@ class ObstacleDetectionService {
 Future<ObstacleDetection?> detectObstacleHeuristicAsync(CameraImage image) {
   if (image.planes.isEmpty) return Future.value(null);
 
-  final packet = ObstacleFramePacket.fromCamera(image);
-  if (packet.yBytes.isEmpty) return Future.value(null);
+  final y = image.planes[0];
+  final compact = ObstacleFramePacket.compactYPlaneForStream(
+    src: y.bytes,
+    srcW: image.width,
+    srcH: image.height,
+    srcStride: y.bytesPerRow,
+  );
 
   return compute(
     _detectObstacleHeuristicIsolate,
     _HeuristicFrameInput(
-      width: packet.width,
-      height: packet.height,
-      rowStride: packet.yStride,
-      bytes: packet.yBytes,
+      width: compact.width,
+      height: compact.height,
+      rowStride: compact.yStride,
+      bytes: compact.yBytes,
     ),
   );
 }
@@ -206,7 +211,7 @@ ObstacleDetection? _detectObstacleHeuristicIsolate(_HeuristicFrameInput input) {
   final texture = (centerVariance / 6500).clamp(0.0, 1.0);
   final score = (contrast * 0.55 + texture * 0.45).clamp(0.0, 1.0);
 
-  if (score < 0.22) return null;
+  if (score < 0.18) return null;
 
   final distance = (4.5 - score * 3.2).clamp(0.8, 4.0);
   return ObstacleDetection(

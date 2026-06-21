@@ -433,16 +433,31 @@ ObstacleDetectionResult? _parseOutput(
 }) {
   const numClasses = 31;
 
-  double confidenceThresholdForClass(int classId) {
+  double confidenceThresholdForClass(
+    int classId, {
+    required double centerDistance,
+  }) {
+    double base;
     switch (classId) {
       case 3: // Person
-      case 8: // Dog
+        base = 0.27;
+      case 10: // Dog
+        base = 0.26;
+      case 2: // Car
+      case 15: // Truck
+      case 16: // Bus
+        base = 0.30;
       case 23: // Chair
       case 17: // Bench
-        return 0.30;
+      case 18: // Traffic Cone
+        base = 0.25;
       default:
-        return 0.34;
+        base = 0.28;
     }
+    // Lower bar for objects in the center of the frame (directly in front).
+    if (centerDistance < 0.18) return base - 0.07;
+    if (centerDistance < 0.30) return base - 0.04;
+    return base;
   }
 
   if (frameWidth <= 0 || frameHeight <= 0) {
@@ -477,13 +492,19 @@ ObstacleDetectionResult? _parseOutput(
       debugBestClass = bestClass;
     }
 
-    if (bestClass < 0 || bestScore < confidenceThresholdForClass(bestClass)) {
-      continue;
-    }
-    if (_excludedClassIds.contains(bestClass)) continue;
+    if (bestClass < 0 || _excludedClassIds.contains(bestClass)) continue;
 
     final cx = _readOutput(output, 0, anchor, anchorCount);
     final cy = _readOutput(output, 1, anchor, anchorCount);
+    final centerDistance = math.sqrt(
+      math.pow(cx - 0.5, 2) + math.pow(cy - 0.5, 2),
+    );
+    if (bestScore < confidenceThresholdForClass(
+      bestClass,
+      centerDistance: centerDistance,
+    )) {
+      continue;
+    }
     final boxW = _readOutput(output, 2, anchor, anchorCount).abs();
     final boxH = _readOutput(output, 3, anchor, anchorCount).abs();
     if (boxW <= 0.01 || boxH <= 0.01) continue;
@@ -522,9 +543,9 @@ ObstacleDetectionResult? _parseOutput(
     final centerDistance = math.sqrt(
       math.pow(box.cx - 0.5, 2) + math.pow(box.cy - 0.5, 2),
     );
-    final priorityBoost = box.classId == 3 ? 1.1 : 1.0;
+    final priorityBoost = box.classId == 3 ? 1.15 : 1.0;
     final weighted = box.score *
-        (1.15 - centerDistance.clamp(0.0, 0.85)) *
+        (1.30 - centerDistance.clamp(0.0, 0.80)) *
         priorityBoost;
     if (weighted > bestWeighted) {
       bestWeighted = weighted;

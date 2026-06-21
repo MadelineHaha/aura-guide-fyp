@@ -18,6 +18,34 @@ class ObstacleBounds {
   final int? frameWidth;
   final int? frameHeight;
 
+  /// Camera frames used for inference are usually landscape while AR is portrait.
+  bool get isLandscapeFrame =>
+      frameWidth != null &&
+      frameHeight != null &&
+      frameWidth! > frameHeight!;
+
+  /// Normalized box in the same orientation as the on-screen camera preview.
+  ({double left, double top, double width, double height}) displayNormalized({
+    bool? rotateForPortrait,
+  }) {
+    final rotate = rotateForPortrait ?? isLandscapeFrame;
+    if (!rotate) {
+      return (left: left, top: top, width: width, height: height);
+    }
+    return (
+      left: top,
+      top: 1.0 - left - width,
+      width: height,
+      height: width,
+    );
+  }
+
+  /// Horizontal center (0–1) in preview coordinates — use for left/right alerts.
+  double displayCenterX({bool? rotateForPortrait}) {
+    final normalized = displayNormalized(rotateForPortrait: rotateForPortrait);
+    return normalized.left + normalized.width / 2;
+  }
+
   Map<String, dynamic> toMap() => {
         'left': left,
         'top': top,

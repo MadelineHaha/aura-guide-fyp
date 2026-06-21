@@ -20,12 +20,18 @@ class ObstacleScannerService {
   Timer? _scanTimer;
 
   DateTime _lastAlertAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastPositiveScanAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _scanInFlight = false;
   double? _smoothedDistanceMeters;
   String _smoothedDistanceLabel = '';
+  String? _trackedLabel;
+  int _consistentHits = 0;
 
-  static const _scanInterval = Duration(milliseconds: 220);
-  static const _alertCooldown = Duration(milliseconds: 650);
+  static const _scanInterval = Duration(milliseconds: 100);
+  static const _alertCooldown = Duration(milliseconds: 500);
+  static const _strongConfidence = 0.30;
+  static const _weakConfidenceHits = 2;
+  static const _heuristicStall = Duration(milliseconds: 450);
 
   bool isRunning = false;
   bool modelReady = false;
@@ -63,6 +69,8 @@ class ObstacleScannerService {
     _latestFrame = null;
     _smoothedDistanceMeters = null;
     _smoothedDistanceLabel = '';
+    _trackedLabel = null;
+    _consistentHits = 0;
 
     final controller = _cameraController;
     _cameraController = null;
@@ -102,9 +110,19 @@ class ObstacleScannerService {
 
       if (detection == null && !modelReady) {
         detection = await detectObstacleHeuristicAsync(frame);
+      } else if (detection == null && modelReady) {
+        final now = DateTime.now();
+        final stalled = now.difference(_lastPositiveScanAt) > _heuristicStall;
+        final nearMiss = _detection.lastTopScore >= 0.15;
+        if (stalled && nearMiss) {
+          detection = await detectObstacleHeuristicAsync(frame);
+        }
       }
 
       if (detection == null) {
+        if (_consistentHits > 0) _consistentHits--;
+        if (_consistentHits == 0) _trackedLabel = null;
+
         if (_detection.inferenceCount % 8 == 0) {
           debugPrint(
             'ObstacleScanner: no detection '
@@ -119,8 +137,30 @@ class ObstacleScannerService {
         return;
       }
 
+      _lastPositiveScanAt = DateTime.now();
+
+      if (detection.label == _trackedLabel) {
+        _consistentHits++;
+      } else {
+        _trackedLabel = detection.label;
+        _consistentHits = 1;
+      }
+
+      final strongHit = detection.confidence >= _strongConfidence;
+      if (!strongHit && _consistentHits < _weakConfidenceHits) {
+        return;
+      }
+
       final now = DateTime.now();
       if (now.difference(_lastAlertAt) < _alertCooldown) return;
+
+      final rotateForPortrait = frame.width > frame.height;
+      final direction = detection.bounds == null
+          ? ObstacleDirection.front
+          : directionFromBounds(
+              detection.bounds!,
+              rotateForPortrait: rotateForPortrait,
+            );
 
       final distanceMeters = _smoothDistance(
         label: detection.label,
@@ -131,9 +171,11 @@ class ObstacleScannerService {
       statusText = '${detection.label} detected';
       debugPrint(
         'ObstacleScanner: ALERT ${detection.label} '
-        'dir=${detection.direction.name} '
+        'dir=${direction.name} '
         'conf=${detection.confidence.toStringAsFixed(2)} '
-        'dist=${distanceMeters.toStringAsFixed(1)}m',
+        'hits=$_consistentHits '
+        'dist=${distanceMeters.toStringAsFixed(1)}m '
+        'centerX=${detection.bounds?.displayCenterX(rotateForPortrait: rotateForPortrait).toStringAsFixed(2)}',
       );
       if (!_alerts.isClosed) {
         _alerts.add(
@@ -142,6 +184,7 @@ class ObstacleScannerService {
             distanceMeters: double.parse(distanceMeters.toStringAsFixed(1)),
             confidence: detection.confidence,
             bounds: detection.bounds,
+            direction: direction,
           ),
         );
       }
@@ -180,15 +223,17 @@ class ObstacleAlert {
     required this.distanceMeters,
     required this.confidence,
     this.bounds,
+    this.direction = ObstacleDirection.front,
   });
 
   final String label;
   final double distanceMeters;
   final double confidence;
   final ObstacleBounds? bounds;
+  final ObstacleDirection direction;
 
-  ObstacleDirection get direction {
-    if (bounds == null) return ObstacleDirection.front;
+  ObstacleDirection get resolvedDirection {
+    if (bounds == null) return direction;
     return directionFromBounds(bounds!);
   }
 

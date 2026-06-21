@@ -94,7 +94,7 @@ class _NavigationArPageState extends State<NavigationArPage>
 
   Future<void> _initCamera() async {
     try {
-      await _obstacleScanner.warmUp();
+      final warmUpFuture = _obstacleScanner.warmUp();
 
       final cameraGranted =
           await DevicePermissionsService.instance.ensureCamera();
@@ -147,6 +147,8 @@ class _NavigationArPageState extends State<NavigationArPage>
       }
       await _configureCameraForClarity(controller);
       _cameraController = controller;
+
+      await warmUpFuture;
 
       _obstacleSub = _obstacleScanner.alerts.listen((alert) {
         if (!mounted) return;
