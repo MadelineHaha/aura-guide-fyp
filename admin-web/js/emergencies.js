@@ -17,6 +17,7 @@ import {
   subscribeAllEmergencyAlerts,
 } from "./emergency-alerts-service.js";
 import { fetchActiveCaregivers } from "./staff-list-service.js";
+import { formatStaffDisplayName } from "./staff-name-format.js";
 import { formatTypedSentence } from "./text-format.js";
 
 const listEl = document.getElementById("emergencies-list");
@@ -200,31 +201,32 @@ function clearEmergencyMapMarkers() {
   if (mapLabelEl) mapLabelEl.textContent = "Live patient locations";
 }
 
-function activeAlertsForMap(alerts) {
-  return filterAlertsByCategory(alerts, "active");
-}
-
-function updateMapLabel(activeAlerts, mappableCount) {
+function updateMapLabel(filteredAlerts, mappableCount, filter) {
   if (!mapLabelEl) return;
 
-  const activeCount = activeAlerts.length;
-  const missingLocationCount = activeCount - mappableCount;
+  const totalCount = filteredAlerts.length;
+  const missingLocationCount = totalCount - mappableCount;
+  const scopeLabel =
+    filter === "all" ? "" : `${filterLabel(filter).toLowerCase()} `;
 
-  if (activeCount === 0) {
-    mapLabelEl.textContent = "Live patient locations — waiting for GPS";
+  if (totalCount === 0) {
+    mapLabelEl.textContent =
+      filter === "all"
+        ? "Live patient locations — waiting for GPS"
+        : `No ${filterLabel(filter).toLowerCase()} alerts to show on map`;
     return;
   }
 
   if (mappableCount === 0) {
     mapLabelEl.textContent =
-      activeCount === 1
-        ? "1 active alert — location unavailable"
-        : `${activeCount} active alerts — locations unavailable`;
+      totalCount === 1
+        ? `1 ${scopeLabel}alert — location unavailable`
+        : `${totalCount} ${scopeLabel}alerts — locations unavailable`;
     return;
   }
 
   if (missingLocationCount > 0) {
-    mapLabelEl.textContent = `${mappableCount} of ${activeCount} active alert${activeCount === 1 ? "" : "s"} on map`;
+    mapLabelEl.textContent = `${mappableCount} of ${totalCount} ${scopeLabel}alert${totalCount === 1 ? "" : "s"} on map`;
     return;
   }
 
@@ -234,7 +236,7 @@ function updateMapLabel(activeAlerts, mappableCount) {
       : `${mappableCount} patient locations on map`;
 }
 
-function renderMap(alerts, patientNames) {
+function renderMap(alerts, patientNames, filter = currentFilter) {
   if (!mapEl || !window.L) return;
 
   ensureEmergencyMap();
@@ -283,7 +285,7 @@ function renderMap(alerts, patientNames) {
 
   requestAnimationFrame(() => emergencyMap?.invalidateSize());
 
-  updateMapLabel(alerts, points.length);
+  updateMapLabel(alerts, points.length, filter);
 }
 
 function focusMapMarker(alertId) {
@@ -299,7 +301,10 @@ function focusMapMarker(alertId) {
 async function ensureCaregiverNames(alerts) {
   const caregivers = await fetchActiveCaregivers();
   for (const caregiver of caregivers) {
-    caregiverNamesCache.set(caregiver.staffID, caregiver.name || caregiver.staffID);
+    caregiverNamesCache.set(
+      caregiver.staffID,
+      formatStaffDisplayName(caregiver),
+    );
   }
 
   for (const alert of alerts) {
@@ -510,11 +515,11 @@ function renderCaregiverOptions(caregivers, alert) {
           type="button"
           class="emergency-caregiver-option${availability.disabled ? " is-disabled" : ""}"
           data-caregiver-id="${escapeHtml(caregiver.staffID)}"
-          data-caregiver-name="${escapeHtml(caregiver.name || caregiver.staffID)}"
+          data-caregiver-name="${escapeHtml(formatStaffDisplayName(caregiver))}"
           ${disabledAttr}
         >
           <span class="emergency-caregiver-option-main">
-            <strong>${escapeHtml(caregiver.name || caregiver.staffID)}</strong>
+            <strong>${escapeHtml(formatStaffDisplayName(caregiver))}</strong>
             <span>${escapeHtml(caregiver.staffID)}</span>
           </span>
           ${note}
@@ -803,8 +808,8 @@ async function renderAlerts(alerts) {
   await ensurePatientNames(alerts);
   await ensureCaregiverNames(alerts);
 
-  // Always plot every active alert with GPS, regardless of list filter or staff view.
-  renderMap(activeAlertsForMap(alerts), patientNamesCache);
+  const filtered = filterAlertsByCategory(alerts, currentFilter);
+  renderMap(filtered, patientNamesCache, currentFilter);
 
   if (alerts.length === 0) {
     listEl.innerHTML = "";
@@ -812,8 +817,6 @@ async function renderAlerts(alerts) {
     emptyEl.hidden = false;
     return;
   }
-
-  const filtered = filterAlertsByCategory(alerts, currentFilter);
 
   if (filtered.length === 0) {
     listEl.innerHTML = "";

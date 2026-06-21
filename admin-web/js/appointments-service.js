@@ -13,6 +13,8 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { db } from "./firebase.js";
 import { createMedicationWithReminder } from "./medications-service.js";
+import { logStaffActivity } from "./activity-logs-service.js";
+import { LOG_ACTIONS } from "./activity-log-actions.js";
 import { formatTypedSentence } from "./text-format.js";
 import { trackFirestoreListener } from "./firestore-realtime.js";
 import {
@@ -22,6 +24,8 @@ import {
 } from "./user-patients-service.js";
 import { fetchActiveStaff } from "./staff-list-service.js";
 import { HEALTHCARE_STAFF_COLLECTION } from "./staff-auth.js";
+import { formatStaffDisplayName } from "./staff-name-format.js";
+import { isClinicTimeValue } from "./appointment-time-slots.js";
 
 export const APPOINTMENTS_COLLECTION = "appointments";
 export const APPOINTMENT_COUNTER_PATH = ["system", "appointmentCounter"];
@@ -105,12 +109,7 @@ export function timeToInputValue(date) {
 }
 
 function staffDisplayName(staff) {
-  if (!staff?.name) return staff?.staffID || "—";
-  const role = (staff.role || "").toLowerCase();
-  if (role.includes("doctor") || role.includes("dr")) {
-    return staff.name.startsWith("Dr.") ? staff.name : `Dr. ${staff.name}`;
-  }
-  return staff.name;
+  return formatStaffDisplayName(staff);
 }
 
 function buildLookupsFrom(patients, staffList) {
@@ -266,6 +265,10 @@ export async function createAppointment({
     throw new Error("Patient and staff are required.");
   }
 
+  if (!isClinicTimeValue(time)) {
+    throw new Error("Please select a valid clinic time slot.");
+  }
+
   const counterRef = doc(db, ...APPOINTMENT_COUNTER_PATH);
   const appointmentsRef = collection(db, APPOINTMENTS_COLLECTION);
 
@@ -290,6 +293,12 @@ export async function createAppointment({
       createdAt: serverTimestamp(),
     });
   });
+
+  await logStaffActivity({
+    action: LOG_ACTIONS.BOOK_APPOINTMENT,
+    details: `Scheduled ${appointmentType} for patient ${userId} with staff ${staffId}.`,
+    type: "info",
+  });
 }
 
 function formatOptionalTypedSentence(text) {
@@ -306,6 +315,11 @@ export async function updateAppointmentStatus(appointmentId, status) {
     status,
     updatedAt: serverTimestamp(),
   });
+  await logStaffActivity({
+    action: LOG_ACTIONS.UPDATE_APPOINTMENT_STATUS,
+    details: `Appointment ${appointmentId} set to ${status}.`,
+    type: "info",
+  });
 }
 
 /** Staff assigns location and confirms a patient-booked pending appointment. */
@@ -319,6 +333,11 @@ export async function acceptAppointment(appointmentId, location) {
     status: "Scheduled",
     location: loc,
     updatedAt: serverTimestamp(),
+  });
+  await logStaffActivity({
+    action: LOG_ACTIONS.ACCEPT_APPOINTMENT,
+    details: `Accepted pending appointment ${appointmentId} at ${loc}.`,
+    type: "info",
   });
 }
 
@@ -349,6 +368,10 @@ export async function updateAppointment({
     throw new Error("Patient is required.");
   }
 
+  if (!isClinicTimeValue(time)) {
+    throw new Error("Please select a valid clinic time slot.");
+  }
+
   const payload = {
     userId,
     dateTime: Timestamp.fromDate(dateTime),
@@ -368,6 +391,11 @@ export async function updateAppointment({
   }
 
   await updateDoc(appointmentRef(appointmentId), payload);
+  await logStaffActivity({
+    action: LOG_ACTIONS.UPDATE_APPOINTMENT,
+    details: `Updated appointment ${appointmentId} for patient ${userId}.`,
+    type: "info",
+  });
 }
 
 const CLINICAL_SUMMARY_MAX = 500;
@@ -418,6 +446,12 @@ export async function completeAppointment({
   payload.followUpDate = followUp ? followUp : deleteField();
 
   await updateDoc(appointmentRef(appointmentId), payload);
+
+  await logStaffActivity({
+    action: LOG_ACTIONS.COMPLETE_APPOINTMENT,
+    details: `Marked appointment ${appointmentId} as done for patient ${userId}.`,
+    type: "info",
+  });
 
   for (const medication of medications) {
     await createMedicationWithReminder({

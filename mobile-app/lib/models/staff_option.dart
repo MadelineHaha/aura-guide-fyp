@@ -1,4 +1,4 @@
-import '../utils/localized_doctor_name.dart';
+import '../utils/localized_staff_name.dart';
 
 class StaffOption {
   StaffOption({
@@ -25,10 +25,10 @@ class StaffOption {
   String get displayName => localizedDisplayName('en');
 
   String localizedDisplayName(String languageCode) {
-    return LocalizedDoctorName.format(
+    return LocalizedStaffName.format(
       name,
       languageCode,
-      isDoctor: category == 'doctor',
+      role: roleLabel,
     );
   }
 

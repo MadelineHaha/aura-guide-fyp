@@ -1,4 +1,5 @@
 import { initStaffAuth } from "./staff-shell.js";
+import { formatStaffDisplayName } from "./staff-name-format.js";
 import { releaseFirestoreListener } from "./firestore-realtime.js";
 import {
   subscribePatients,
@@ -60,11 +61,7 @@ function formatGreeting(profile) {
     month: "long",
     year: "numeric",
   });
-  const displayName = profile.name || "Staff";
-  const honorific = profile.role?.toLowerCase().includes("doctor") ? "Dr." : "";
-  const who = honorific
-    ? `${honorific} ${displayName.split(" ").pop()}`
-    : displayName;
+  const who = formatStaffDisplayName(profile) || profile.name || "Staff";
   return `${dateStr} — Good ${dayPart}, ${who}`;
 }
 

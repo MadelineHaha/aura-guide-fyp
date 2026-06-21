@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/user_entity.dart';
 import '../models/voice_profile_data.dart';
+import 'activity_log_actions.dart';
+import 'activity_log_service.dart';
 import 'phone_number_service.dart';
 
 class UserRegistrationService {
@@ -73,6 +77,14 @@ class UserRegistrationService {
 
       transaction.set(userRef, payload);
     });
+
+    unawaited(
+      ActivityLogService.instance.log(
+        action: ActivityLogActions.registerAccount,
+        details: 'New patient account created for $name.',
+        userName: name,
+      ),
+    );
   }
 
   /// Removes the signed-in account if profile creation fails after Auth signup.

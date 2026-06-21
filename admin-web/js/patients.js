@@ -142,6 +142,7 @@ let isSavingMedication = false;
 let editingHealthRecordId = null;
 let editingMedicationId = null;
 let loggedInStaffName = "Staff";
+let loggedInStaffRole = "";
 let loggedInStaffId = "";
 
 function statusLabel(status) {
@@ -829,6 +830,7 @@ async function handleHealthRecordFormSubmit(event) {
         title,
         file,
         staffName: loggedInStaffName,
+        staffRole: loggedInStaffRole,
         onPhase,
       });
       const card = modalListEl.querySelector(
@@ -846,6 +848,7 @@ async function handleHealthRecordFormSubmit(event) {
         title,
         file,
         staffName: loggedInStaffName,
+        staffRole: loggedInStaffRole,
         onPhase,
       });
       modalEmptyEl.hidden = true;
@@ -1513,6 +1516,7 @@ document.getElementById("add-patient-birthdate").max = todayDateString();
 
 initStaffAuth((profile) => {
   if (profile?.name) loggedInStaffName = profile.name;
+  if (profile?.role) loggedInStaffRole = profile.role;
   if (profile?.staffID) loggedInStaffId = profile.staffID;
   startPatientsRealtime();
 });

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -17,6 +19,8 @@ import 'services/communication_service.dart';
 import 'services/health_records_service.dart';
 import 'services/medications_service.dart';
 import 'services/patient_call_session.dart';
+import 'services/step_tracking_service.dart';
+import 'widgets/daily_step_card.dart';
 import 'services/user_profile_service.dart';
 import 'utils/clinic_datetime.dart';
 import 'utils/localized_date_format.dart';
@@ -41,6 +45,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
   void initState() {
     super.initState();
     PatientCallSession.instance.ensureStarted();
+    unawaited(StepTrackingService.instance.start());
   }
 
   @override
@@ -56,6 +61,8 @@ class _MainMenuPageState extends State<MainMenuPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const _HeaderSection(),
+              const SizedBox(height: 14),
+              const DailyStepCard(),
               const SizedBox(height: 14),
               const _ReminderCard(),
               const SizedBox(height: 18),

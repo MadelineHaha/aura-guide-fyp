@@ -20,6 +20,8 @@ import 'widgets/patient_incoming_call_host.dart';
 import 'widgets/voice_assistant_host.dart';
 import 'services/emergency_ai_service.dart';
 import 'services/voice_assistant_coordinator.dart';
+import 'services/activity_log_service.dart';
+import 'services/step_tracking_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,6 +35,7 @@ Future<void> main() async {
 
   await configureFirebaseAuth();
   await AppSettingsService.instance.load();
+  unawaited(ActivityLogService.instance.warmUp());
   await DevicePermissionsService.instance.requestMicAndCameraOnLaunch();
 
   runApp(const MyApp());
@@ -100,6 +103,7 @@ class _AuthGateState extends State<_AuthGate> {
     if (_user != null) {
       AuthSession.updateSignedInUser(_user!);
       unawaited(AppSettingsService.instance.syncFromFirestore(_user!.uid));
+      unawaited(StepTrackingService.instance.start());
     }
     _authSub = FirebaseAuth.instance.authStateChanges().listen(_onAuthChanged);
   }
@@ -110,6 +114,7 @@ class _AuthGateState extends State<_AuthGate> {
     if (user != null) {
       AuthSession.updateSignedInUser(user);
       unawaited(AppSettingsService.instance.syncFromFirestore(user.uid));
+      unawaited(StepTrackingService.instance.start());
       setState(() {
         _user = user;
         _initializing = false;
@@ -123,6 +128,7 @@ class _AuthGateState extends State<_AuthGate> {
       AuthSession.lastKnownUser = null;
       AppSettingsService.instance.clearCloudSync();
       unawaited(PatientCallSession.instance.disposeOnSignOut());
+      unawaited(StepTrackingService.instance.disposeOnSignOut());
       setState(() {
         _user = null;
         _initializing = false;
@@ -139,6 +145,7 @@ class _AuthGateState extends State<_AuthGate> {
         if (recovered != null) {
           AuthSession.updateSignedInUser(recovered);
           unawaited(AppSettingsService.instance.syncFromFirestore(recovered.uid));
+          unawaited(StepTrackingService.instance.start());
           setState(() => _user = recovered);
           return;
         }

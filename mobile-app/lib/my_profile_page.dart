@@ -744,7 +744,9 @@ class _MyProfilePageState extends State<MyProfilePage>
                         suffixIcon: IconButton(
                           onPressed: () => setDialogState(() => obscure = !obscure),
                           icon: Icon(
-                            obscure ? Icons.visibility_off : Icons.visibility,
+                            obscure
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
                             color: const Color(0xFF9CA3AF),
                           ),
                         ),

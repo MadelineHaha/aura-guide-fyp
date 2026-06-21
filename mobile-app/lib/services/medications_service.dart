@@ -8,6 +8,8 @@ import '../models/medication_entity.dart';
 import '../models/medication_item.dart';
 import '../models/medication_reminder_entity.dart';
 import '../utils/clinic_datetime.dart';
+import 'activity_log_actions.dart';
+import 'activity_log_service.dart';
 import 'user_profile_service.dart';
 
 class MedicationsService {
@@ -249,6 +251,14 @@ class MedicationsService {
       'completedDate': taken ? today : '',
       'updatedAt': FieldValue.serverTimestamp(),
     });
+    if (taken) {
+      unawaited(
+        ActivityLogService.instance.log(
+          action: ActivityLogActions.markMedication,
+          details: 'Marked medication reminder $trimmedId as completed.',
+        ),
+      );
+    }
     _clearStreamCache();
   }
 }

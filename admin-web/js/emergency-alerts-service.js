@@ -8,6 +8,8 @@ import {
   where,
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { db } from "./firebase.js";
+import { LOG_ACTIONS } from "./activity-log-actions.js";
+import { logStaffActivity } from "./activity-logs-service.js";
 import { trackFirestoreListener } from "./firestore-realtime.js";
 import { USERS_COLLECTION } from "./user-patients-service.js";
 
@@ -305,6 +307,11 @@ export async function respondEmergencyAlert(
     StaffID: staff,
     ResolutionNotes: resolutionNotes,
   });
+  await logStaffActivity({
+    action: LOG_ACTIONS.RESPOND_EMERGENCY,
+    details: `${resolutionNotes} for alert ${id}.`,
+    type: "info",
+  });
 }
 
 export async function assignCaregiverToAlert(
@@ -325,6 +332,11 @@ export async function assignCaregiverToAlert(
     CaregiverID: caregiver,
     ResolutionNotes: `Caregiver assigned: ${name} (${caregiver})`,
   });
+  await logStaffActivity({
+    action: LOG_ACTIONS.ASSIGN_CAREGIVER,
+    details: `Assigned ${name} (${caregiver}) to emergency alert ${id}.`,
+    type: "info",
+  });
 }
 
 export async function resolveEmergencyAlert(
@@ -342,5 +354,10 @@ export async function resolveEmergencyAlert(
     Status: ALERT_STATUS_RESOLVED,
     StaffID: staff,
     ResolutionNotes: notes,
+  });
+  await logStaffActivity({
+    action: LOG_ACTIONS.RESOLVE_EMERGENCY,
+    details: `Resolved alert ${id}: ${notes}`,
+    type: "info",
   });
 }

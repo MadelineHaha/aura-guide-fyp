@@ -1,61 +1,30 @@
 import { initStaffAuth } from "./staff-shell.js";
-
-const logs = [
-  {
-    timestamp: "2026-03-28 10:15:22",
-    userName: "Ahmad Bin Ismail",
-    userId: "U00015",
-    action: "Login",
-    details: "Successful login to staff portal.",
-    type: "info",
-    ipAddress: "192.168.1.15",
-  },
-  {
-    timestamp: "2026-03-28 10:20:05",
-    userName: "Ahmad Bin Ismail",
-    userId: "U00015",
-    action: "Book Appointment",
-    details: "Booked appointment for eye checkup.",
-    type: "info",
-    ipAddress: "192.168.1.15",
-  },
-  {
-    timestamp: "2026-03-28 10:25:48",
-    userName: "Dr. Sarah Tan",
-    userId: "S00001",
-    action: "Update Patient Record",
-    details: "Updated medication and follow-up notes.",
-    type: "info",
-    ipAddress: "10.0.0.12",
-  },
-  {
-    timestamp: "2026-03-28 10:30:12",
-    userName: "System",
-    userId: "—",
-    action: "Emergency SOS Triggered",
-    details: "Fall detection event detected.",
-    type: "security",
-    ipAddress: "localhost",
-  },
-  {
-    timestamp: "2026-03-28 10:35:55",
-    userName: "Madeline Ong",
-    userId: "U00876",
-    action: "Failed Login",
-    details: "Invalid password attempt.",
-    type: "warning",
-    ipAddress: "192.168.2.110",
-  },
-];
+import { subscribeActivityLogs } from "./activity-logs-service.js";
 
 const tbodyEl = document.getElementById("logs-tbody");
 const emptyEl = document.getElementById("logs-empty");
+const loadingEl = document.getElementById("logs-loading");
 const searchEl = document.getElementById("logs-search");
+const dateRangeEl = document.getElementById("logs-date-range");
 const filterTabs = document.querySelectorAll(".logs-filter-tabs .filter-tab");
 const exportBtn = document.getElementById("logs-export-btn");
 
+const DATE_RANGE_DAYS = {
+  7: 7,
+  30: 30,
+  60: 60,
+};
+
+let logs = [];
 let activeTypeFilter = "all";
+let activeDateRange = "30";
 let searchQuery = "";
+let unsubscribeLogs = null;
+let logsLoaded = false;
+
+function setLoading(isLoading) {
+  if (loadingEl) loadingEl.hidden = !isLoading;
+}
 
 function badgeLabel(type) {
   return type.charAt(0).toUpperCase() + type.slice(1);
@@ -65,13 +34,27 @@ function renderTypeBadge(type) {
   return `<span class="logs-type-badge logs-type-badge--${type}">${badgeLabel(type)}</span>`;
 }
 
+function matchesDateRange(log) {
+  if (activeDateRange === "all") return true;
+
+  const days = DATE_RANGE_DAYS[activeDateRange];
+  if (!days) return true;
+
+  const timestampMs = log.timestampMs || 0;
+  if (!timestampMs) return false;
+
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  return timestampMs >= cutoff;
+}
+
 function filterLogs() {
   const q = searchQuery.toLowerCase();
   return logs.filter((log) => {
     const matchesType = activeTypeFilter === "all" || log.type === activeTypeFilter;
+    const matchesDate = matchesDateRange(log);
     const haystack = `${log.userName} ${log.userId} ${log.action} ${log.details} ${log.ipAddress}`.toLowerCase();
     const matchesSearch = !q || haystack.includes(q);
-    return matchesType && matchesSearch;
+    return matchesType && matchesDate && matchesSearch;
   });
 }
 
@@ -99,11 +82,37 @@ function renderLogRow(log) {
   `;
 }
 
+function emptyMessage() {
+  if (logs.length === 0) {
+    return "No activity logs yet. Actions from the mobile app and admin portal will appear here.";
+  }
+
+  const hasOtherFilters =
+    activeTypeFilter !== "all" || searchQuery.length > 0;
+  const dateOnly = activeDateRange !== "all" && !hasOtherFilters;
+
+  if (dateOnly) {
+    const label =
+      activeDateRange === "7"
+        ? "the past 7 days"
+        : activeDateRange === "60"
+          ? "the past 60 days"
+          : "the past 30 days";
+    return `No logs found in ${label}. Try a wider date range.`;
+  }
+
+  return "No logs match your filters.";
+}
+
 function renderLogsTable() {
+  if (!logsLoaded) return;
+
+  setLoading(false);
   const filtered = filterLogs();
   if (filtered.length === 0) {
     tbodyEl.innerHTML = "";
     emptyEl.hidden = false;
+    emptyEl.textContent = emptyMessage();
     return;
   }
 
@@ -140,8 +149,47 @@ function exportLogs() {
   URL.revokeObjectURL(url);
 }
 
+function startLogsSubscription() {
+  if (unsubscribeLogs) unsubscribeLogs();
+  logsLoaded = false;
+  setLoading(true);
+  if (emptyEl) emptyEl.hidden = true;
+
+  unsubscribeLogs = subscribeActivityLogs(
+    (nextLogs) => {
+      logs = nextLogs;
+      logsLoaded = true;
+      renderLogsTable();
+    },
+    (error) => {
+      console.error("Activity logs subscription failed:", error);
+      logs = [];
+      logsLoaded = true;
+      setLoading(false);
+      renderLogsTable();
+      emptyEl.hidden = false;
+      const code = error?.code || "";
+      if (code === "permission-denied") {
+        emptyEl.textContent =
+          "Could not load activity logs. Deploy Firestore rules: firebase deploy --only firestore:rules";
+      } else if (code === "failed-precondition") {
+        emptyEl.textContent =
+          "Activity logs index is building. Wait a minute and refresh this page.";
+      } else {
+        emptyEl.textContent =
+          error?.message || "Could not load activity logs.";
+      }
+    },
+  );
+}
+
 searchEl.addEventListener("input", () => {
   searchQuery = searchEl.value.trim();
+  renderLogsTable();
+});
+
+dateRangeEl.addEventListener("change", () => {
+  activeDateRange = dateRangeEl.value;
   renderLogsTable();
 });
 
@@ -156,5 +204,10 @@ filterTabs.forEach((tab) => {
 
 exportBtn.addEventListener("click", exportLogs);
 
-renderLogsTable();
-initStaffAuth();
+window.addEventListener("pagehide", () => {
+  if (unsubscribeLogs) unsubscribeLogs();
+});
+
+initStaffAuth(() => {
+  startLogsSubscription();
+});

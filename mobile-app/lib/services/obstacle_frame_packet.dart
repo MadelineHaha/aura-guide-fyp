@@ -16,6 +16,7 @@ class _CameraToModelJob {
     required this.uvPixelStride,
     required this.inputSize,
     required this.inputLength,
+    this.luminanceOnly = false,
   });
 
   final int width;
@@ -28,6 +29,7 @@ class _CameraToModelJob {
   final int uvPixelStride;
   final int inputSize;
   final int inputLength;
+  final bool luminanceOnly;
 }
 
 /// Camera YUV → letterboxed float32 model input in one isolate (fewer allocations).
@@ -43,13 +45,18 @@ Float32List _cameraToModelInputIsolate(_CameraToModelJob job) {
     uvPixelStride: job.uvPixelStride,
   );
   final buffer = Float32List(job.inputLength);
-  ObstacleFramePacket.fillYoloInput(packet, buffer, job.inputSize);
+  ObstacleFramePacket.fillYoloInput(
+    packet,
+    buffer,
+    job.inputSize,
+    luminanceOnly: job.luminanceOnly,
+  );
   return buffer;
 }
 
 /// Lightweight copy of a camera frame for background AI inference.
 class ObstacleFramePacket {
-  static const maxInferenceDimension = 480;
+  static const maxInferenceDimension = 320;
 
   static ({int width, int height}) inferenceFrameSize(int srcWidth, int srcHeight) {
     if (srcWidth <= 0 || srcHeight <= 0) {
@@ -155,6 +162,7 @@ class ObstacleFramePacket {
         uvPixelStride: u?.bytesPerPixel ?? 1,
         inputSize: inputSize,
         inputLength: inputLength,
+        luminanceOnly: true,
       ),
     );
   }
@@ -327,8 +335,9 @@ class ObstacleFramePacket {
   static void fillYoloInput(
     ObstacleFramePacket packet,
     Float32List buffer,
-    int size,
-  ) {
+    int size, {
+    bool luminanceOnly = false,
+  }) {
     const padValue = 114 / 255.0;
     for (var i = 0; i < buffer.length; i++) {
       buffer[i] = padValue;
@@ -364,7 +373,10 @@ class ObstacleFramePacket {
         late final double g;
         late final double b;
 
-        if (uBytes.isNotEmpty && vBytes.isNotEmpty && uvStride > 0) {
+        if (!luminanceOnly &&
+            uBytes.isNotEmpty &&
+            vBytes.isNotEmpty &&
+            uvStride > 0) {
           final uvIndex =
               (srcY ~/ 2) * uvStride + (srcX ~/ 2) * uvPixelStride;
           final uVal = uvIndex < uBytes.length ? uBytes[uvIndex] : 128;

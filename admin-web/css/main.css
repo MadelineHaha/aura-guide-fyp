@@ -5089,6 +5089,385 @@ body.modal-open {
   margin-bottom: 16px;
 }
 
+.logs-date-range-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.logs-date-range-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6c757d;
+}
+
+.logs-date-range-select {
+  height: 44px;
+  min-width: 160px;
+  padding: 0 36px 0 14px;
+  border: 1px solid #e8ecef;
+  border-radius: 999px;
+  background-color: #ffffff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236c757d' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #212529;
+  cursor: pointer;
+  appearance: none;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.logs-date-range-select:hover {
+  border-color: #ced4da;
+}
+
+.logs-date-range-select:focus {
+  border-color: #6bc4c4;
+  box-shadow: 0 0 0 3px rgba(107, 196, 196, 0.2);
+}
+
+.reports-page .page-toolbar {
+  margin-bottom: 18px;
+}
+
+.reports-export-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.btn-secondary {
+  height: 44px;
+  padding: 0 20px;
+  border: 1px solid #212529;
+  border-radius: 999px;
+  background-color: #ffffff;
+  color: #212529;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-secondary:hover {
+  background-color: #f8f9fa;
+}
+
+.reports-filters {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.reports-filters-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #495057;
+}
+
+.reports-filters-label svg {
+  width: 16px;
+  height: 16px;
+}
+
+.reports-section {
+  margin-bottom: 28px;
+}
+
+.reports-section .panel-title {
+  margin-bottom: 0;
+}
+
+.reports-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 0;
+}
+
+.reports-section-header--standalone {
+  padding-left: 0;
+  padding-right: 0;
+  margin-bottom: 12px;
+}
+
+.reports-section-header + .table-scroll {
+  padding-top: 12px;
+}
+
+.reports-section-meta {
+  font-size: 0.85rem;
+  color: #6c757d;
+  font-weight: 600;
+}
+
+.reports-chart-note {
+  margin-top: 4px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #343a40;
+}
+
+.reports-chart-subnote {
+  margin-top: 2px;
+  font-size: 0.78rem;
+  color: #6c757d;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.reports-activity-table {
+  min-width: 860px;
+}
+
+.reports-activity-table th {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.reports-activity-table tbody td {
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+
+.reports-patient-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.reports-patient-meta {
+  min-width: 0;
+}
+
+.reports-patient-meta .cell-primary {
+  line-height: 1.25;
+}
+
+.reports-patient-meta .cell-secondary {
+  margin-top: 3px;
+  font-size: 0.82rem;
+}
+
+.reports-patient-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background-color: #d4f0f0;
+  color: #0d5c5c;
+  font-size: 0.8rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+
+.reports-steps-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 140px;
+  max-width: 180px;
+}
+
+.reports-steps-value {
+  font-weight: 700;
+  color: #212529;
+  font-size: 0.95rem;
+}
+
+.reports-steps-track {
+  display: block;
+  width: 100%;
+  height: 7px;
+  border-radius: 999px;
+  background-color: #e9ecef;
+  overflow: hidden;
+}
+
+.reports-steps-bar {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #6bc4c4, #4caf7d);
+  min-width: 0;
+  transition: width 0.2s ease;
+}
+
+.reports-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.reports-metric--good { color: #2f9e44; }
+.reports-metric--warn { color: #e67700; }
+
+.reports-warn-icon {
+  width: 16px;
+  height: 16px;
+  color: #f59f00;
+  flex-shrink: 0;
+}
+
+.reports-appt-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.reports-appt-ratio {
+  font-weight: 600;
+  color: #343a40;
+  min-width: 2.5rem;
+}
+
+.reports-appt-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.reports-appt-badge--good {
+  background-color: #d3f9d8;
+  color: #2b8a3e;
+}
+
+.reports-appt-badge--low {
+  background-color: #ffe3e3;
+  color: #c92a2a;
+}
+
+.reports-last-active {
+  color: #6c757d;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.reports-chart-wrap {
+  position: relative;
+  height: 280px;
+  padding: 12px 18px 18px;
+}
+
+.reports-chart-wrap--bar {
+  height: 320px;
+}
+
+.reports-chart-card {
+  margin-top: 14px;
+}
+
+.reports-emergency-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 4px;
+}
+
+.reports-emergency-stat {
+  border-radius: 14px;
+  padding: 18px 16px;
+  color: #ffffff;
+}
+
+.reports-emergency-stat-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.reports-emergency-stat-label {
+  margin-top: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  opacity: 0.95;
+}
+
+.reports-emergency-stat--alerts { background-color: #e03131; }
+.reports-emergency-stat--responded { background-color: #fd7e14; }
+.reports-emergency-stat--resolved { background-color: #2f9e44; }
+.reports-emergency-stat--response { background-color: #7048e8; }
+
+.reports-outcomes-table {
+  min-width: 720px;
+}
+
+.reports-improvement {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.reports-improvement--positive {
+  background-color: #d3f9d8;
+  color: #2b8a3e;
+}
+
+.reports-improvement--negative {
+  background-color: #ffe3e3;
+  color: #c92a2a;
+}
+
+@media print {
+  .staff-nav,
+  .reports-export-actions,
+  .reports-filters {
+    display: none !important;
+  }
+
+  .staff-page {
+    padding: 0;
+    max-width: none;
+  }
+
+  .reports-chart-wrap {
+    break-inside: avoid;
+  }
+}
+
+@media (max-width: 960px) {
+  .reports-emergency-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reports-export-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
 .logs-filter-tabs {
   background-color: #eceff1;
 }

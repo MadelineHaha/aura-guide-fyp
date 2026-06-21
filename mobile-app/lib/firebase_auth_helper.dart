@@ -44,6 +44,18 @@ Future<String?> firebaseConnectivityWarning() async {
   }
 }
 
+String firebaseLoginErrorMessage(FirebaseAuthException e) {
+  switch (e.code) {
+    case 'invalid-email':
+    case 'user-not-found':
+    case 'wrong-password':
+    case 'invalid-credential':
+      return 'Invalid credential';
+    default:
+      return firebaseAuthErrorMessage(e);
+  }
+}
+
 String firebaseAuthErrorMessage(FirebaseAuthException e) {
   final msg = (e.message ?? '').toLowerCase();
   if (e.code == 'internal-error' &&

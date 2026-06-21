@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../services/navigation_guidance_controller.dart';
+import '../utils/distance_format.dart';
 
 /// Compass-style indicator pointing toward the navigation destination.
 class DirectionCompass extends StatelessWidget {
@@ -58,7 +59,7 @@ class DirectionCompass extends StatelessWidget {
                 ),
                 if (state.hasGpsFix)
                   Text(
-                    '${state.distanceMeters.toStringAsFixed(0)} m',
+                    formatNavigationDistance(state.distanceMeters),
                     style: const TextStyle(
                       color: _accent,
                       fontWeight: FontWeight.bold,

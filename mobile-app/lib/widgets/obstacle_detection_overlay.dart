@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
@@ -43,7 +45,13 @@ class ObstacleDetectionOverlay extends StatelessWidget {
           return const SizedBox.shrink();
         }
 
-        final labelTop = rect.top > 30 ? rect.top - 26 : rect.bottom + 6;
+        final labelTop = rect.top > 34 ? rect.top - 22 : rect.bottom + 4;
+        final labelWidth = math.min(
+          math.max(rect.width + 12, 96.0),
+          viewSize.width * 0.72,
+        ).toDouble();
+        final labelLeft = (rect.center.dx - labelWidth / 2)
+            .clamp(8.0, viewSize.width - labelWidth - 8);
 
         return IgnorePointer(
           child: Stack(
@@ -54,27 +62,39 @@ class ObstacleDetectionOverlay extends StatelessWidget {
                 child: CustomPaint(
                   painter: _HollowBoxPainter(
                     color: _accent,
-                    strokeWidth: 3,
+                    strokeWidth: 2,
                   ),
                 ),
               ),
               Positioned(
-                left: 8,
-                right: 8,
-                top: labelTop.clamp(0, viewSize.height - 48),
-                child: Text(
-                  labelText,
-                  textAlign: TextAlign.center,
-                  maxLines: 3,
-                  softWrap: true,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                    shadows: [
-                      Shadow(color: Colors.black, blurRadius: 6),
-                      Shadow(color: Colors.black, offset: Offset(0, 1)),
-                    ],
+                left: labelLeft,
+                width: labelWidth,
+                top: labelTop.clamp(0, viewSize.height - 36),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 3,
+                    ),
+                    child: Text(
+                      labelText,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 10,
+                        height: 1.2,
+                        shadows: [
+                          Shadow(color: Colors.black, blurRadius: 4),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),

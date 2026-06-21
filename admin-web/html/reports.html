@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reports — Aura Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body class="staff-app">
+  <header class="staff-nav">
+    <a class="staff-nav-brand" href="dashboard.html">
+      <img class="logo" src="../assets/images/logo.png" alt="" width="40" height="40" />
+      <span class="staff-nav-brand-text">Aura Guide</span>
+    </a>
+    <div class="staff-nav-links-wrap">
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--prev" aria-label="Scroll navigation left">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <nav class="staff-nav-links" aria-label="Main">
+        <a class="staff-nav-link" href="dashboard.html">Dashboard</a>
+        <a class="staff-nav-link" href="appointments.html">Appointments</a>
+        <a class="staff-nav-link" href="patients.html">Patients</a>
+        <a class="staff-nav-link" href="emergencies.html">Emergencies</a>
+        <a class="staff-nav-link is-active" href="reports.html">Reports</a>
+        <a class="staff-nav-link" href="communication.html">Communication</a>
+        <a class="staff-nav-link" href="logs.html">Logs</a>
+      </nav>
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--next" aria-label="Scroll navigation right">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
+    <div class="staff-nav-user">
+      <button type="button" class="staff-avatar" id="btn-user-menu" aria-label="Account menu">
+        <span class="staff-avatar-initials" id="staff-avatar-initials">—</span>
+      </button>
+      <div class="staff-user-menu" id="user-menu" hidden>
+        <p class="staff-user-menu-name" id="menu-staff-name">—</p>
+        <p class="staff-user-menu-role" id="menu-staff-role">—</p>
+        <button type="button" class="staff-user-menu-signout" id="btn-sign-out">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="staff-page reports-page">
+    <header class="page-toolbar">
+      <div class="page-toolbar-heading">
+        <h1 class="page-title">Reports &amp; Analytics</h1>
+        <p class="page-subtitle">Real-time insight into patient activity, health trends, and infrastructure safety.</p>
+      </div>
+      <div class="reports-export-actions">
+        <button type="button" class="btn-secondary" id="btn-export-csv">Export CSV</button>
+        <button type="button" class="btn-primary" id="btn-export-pdf">Export PDF</button>
+      </div>
+    </header>
+
+    <div class="reports-filters">
+      <span class="reports-filters-label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+        </svg>
+        Filters
+      </span>
+      <div class="filter-tabs" role="tablist" aria-label="Report time range">
+        <button type="button" class="filter-tab is-active" data-range="0">All Time</button>
+        <button type="button" class="filter-tab" data-range="3">Last 3 Months</button>
+        <button type="button" class="filter-tab" data-range="6">Last 6 Months</button>
+      </div>
+    </div>
+
+    <section class="reports-section table-card" aria-labelledby="user-activity-heading">
+      <div class="reports-section-header">
+        <h2 class="panel-title" id="user-activity-heading">User Activity</h2>
+        <p class="reports-section-meta" id="user-activity-count">—</p>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table reports-activity-table">
+          <thead>
+            <tr>
+              <th scope="col">Patient</th>
+              <th scope="col" id="steps-column-heading" title="Daily step totals synced from each patient's mobile device">Avg. Steps / Day</th>
+              <th scope="col">Med. Adherence</th>
+              <th scope="col">Appointments</th>
+              <th scope="col">Last Active</th>
+            </tr>
+          </thead>
+          <tbody id="user-activity-body">
+            <tr><td colspan="5" class="table-empty">Loading report data…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="reports-section table-card" aria-labelledby="health-trend-heading">
+      <div class="reports-section-header">
+        <div>
+          <h2 class="panel-title" id="health-trend-heading">Health Trend</h2>
+          <p class="reports-chart-note">Steps, Medication &amp; Appointment Rate Over Time</p>
+          <p class="reports-chart-subnote">Upward curves indicate improvement. Steps shown in hundreds.</p>
+        </div>
+      </div>
+      <div class="reports-chart-wrap">
+        <canvas id="health-trend-chart" aria-label="Health trend line chart"></canvas>
+      </div>
+    </section>
+
+    <section class="reports-section" aria-labelledby="emergency-analytics-heading">
+      <div class="reports-section-header reports-section-header--standalone">
+        <h2 class="panel-title" id="emergency-analytics-heading">Emergency Case Analytics</h2>
+      </div>
+      <div class="reports-emergency-stats">
+        <article class="reports-emergency-stat reports-emergency-stat--alerts">
+          <p class="reports-emergency-stat-value" id="emergency-total-alerts">—</p>
+          <p class="reports-emergency-stat-label">Total Alerts</p>
+        </article>
+        <article class="reports-emergency-stat reports-emergency-stat--responded">
+          <p class="reports-emergency-stat-value" id="emergency-responded">—</p>
+          <p class="reports-emergency-stat-label">Responded</p>
+        </article>
+        <article class="reports-emergency-stat reports-emergency-stat--resolved">
+          <p class="reports-emergency-stat-value" id="emergency-resolved">—</p>
+          <p class="reports-emergency-stat-label">Resolved</p>
+        </article>
+        <article class="reports-emergency-stat reports-emergency-stat--response">
+          <p class="reports-emergency-stat-value" id="emergency-avg-response">—</p>
+          <p class="reports-emergency-stat-label">Avg Response</p>
+        </article>
+      </div>
+      <div class="table-card reports-chart-card">
+        <div class="reports-chart-wrap reports-chart-wrap--bar">
+          <canvas id="emergency-bar-chart" aria-label="Emergency case monthly bar chart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="reports-section table-card" aria-labelledby="health-outcomes-heading">
+      <div class="reports-section-header">
+        <h2 class="panel-title" id="health-outcomes-heading">Health Outcomes Summary</h2>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table reports-outcomes-table">
+          <thead>
+            <tr>
+              <th scope="col">Metric</th>
+              <th scope="col" id="outcomes-baseline-col">—</th>
+              <th scope="col" id="outcomes-latest-col">—</th>
+              <th scope="col">Improvement</th>
+            </tr>
+          </thead>
+          <tbody id="health-outcomes-body">
+            <tr><td colspan="4" class="table-empty">Loading outcomes…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <p class="table-empty" id="reports-error" hidden>Could not load report data.</p>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script type="module" src="../js/reports.js"></script>
+</body>
+</html>

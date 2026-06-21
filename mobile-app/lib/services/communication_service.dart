@@ -12,8 +12,10 @@ import '../models/message_entity.dart';
 import '../models/staff_option.dart';
 import '../utils/chat_time_format.dart';
 import '../utils/clinic_datetime.dart';
-import '../utils/localized_doctor_name.dart';
+import '../utils/localized_staff_name.dart';
 import 'app_settings_service.dart';
+import 'activity_log_actions.dart';
+import 'activity_log_service.dart';
 import 'healthcare_staff_service.dart';
 import 'user_profile_service.dart';
 
@@ -189,11 +191,14 @@ class CommunicationService {
   String _staffDisplayName(Map<String, dynamic>? staff, String staffId) {
     if (staff == null) return staffId;
     final name = (staff['name'] as String?)?.trim() ?? staffId;
-    final role = HealthcareStaffService.categoryFromData(staff);
-    return LocalizedDoctorName.format(
+    final role = staff['role']?.toString() ??
+        HealthcareStaffService.roleLabelForCategory(
+          HealthcareStaffService.categoryFromData(staff) ?? '',
+        );
+    return LocalizedStaffName.format(
       name,
       AppSettingsService.instance.settings.languageCode,
-      isDoctor: role == HealthcareStaffService.roleDoctor,
+      role: role,
     );
   }
 
@@ -895,7 +900,14 @@ class CommunicationService {
       callDuration: null,
     );
 
-    return persistMessage(message);
+    await persistMessage(message);
+    unawaited(
+      ActivityLogService.instance.log(
+        action: ActivityLogActions.sendMessage,
+        details: 'Sent text message to staff $staffId.',
+      ),
+    );
+    return messageId;
   }
 
   static const _inlineVoiceMaxBytes = 900000;
@@ -1036,7 +1048,17 @@ class CommunicationService {
       callDurationSeconds: connectedSeconds > 0 ? connectedSeconds : null,
     );
 
-    return persistMessage(message);
+    await persistMessage(message);
+    if (status == 'completed') {
+      unawaited(
+        ActivityLogService.instance.log(
+          action: ActivityLogActions.voiceCall,
+          details: 'Voice call with staff $staffId (${connectedSeconds}s).',
+          userId: patientId,
+        ),
+      );
+    }
+    return messageId;
   }
 
   String _buildCallMessageContent(int connectedSeconds, String status) {

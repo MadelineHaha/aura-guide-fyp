@@ -1,7 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'l10n/app_localizations.dart';
+import 'services/activity_log_actions.dart';
+import 'services/activity_log_service.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/password_field_suffix.dart';
 
 class PasswordRecoveryPage extends StatefulWidget {
   const PasswordRecoveryPage({super.key});
@@ -71,6 +76,12 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
     await Future<void>.delayed(const Duration(milliseconds: 450));
     if (!mounted) return;
     setState(() => _submitting = false);
+    unawaited(
+      ActivityLogService.instance.logSecurityAudit(
+        action: ActivityLogActions.passwordChange,
+        details: 'Password reset submitted from mobile app.',
+      ),
+    );
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(context.l10n.t('passwordResetSubmitted'))),
     );
@@ -237,7 +248,7 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
   }
 }
 
-class _RecoveryInputField extends StatelessWidget {
+class _RecoveryInputField extends StatefulWidget {
   const _RecoveryInputField({
     required this.controller,
     required this.hintText,
@@ -255,37 +266,54 @@ class _RecoveryInputField extends StatelessWidget {
   final ValueChanged<String>? onChanged;
 
   @override
+  State<_RecoveryInputField> createState() => _RecoveryInputFieldState();
+}
+
+class _RecoveryInputFieldState extends State<_RecoveryInputField> {
+  var _obscured = true;
+
+  @override
   Widget build(BuildContext context) {
+    final isPassword = widget.obscureText;
+
     return TextField(
-      controller: controller,
-      obscureText: obscureText,
-      onChanged: onChanged,
+      controller: widget.controller,
+      obscureText: isPassword ? _obscured : false,
+      onChanged: widget.onChanged,
       style: const TextStyle(color: Colors.white, fontSize: 16),
       decoration: InputDecoration(
         filled: true,
         fillColor: _PasswordRecoveryPageState._fieldFill,
-        hintText: hintText,
+        hintText: widget.hintText,
         hintStyle: const TextStyle(
           color: _PasswordRecoveryPageState._subtext,
           fontSize: 15,
         ),
-        prefixIcon: Icon(prefixIcon, color: Colors.white, size: 26),
-        suffixIcon: Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: Material(
-            color: const Color(0xFF1D7278),
-            shape: const CircleBorder(),
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: onMic,
-              child: const SizedBox(
-                width: 44,
-                height: 44,
-                child: Icon(Icons.mic, color: Colors.white, size: 20),
-              ),
-            ),
-          ),
-        ),
+        prefixIcon: Icon(widget.prefixIcon, color: Colors.white, size: 26),
+        suffixIcon: isPassword
+            ? PasswordFieldSuffix(
+                obscured: _obscured,
+                onToggleObscured: () => setState(() => _obscured = !_obscured),
+                showMic: true,
+                iconColor: Colors.white,
+                micWidget: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Material(
+                    color: const Color(0xFF1D7278),
+                    shape: const CircleBorder(),
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: widget.onMic,
+                      child: const SizedBox(
+                        width: 44,
+                        height: 44,
+                        child: Icon(Icons.mic, color: Colors.white, size: 20),
+                      ),
+                    ),
+                  ),
+                ),
+              )
+            : null,
         contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 4),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),

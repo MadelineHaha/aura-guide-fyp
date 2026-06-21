@@ -3,7 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../auth_session.dart';
 import '../models/health_record_item.dart';
-import '../utils/localized_doctor_name.dart';
+import '../utils/localized_staff_name.dart';
 import 'app_settings_service.dart';
 import 'healthcare_staff_service.dart';
 import 'user_profile_service.dart';
@@ -57,17 +57,20 @@ class HealthRecordsService {
     return map;
   }
 
-  String _doctorName(Map<String, dynamic>? staff, String staffId) {
+  String _staffDisplayName(Map<String, dynamic>? staff, String staffId) {
     if (staff == null) {
       return staffId.isNotEmpty ? staffId : 'Healthcare provider';
     }
     final name = (staff['name'] as String?)?.trim() ?? '';
     if (name.isEmpty) return staffId;
-    final role = HealthcareStaffService.categoryFromData(staff);
-    return LocalizedDoctorName.format(
+    final role = staff['role']?.toString() ??
+        HealthcareStaffService.roleLabelForCategory(
+          HealthcareStaffService.categoryFromData(staff) ?? '',
+        );
+    return LocalizedStaffName.format(
       name,
       AppSettingsService.instance.settings.languageCode,
-      isDoctor: role == HealthcareStaffService.roleDoctor,
+      role: role,
     );
   }
 
@@ -95,7 +98,7 @@ class HealthRecordsService {
       recordId: (data['recordId'] as String?)?.trim() ?? doc.id,
       recordType: recordType?.isNotEmpty == true ? recordType! : 'Health record',
       dateCreated: (data['dateCreated'] as String?)?.trim() ?? '—',
-      doctorName: _doctorName(staff, staffId),
+      doctorName: _staffDisplayName(staff, staffId),
       summary: summary?.isNotEmpty == true ? summary! : '—',
       fileType: (data['fileType'] as String?)?.trim() ?? '',
       filePath: (data['filePath'] as String?)?.trim() ?? '',

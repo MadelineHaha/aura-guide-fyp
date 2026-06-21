@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
 import '../models/walking_route.dart';
+import 'activity_log_actions.dart';
+import 'activity_log_service.dart';
 import 'app_settings_service.dart';
 
 /// Fetches pedestrian routes from the public OSRM service.
@@ -24,48 +27,58 @@ class WalkingRouteService {
       '?steps=true&geometries=geojson&overview=full',
     );
 
-    final response = await _client.get(uri).timeout(const Duration(seconds: 15));
-    if (response.statusCode != 200) {
-      throw StateError('Walking route service returned ${response.statusCode}.');
+    try {
+      final response = await _client.get(uri).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) {
+        throw StateError('Walking route service returned ${response.statusCode}.');
+      }
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw StateError('Invalid walking route response.');
+      }
+
+      final code = decoded['code'] as String? ?? '';
+      if (code != 'Ok') {
+        throw StateError('No walking route found for this destination.');
+      }
+
+      final routes = decoded['routes'];
+      if (routes is! List || routes.isEmpty) {
+        throw StateError('No walking route found for this destination.');
+      }
+
+      final route = routes.first as Map<String, dynamic>;
+      final legs = route['legs'];
+      if (legs is! List || legs.isEmpty) {
+        throw StateError('Walking route had no steps.');
+      }
+
+      final leg = legs.first as Map<String, dynamic>;
+      final totalDistance =
+          ((route['distance'] as num?) ?? (leg['distance'] as num?) ?? 0).toDouble();
+
+      final points = _parseGeometry(route['geometry']);
+      final steps = _parseSteps(leg['steps']);
+
+      if (points.isEmpty) {
+        throw StateError('Walking route had no path points.');
+      }
+
+      return WalkingRoute(
+        points: points,
+        steps: steps,
+        totalDistanceMeters: totalDistance,
+      );
+    } on TimeoutException catch (error) {
+      unawaited(
+        ActivityLogService.instance.logWarning(
+          action: ActivityLogActions.networkTimeout,
+          details: 'Walking route request timed out: $error',
+        ),
+      );
+      rethrow;
     }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw StateError('Invalid walking route response.');
-    }
-
-    final code = decoded['code'] as String? ?? '';
-    if (code != 'Ok') {
-      throw StateError('No walking route found for this destination.');
-    }
-
-    final routes = decoded['routes'];
-    if (routes is! List || routes.isEmpty) {
-      throw StateError('No walking route found for this destination.');
-    }
-
-    final route = routes.first as Map<String, dynamic>;
-    final legs = route['legs'];
-    if (legs is! List || legs.isEmpty) {
-      throw StateError('Walking route had no steps.');
-    }
-
-    final leg = legs.first as Map<String, dynamic>;
-    final totalDistance =
-        ((route['distance'] as num?) ?? (leg['distance'] as num?) ?? 0).toDouble();
-
-    final points = _parseGeometry(route['geometry']);
-    final steps = _parseSteps(leg['steps']);
-
-    if (points.isEmpty) {
-      throw StateError('Walking route had no path points.');
-    }
-
-    return WalkingRoute(
-      points: points,
-      steps: steps,
-      totalDistanceMeters: totalDistance,
-    );
   }
 
   List<RoutePoint> _parseGeometry(dynamic geometry) {

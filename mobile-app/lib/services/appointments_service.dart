@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -7,8 +9,10 @@ import '../models/bookable_slot.dart';
 import '../models/staff_option.dart';
 import '../utils/appointment_time_slots.dart';
 import '../utils/clinic_datetime.dart';
+import 'activity_log_actions.dart';
+import 'activity_log_service.dart';
 import 'healthcare_staff_service.dart';
-import '../utils/localized_doctor_name.dart';
+import '../utils/localized_staff_name.dart';
 import 'app_settings_service.dart';
 import 'user_profile_service.dart';
 
@@ -28,7 +32,6 @@ class AppointmentsService {
   static const _appointments = 'appointments';
   static const _staff = 'healthcarestaff';
   static const _counterPath = 'system/appointmentCounter';
-  static const _settingsPath = 'system/appointmentSettings';
 
   final _staffService = HealthcareStaffService();
 
@@ -57,22 +60,26 @@ class AppointmentsService {
     return map;
   }
 
-  String _doctorName(Map<String, dynamic>? staff, String staffId) {
+  String _staffDisplayName(Map<String, dynamic>? staff, String staffId) {
     if (staff == null) return staffId.isNotEmpty ? staffId : 'Healthcare provider';
     final name = (staff['name'] as String?)?.trim() ?? '';
     if (name.isEmpty) return staffId;
-    final category = HealthcareStaffService.categoryFromData(staff);
-    final languageCode = AppSettingsService.instance.settings.languageCode;
-    return LocalizedDoctorName.format(
+    final role = staff['role']?.toString() ??
+        HealthcareStaffService.roleLabelForCategory(
+          HealthcareStaffService.categoryFromData(staff) ?? '',
+        );
+    return LocalizedStaffName.format(
       name,
-      languageCode,
-      isDoctor: category == HealthcareStaffService.roleDoctor,
+      AppSettingsService.instance.settings.languageCode,
+      role: role,
     );
   }
 
-  String _specialty(Map<String, dynamic>? staff) {
-    if (staff == null) return 'General';
-    return HealthcareStaffService.specialtyFromData(staff);
+  String _appointmentType(Map<String, dynamic> data) {
+    final value = (data['appointmentType'] as String?)?.trim() ??
+        (data['type'] as String?)?.trim();
+    if (value != null && value.isNotEmpty) return value;
+    return '—';
   }
 
   DateTime? _parseDateTime(dynamic value) => ClinicDateTime.fromFirestore(value);
@@ -89,20 +96,6 @@ class AppointmentsService {
       if (value != null && value.isNotEmpty) return value;
     }
     return null;
-  }
-
-  /// Open slot row in `appointments`: `dateTime` set, not yet booked by a patient.
-  bool _isOpenSlotRecord(Map<String, dynamic> data) {
-    final status = (data['status'] as String?)?.trim().toLowerCase() ?? '';
-    if (_blocksSlot(data['status'] as String?) ||
-        status == 'cancelled' ||
-        status == 'done') {
-      return false;
-    }
-    if (status == 'available') return true;
-
-    final userId = data['userId']?.toString().trim() ?? '';
-    return userId.isEmpty;
   }
 
   /// All `appointments` for [staffId] on [date] (Firestore `dateTime` field).
@@ -155,10 +148,12 @@ class AppointmentsService {
   }
 
   List<DateTime> _bookedTimesFromDocs(
-    List<({String docId, Map<String, dynamic> data})> docs,
-  ) {
+    List<({String docId, Map<String, dynamic> data})> docs, {
+    String? excludeDocId,
+  }) {
     final booked = <DateTime>[];
     for (final entry in docs) {
+      if (excludeDocId != null && entry.docId == excludeDocId) continue;
       if (!_blocksSlot(entry.data['status'] as String?)) continue;
       final dateTime = _parseDateTime(
         entry.data['dateTime'] ?? entry.data['scheduledAt'],
@@ -168,111 +163,44 @@ class AppointmentsService {
     return AppointmentTimeSlots.dedupeMinutes(booked);
   }
 
-  List<BookableSlot> _openSlotsFromDocs(
-    List<({String docId, Map<String, dynamic> data})> docs,
-  ) {
-    final slots = <BookableSlot>[];
-    for (final entry in docs) {
-      if (!_isOpenSlotRecord(entry.data)) continue;
-
-      final dateTime = _parseDateTime(
-        entry.data['dateTime'] ?? entry.data['scheduledAt'],
-      );
-      if (dateTime == null) continue;
-
-      slots.add(
-        BookableSlot(
-          dateTime: dateTime,
-          firestoreDocId: entry.docId,
-          appointmentId: entry.data['appointmentId']?.toString(),
-        ),
-      );
-    }
-    return slots;
-  }
-
-  Future<List<DateTime>> _templateTimesForStaffOnDate({
-    required String staffId,
-    required DateTime calendarDate,
-  }) async {
-    final trimmedStaffId = staffId.trim();
-
-    if (trimmedStaffId.isNotEmpty) {
-      for (final field in ['staffID', 'staffId']) {
-        final snap = await _firestore
-            .collection(_staff)
-            .where(field, isEqualTo: trimmedStaffId)
-            .where('status', isEqualTo: 'Active')
-            .limit(1)
-            .get();
-        if (snap.docs.isNotEmpty) {
-          final data = snap.docs.first.data();
-          for (final key in [
-            'availableTimeSlots',
-            'timeSlots',
-            'appointmentTimeSlots',
-          ]) {
-            final slots = AppointmentTimeSlots.parseSlotListForDate(
-              data[key],
-              calendarDate,
-            );
-            if (slots.isNotEmpty) return slots;
-          }
-        }
-      }
-    }
-
-    final settingsSnap = await _firestore.doc(_settingsPath).get();
-    if (settingsSnap.exists) {
-      final data = settingsSnap.data();
-      for (final key in ['timeSlots', 'availableTimeSlots', 'appointmentTimeSlots']) {
-        final slots = AppointmentTimeSlots.parseSlotListForDate(
-          data?[key],
-          calendarDate,
-        );
-        if (slots.isNotEmpty) return slots;
-      }
-    }
-
-    return AppointmentTimeSlots.defaultSlotsOnDate(calendarDate);
-  }
-
-  /// Loads slots from Firestore `appointments.dateTime`, hides times already booked.
+  /// Loads standard clinic slots for [date], hiding times already booked.
   Future<List<BookableSlot>> fetchBookableSlotsForStaffOnDate({
     required String staffId,
     required DateTime date,
+    String? excludeAppointmentDocId,
   }) async {
     final calendarDate = DateTime(date.year, date.month, date.day);
-    final docs = await _fetchAppointmentDocsForStaffOnDate(
-      staffId: staffId,
-      date: calendarDate,
-    );
-    final booked = _bookedTimesFromDocs(docs);
+    var booked = <DateTime>[];
 
-    var candidates = _openSlotsFromDocs(docs);
-
-    if (candidates.isEmpty) {
-      final templates = await _templateTimesForStaffOnDate(
+    try {
+      final docs = await _fetchAppointmentDocsForStaffOnDate(
         staffId: staffId,
-        calendarDate: calendarDate,
+        date: calendarDate,
       );
-      candidates = templates
-          .map(
-            (dateTime) => BookableSlot(
-              dateTime: dateTime,
-              firestoreDocId: '',
-            ),
-          )
-          .toList();
+      booked = _bookedTimesFromDocs(
+        docs,
+        excludeDocId: excludeAppointmentDocId,
+      );
+    } catch (e) {
+      // Still show clinic slots if the booked-times query fails (e.g. rules/index).
+      assert(() {
+        // ignore: avoid_print
+        print('AppointmentsService: could not load booked slots: $e');
+        return true;
+      }());
     }
 
     final available = <BookableSlot>[];
-    for (final slot in candidates) {
-      if (!ClinicDateTime.isAfterNow(slot.dateTime)) continue;
+    for (final dateTime in AppointmentTimeSlots.clinicSlotsOnDate(calendarDate)) {
+      if (!ClinicDateTime.isAfterNow(dateTime)) continue;
       final isTaken = booked.any(
-        (b) => AppointmentTimeSlots.sameMinute(b, slot.dateTime),
+        (b) => AppointmentTimeSlots.sameMinute(b, dateTime),
       );
-      if (!isTaken) available.add(slot);
+      if (!isTaken) {
+        available.add(
+          BookableSlot(dateTime: dateTime, firestoreDocId: ''),
+        );
+      }
     }
 
     available.sort((a, b) => a.dateTime.compareTo(b.dateTime));
@@ -283,10 +211,12 @@ class AppointmentsService {
     required String staffId,
     required DateTime dateTime,
     String? firestoreDocId,
+    String? excludeAppointmentDocId,
   }) async {
     final stillAvailable = await fetchBookableSlotsForStaffOnDate(
       staffId: staffId,
       date: dateTime,
+      excludeAppointmentDocId: excludeAppointmentDocId,
     );
     final stillFree = stillAvailable.any((slot) {
       if (!AppointmentTimeSlots.sameMinute(slot.dateTime, dateTime)) {
@@ -354,8 +284,9 @@ class AppointmentsService {
       items.add(
         AppointmentItem(
           id: doc.id,
-          doctorName: _doctorName(staff, staffId),
-          specialty: _specialty(staff),
+          staffId: staffId,
+          doctorName: _staffDisplayName(staff, staffId),
+          appointmentType: _appointmentType(data),
           dateTime: dateTime,
           location: (data['location'] as String?)?.trim() ?? '',
           status: status,
@@ -370,6 +301,75 @@ class AppointmentsService {
       'status': 'Cancelled',
       'updatedAt': FieldValue.serverTimestamp(),
     });
+    unawaited(
+      ActivityLogService.instance.log(
+        action: ActivityLogActions.updateAppointmentStatus,
+        details: 'Cancelled appointment $appointmentId.',
+      ),
+    );
+  }
+
+  Future<void> rescheduleAppointment({
+    required String appointmentDocId,
+    required String staffId,
+    required DateTime newDateTime,
+  }) async {
+    final userId = await _patientUserId();
+    if (userId == null) {
+      throw StateError('Patient profile not found.');
+    }
+
+    final docRef = _firestore.collection(_appointments).doc(appointmentDocId);
+    final snap = await docRef.get();
+    if (!snap.exists) {
+      throw StateError('Appointment not found.');
+    }
+
+    final data = snap.data()!;
+    if ((data['userId'] as String?)?.trim() != userId) {
+      throw StateError('You cannot reschedule this appointment.');
+    }
+
+    final status = (data['status'] as String?)?.trim().toLowerCase() ?? '';
+    if (status != 'scheduled' && status != 'rescheduled') {
+      throw StateError('This appointment cannot be rescheduled yet.');
+    }
+
+    if (!ClinicDateTime.isAfterNow(newDateTime)) {
+      throw StateError('Please choose a future time slot.');
+    }
+
+    final currentDateTime = _parseDateTime(data['dateTime'] ?? data['scheduledAt']);
+    if (currentDateTime != null &&
+        AppointmentTimeSlots.sameMinute(currentDateTime, newDateTime)) {
+      throw StateError('Please choose a different date or time.');
+    }
+
+    final trimmedStaffId = staffId.trim();
+    if (trimmedStaffId.isEmpty) {
+      throw StateError('Staff information is missing for this appointment.');
+    }
+
+    await _assertSlotAvailable(
+      staffId: trimmedStaffId,
+      dateTime: newDateTime,
+      excludeAppointmentDocId: appointmentDocId,
+    );
+
+    await docRef.update({
+      'dateTime': ClinicDateTime.toTimestamp(newDateTime),
+      'status': 'Rescheduled',
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    unawaited(
+      ActivityLogService.instance.log(
+        action: ActivityLogActions.updateAppointment,
+        details:
+            'Rescheduled appointment $appointmentDocId to ${_formatClinicDateTime(newDateTime)}.',
+        userId: userId,
+      ),
+    );
   }
 
   Future<List<StaffOption>> fetchBookableStaff({required String category}) async {
@@ -424,15 +424,24 @@ class AppointmentsService {
         'dateTime': ClinicDateTime.toTimestamp(dateTime),
         'updatedAt': FieldValue.serverTimestamp(),
       });
-      return existingAppointmentId?.trim().isNotEmpty == true
+      final bookedId = existingAppointmentId?.trim().isNotEmpty == true
           ? existingAppointmentId!.trim()
           : trimmedDocId;
+      unawaited(
+        ActivityLogService.instance.log(
+          action: ActivityLogActions.bookAppointment,
+          details:
+              'Booked $appointmentType on ${_formatClinicDateTime(dateTime)}.',
+          userId: userId,
+        ),
+      );
+      return bookedId;
     }
 
     final counterRef = _firestore.doc(_counterPath);
     final appointmentsRef = _firestore.collection(_appointments);
 
-    return _firestore.runTransaction<String>((transaction) async {
+    final appointmentId = await _firestore.runTransaction<String>((transaction) async {
       final counterSnap = await transaction.get(counterRef);
       final next = counterSnap.exists
           ? (counterSnap.data()?['next'] as num?)?.toInt() ?? 1
@@ -453,5 +462,23 @@ class AppointmentsService {
       });
       return appointmentId;
     });
+    unawaited(
+      ActivityLogService.instance.log(
+        action: ActivityLogActions.bookAppointment,
+        details:
+            'Booked $appointmentType on ${_formatClinicDateTime(dateTime)}.',
+        userId: userId,
+      ),
+    );
+    return appointmentId;
   }
+}
+
+String _formatClinicDateTime(DateTime dateTime) {
+  final y = dateTime.year;
+  final m = dateTime.month.toString().padLeft(2, '0');
+  final d = dateTime.day.toString().padLeft(2, '0');
+  final hh = dateTime.hour.toString().padLeft(2, '0');
+  final mm = dateTime.minute.toString().padLeft(2, '0');
+  return '$y-$m-$d $hh:$mm';
 }

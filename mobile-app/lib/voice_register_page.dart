@@ -18,6 +18,7 @@ import 'services/voice_passphrase_controller.dart';
 import 'services/voice_profile_service.dart';
 import 'widgets/app_back_button.dart';
 import 'widgets/listening_mic_button.dart';
+import 'widgets/password_field_suffix.dart';
 import 'widgets/voice_record_button.dart';
 
 class VoiceRegisterPage extends StatefulWidget {
@@ -728,7 +729,7 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
       );
 }
 
-class _VoiceField extends StatelessWidget {
+class _VoiceField extends StatefulWidget {
   const _VoiceField({
     required this.controller,
     required this.hintText,
@@ -754,31 +755,47 @@ class _VoiceField extends StatelessWidget {
   final TextCapitalization textCapitalization;
 
   @override
+  State<_VoiceField> createState() => _VoiceFieldState();
+}
+
+class _VoiceFieldState extends State<_VoiceField> {
+  var _obscured = true;
+
+  @override
   Widget build(BuildContext context) {
+    final isPassword = widget.obscureText;
+
     return TextField(
-      controller: controller,
-      obscureText: obscureText,
-      keyboardType: keyboardType,
-      textCapitalization: textCapitalization,
-      onChanged: onChanged,
+      controller: widget.controller,
+      obscureText: isPassword ? _obscured : false,
+      keyboardType: widget.keyboardType,
+      textCapitalization: widget.textCapitalization,
+      onChanged: widget.onChanged,
       style: const TextStyle(color: Colors.white, fontSize: 16),
       decoration: InputDecoration(
         filled: true,
         fillColor: _VoiceRegisterPageState._fieldFill,
-        hintText: hintText,
+        hintText: widget.hintText,
         hintStyle: TextStyle(
           color: _VoiceRegisterPageState._subtext,
-          fontSize: hintFontSize,
+          fontSize: widget.hintFontSize,
         ),
-        prefixIcon: Icon(prefixIcon, color: Colors.white, size: 26),
-        suffixIcon: Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: ListeningMicButton(
-            listening: micListening,
-            onPressed: onMic,
-            size: 44,
-          ),
-        ),
+        prefixIcon: Icon(widget.prefixIcon, color: Colors.white, size: 26),
+        suffixIcon: isPassword
+            ? PasswordFieldSuffix(
+                obscured: _obscured,
+                onToggleObscured: () => setState(() => _obscured = !_obscured),
+                onMic: widget.onMic,
+                micListening: widget.micListening,
+              )
+            : Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ListeningMicButton(
+                  listening: widget.micListening,
+                  onPressed: widget.onMic,
+                  size: 44,
+                ),
+              ),
         contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 4),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),

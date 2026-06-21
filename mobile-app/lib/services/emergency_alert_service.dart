@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
@@ -6,6 +8,8 @@ import '../auth_session.dart';
 import '../models/emergency_alert_entity.dart';
 import '../models/user_entity.dart';
 import '../utils/clinic_datetime.dart';
+import 'activity_log_actions.dart';
+import 'activity_log_service.dart';
 import 'user_profile_service.dart';
 
 class EmergencyAlertService {
@@ -101,6 +105,12 @@ class EmergencyAlertService {
       }
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
+        unawaited(
+          ActivityLogService.instance.logWarning(
+            action: ActivityLogActions.failedGps,
+            details: 'Location permission denied while sending emergency alert.',
+          ),
+        );
         return 'Location unavailable (permission denied)';
       }
 
@@ -113,7 +123,13 @@ class EmergencyAlertService {
       final lat = position.latitude.toStringAsFixed(6);
       final lng = position.longitude.toStringAsFixed(6);
       return '$lat, $lng';
-    } catch (_) {
+    } catch (error) {
+      unawaited(
+        ActivityLogService.instance.logWarning(
+          action: ActivityLogActions.failedGps,
+          details: 'Could not retrieve GPS for emergency alert: $error',
+        ),
+      );
       return 'Location unavailable';
     }
   }
@@ -237,6 +253,27 @@ class EmergencyAlertService {
         );
       }
       throw StateError('Could not save emergency alert: ${e.message ?? e.code}');
+    }
+
+    final isFall =
+        alertType == EmergencyAlertEntity.alertTypeFallDetection;
+    if (isFall) {
+      unawaited(
+        ActivityLogService.instance.logSystem(
+          action: ActivityLogActions.emergencyAlert,
+          details: 'Fall detection event detected.',
+          relatedUserId: patientId,
+        ),
+      );
+    } else {
+      unawaited(
+        ActivityLogService.instance.log(
+          action: ActivityLogActions.emergencyAlert,
+          details:
+              'Manual SOS alert $alertId sent. Location: $location.',
+          userId: patientId,
+        ),
+      );
     }
 
     return entity;

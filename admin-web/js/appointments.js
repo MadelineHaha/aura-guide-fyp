@@ -15,6 +15,10 @@ import {
   defaultMedicationEndDate,
   reminderCountForFrequency,
 } from "./medications-service.js";
+import {
+  assertClinicSlotAvailable,
+  getAvailableClinicSlots,
+} from "./appointment-time-slots.js";
 import { releaseFirestoreListener } from "./firestore-realtime.js";
 
 const PAGE_SIZE = 6;
@@ -38,6 +42,7 @@ const patientSelectEl = document.getElementById("add-appointment-patient");
 const patientDisplayEl = document.getElementById("add-appointment-patient-display");
 const patientFieldEl = document.getElementById("appointment-patient-field");
 const dateInputEl = document.getElementById("add-appointment-date");
+const timeSelectEl = document.getElementById("add-appointment-time");
 
 const ADD_SUBMIT_HTML = `
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
@@ -191,6 +196,9 @@ function startAppointmentsRealtime() {
     (list) => {
       appointments = list;
       renderTable();
+      if (!formModalEl.hidden) {
+        refreshAppointmentTimeOptions();
+      }
     },
     (error) => {
       appointments = [];
@@ -349,6 +357,78 @@ function renderTable() {
   renderPagination(totalPages);
 }
 
+function refreshAppointmentTimeOptions({ selectedTime = "" } = {}) {
+  if (!timeSelectEl) return;
+
+  const date = dateInputEl.value;
+  const staffId = staffProfile?.staffID?.trim() || "";
+  const editingApt = editingAppointmentId
+    ? getAppointmentById(editingAppointmentId)
+    : null;
+
+  if (!date || !staffId) {
+    timeSelectEl.innerHTML = '<option value="">Select date first</option>';
+    timeSelectEl.disabled = true;
+    timeSelectEl.value = "";
+    return;
+  }
+
+  const requireFuture =
+    !editingApt || canEditDateTime(editingApt.status);
+
+  let slots = getAvailableClinicSlots({
+    appointments,
+    staffId,
+    dateStr: date,
+    excludeAppointmentId: editingAppointmentId,
+    requireFuture,
+  });
+
+  const preferredTime = selectedTime || timeSelectEl.value;
+  if (
+    preferredTime &&
+    !slots.some((slot) => slot.value === preferredTime) &&
+    editingApt?.dateTime &&
+    date === dateToInputValue(editingApt.dateTime) &&
+    timeToInputValue(editingApt.dateTime) === preferredTime
+  ) {
+    slots = [
+      {
+        value: preferredTime,
+        label: formatSlotLabelFromTimeValue(preferredTime),
+      },
+      ...slots,
+    ];
+  }
+
+  timeSelectEl.disabled = false;
+  if (slots.length === 0) {
+    timeSelectEl.innerHTML =
+      '<option value="">No available times for this date</option>';
+    timeSelectEl.value = "";
+    return;
+  }
+
+  const options = ['<option value="">Select time</option>'];
+  for (const slot of slots) {
+    options.push(
+      `<option value="${escapeHtml(slot.value)}">${escapeHtml(slot.label)}</option>`,
+    );
+  }
+  timeSelectEl.innerHTML = options.join("");
+  if (preferredTime && slots.some((slot) => slot.value === preferredTime)) {
+    timeSelectEl.value = preferredTime;
+  }
+}
+
+function formatSlotLabelFromTimeValue(timeValue) {
+  const [hh] = String(timeValue || "").split(":").map(Number);
+  if (!Number.isFinite(hh)) return timeValue;
+  const period = hh >= 12 ? "PM" : "AM";
+  const h12 = hh % 12 === 0 ? 12 : hh % 12;
+  return `${h12}:00 ${period}`;
+}
+
 function openFormModal({ repopulatePatients = true, lockedPatient = null } = {}) {
   formErrorEl.hidden = true;
   formErrorEl.textContent = "";
@@ -356,6 +436,7 @@ function openFormModal({ repopulatePatients = true, lockedPatient = null } = {})
   if (repopulatePatients) {
     populatePatientSelect(lockedPatient);
   }
+  refreshAppointmentTimeOptions();
   formModalEl.hidden = false;
   document.body.classList.add("modal-open");
 }
@@ -419,9 +500,11 @@ function openEditAppointmentModal(appointmentId) {
 
   if (apt.dateTime) {
     dateInputEl.value = dateToInputValue(apt.dateTime);
-    document.getElementById("add-appointment-time").value = timeToInputValue(
-      apt.dateTime,
-    );
+    refreshAppointmentTimeOptions({
+      selectedTime: timeToInputValue(apt.dateTime),
+    });
+  } else {
+    refreshAppointmentTimeOptions();
   }
 
   openFormModal({ repopulatePatients: false });
@@ -945,14 +1028,32 @@ async function handleAppointmentFormSubmit(event) {
   const userId = patientSelectEl.value;
   const appointmentType = document.getElementById("add-appointment-type").value;
   const location = document.getElementById("add-appointment-location").value.trim();
-  const date = document.getElementById("add-appointment-date").value;
-  const time = document.getElementById("add-appointment-time").value;
+  const date = dateInputEl.value;
+  const time = timeSelectEl.value;
   const notes = document.getElementById("add-appointment-notes").value.trim();
   const staffId = staffProfile?.staffID?.trim() || "";
 
   if (!userId || !appointmentType || !location || !date || !time) {
     formErrorEl.textContent = "Please fill in all required fields.";
     formErrorEl.hidden = false;
+    return;
+  }
+
+  try {
+    assertClinicSlotAvailable({
+      appointments,
+      staffId,
+      date,
+      time,
+      excludeAppointmentId: editingAppointmentId,
+      requireFuture:
+        !editingAppointmentId ||
+        canEditDateTime(getAppointmentById(editingAppointmentId)?.status),
+    });
+  } catch (error) {
+    formErrorEl.textContent = error?.message || "Please choose another time slot.";
+    formErrorEl.hidden = false;
+    refreshAppointmentTimeOptions({ selectedTime: time });
     return;
   }
 
@@ -1000,7 +1101,7 @@ async function handleAppointmentFormSubmit(event) {
     const code = error?.code;
     if (code === "permission-denied") {
       formErrorEl.textContent =
-        "Permission denied. Deploy Firestore rules for appointments.";
+        "Permission denied. Sign in as active staff and deploy Firestore rules: firebase deploy --only firestore:rules";
     } else {
       formErrorEl.textContent =
         error?.message || "Could not save appointment. Please try again.";
@@ -1052,6 +1153,7 @@ filterTabs.forEach((tab) => {
 addBtn.addEventListener("click", openAddAppointmentModal);
 formCloseBtn.addEventListener("click", closeFormModal);
 appointmentFormEl.addEventListener("submit", handleAppointmentFormSubmit);
+dateInputEl.addEventListener("change", () => refreshAppointmentTimeOptions());
 
 formModalEl.addEventListener("click", (event) => {
   if (event.target === formModalEl) closeFormModal();

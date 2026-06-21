@@ -5,10 +5,14 @@ import 'package:flutter/material.dart';
 
 import 'models/navigation_destination.dart' show NavDestination;
 import 'l10n/app_localizations.dart';
+import 'services/activity_log_actions.dart';
+import 'services/activity_log_service.dart';
 import 'services/app_settings_service.dart';
 import 'services/device_permissions_service.dart';
 import 'services/navigation_guidance_controller.dart';
+import 'services/voice_assistant_coordinator.dart';
 import 'services/obstacle_scanner_service.dart';
+import 'utils/distance_format.dart';
 import 'utils/obstacle_direction.dart';
 import 'utils/obstacle_labels.dart';
 import 'widgets/app_back_button.dart';
@@ -54,6 +58,7 @@ class _NavigationArPageState extends State<NavigationArPage>
   @override
   void initState() {
     super.initState();
+    VoiceAssistantCoordinator.instance.acquireMicLock();
     _guidanceState = widget.guidance.currentState;
     _guidanceSub = widget.guidance.states.listen((state) {
       if (!mounted) return;
@@ -63,15 +68,22 @@ class _NavigationArPageState extends State<NavigationArPage>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     )..repeat();
-    unawaited(_obstacleScanner.warmUp());
-    _initCamera();
+    unawaited(_initCamera());
   }
 
   Future<void> _initCamera() async {
     try {
+      await _obstacleScanner.warmUp();
+
       final cameraGranted =
           await DevicePermissionsService.instance.ensureCamera();
       if (!cameraGranted) {
+        unawaited(
+          ActivityLogService.instance.logWarning(
+            action: ActivityLogActions.cameraDenied,
+            details: 'Camera permission denied for AR navigation.',
+          ),
+        );
         throw StateError(
           'Camera permission is required for AR navigation. '
           'Please allow camera access in your device settings.',
@@ -99,6 +111,12 @@ class _NavigationArPageState extends State<NavigationArPage>
       } on CameraException catch (e) {
         if (e.code == 'CameraAccessDenied' ||
             e.code == 'CameraAccessDeniedWithoutPrompt') {
+          unawaited(
+            ActivityLogService.instance.logWarning(
+              action: ActivityLogActions.cameraDenied,
+              details: 'Camera access denied while initializing AR navigation.',
+            ),
+          );
           throw StateError(
             'Camera permission is required for AR navigation. '
             'Please allow camera access in your device settings.',
@@ -137,6 +155,7 @@ class _NavigationArPageState extends State<NavigationArPage>
 
   @override
   void dispose() {
+    VoiceAssistantCoordinator.instance.releaseMicLock();
     _clearAlertTimer?.cancel();
     _pulseController.dispose();
     _guidanceSub?.cancel();
@@ -153,7 +172,7 @@ class _NavigationArPageState extends State<NavigationArPage>
     if (_lastSpokenObstacleMessage == message &&
         _lastObstacleSpeechAt != null &&
         now.difference(_lastObstacleSpeechAt!) <
-            const Duration(milliseconds: 2800)) {
+            const Duration(milliseconds: 1500)) {
       return;
     }
 
@@ -256,7 +275,6 @@ class _NavigationArPageState extends State<NavigationArPage>
               builder: (context, _) {
                 return ArPathOverlay(
                   turnDeltaDegrees: _guidanceState.turnDelta,
-                  guidanceHint: _guidanceState.guidanceHint,
                   pulse: _pulseController.value,
                 );
               },
@@ -362,7 +380,7 @@ class _NavigationArPageState extends State<NavigationArPage>
                     ),
                   if (_guidanceState.hasGpsFix)
                     Text(
-                      '${_guidanceState.distanceMeters.toStringAsFixed(0)} m',
+                      formatNavigationDistance(_guidanceState.distanceMeters),
                       style: const TextStyle(
                         color: _accent,
                         fontWeight: FontWeight.bold,

@@ -171,6 +171,7 @@ class _NavigationPageState extends State<NavigationPage> {
 
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
+          settings: const RouteSettings(name: 'NavigationArPage'),
           builder: (context) => NavigationArPage(
             destination: resolved,
             guidance: _guidance,

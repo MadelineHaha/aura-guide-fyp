@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'book_appointment_page.dart';
 import 'l10n/app_localizations.dart';
 import 'models/appointment_item.dart';
+import 'reschedule_appointment_page.dart';
 import 'services/appointments_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
@@ -108,14 +109,20 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
     }
   }
 
-  void _onReschedule(AppointmentItem item) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          context.l10n.t('rescheduleComingSoon', {'doctorName': item.doctorName}),
-        ),
+  Future<void> _onReschedule(AppointmentItem item) async {
+    if (item.staffId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n.t('cannotRescheduleMissingStaff'))),
+      );
+      return;
+    }
+
+    final rescheduled = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (context) => RescheduleAppointmentPage(appointment: item),
       ),
     );
+    if (rescheduled == true) await _load();
   }
 
   Future<void> _onBook() async {
@@ -176,7 +183,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                                 return AccessibleFocusRegion(
                                   label: context.l10n.t('appointmentItemA11y', {
                                     'doctorName': item.doctorName,
-                                    'specialty': item.specialty,
+                                    'specialty': item.appointmentType,
                                     'dateLabel': item.dateLabel,
                                     'timeLabel': item.timeLabel,
                                     'location': item.locationDisplay,
@@ -347,7 +354,7 @@ class _AppointmentCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            item.specialty,
+            item.appointmentType,
             style: const TextStyle(color: _subtext, fontSize: 15),
           ),
           if (item.isPending) ...[

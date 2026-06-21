@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../models/navigation_destination.dart';
+import 'activity_log_actions.dart';
+import 'activity_log_service.dart';
 import 'navigation_storage.dart';
 
 class NavigationService {
@@ -156,25 +160,35 @@ class NavigationService {
   }
 
   Future<Position> currentPosition() async {
-    final enabled = await Geolocator.isLocationServiceEnabled();
-    if (!enabled) {
-      throw StateError('Location services are disabled.');
-    }
+    try {
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        throw StateError('Location services are disabled.');
+      }
 
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      throw StateError('Location permission is required for navigation.');
-    }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        throw StateError('Location permission is required for navigation.');
+      }
 
-    return Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-      ),
-    );
+      return Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+    } catch (error) {
+      unawaited(
+        ActivityLogService.instance.logWarning(
+          action: ActivityLogActions.failedGps,
+          details: error.toString(),
+        ),
+      );
+      rethrow;
+    }
   }
 
   double bearingToDestination({

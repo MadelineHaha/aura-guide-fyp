@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+import 'activity_log_actions.dart';
+import 'activity_log_service.dart';
 import 'app_settings_service.dart';
 import 'device_permissions_service.dart';
 import 'voice_assistant_coordinator.dart';
@@ -33,6 +35,18 @@ class FieldSpeechInput extends ChangeNotifier {
     return _listening && identical(_activeController, controller);
   }
 
+  Future<String?> _voiceInputFailure(String details) async {
+    unawaited(
+      ActivityLogService.instance.logWarning(
+        action: ActivityLogActions.voiceRecognitionFailure,
+        details: details,
+      ),
+    );
+    return details.startsWith('Microphone')
+        ? 'Microphone permission is required. Please allow microphone access in your device settings.'
+        : 'Voice input is not available: $details';
+  }
+
   Future<String?> toggleForController(
     TextEditingController controller, {
     ListenMode listenMode = ListenMode.dictation,
@@ -49,13 +63,13 @@ class FieldSpeechInput extends ChangeNotifier {
     final micGranted =
         await DevicePermissionsService.instance.ensureMicrophone();
     if (!micGranted) {
-      return 'Microphone permission is required. Please allow microphone access in your device settings.';
+      return _voiceInputFailure('Microphone permission denied for voice input.');
     }
 
     try {
       await _ensureReady();
     } catch (error) {
-      return 'Voice input is not available: $error';
+      return _voiceInputFailure(error.toString());
     }
 
     _activeController = controller;
@@ -128,13 +142,13 @@ class FieldSpeechInput extends ChangeNotifier {
     final micGranted =
         await DevicePermissionsService.instance.ensureMicrophone();
     if (!micGranted) {
-      return 'Microphone permission is required. Please allow microphone access in your device settings.';
+      return _voiceInputFailure('Microphone permission denied for voice input.');
     }
 
     try {
       await _ensureReady();
     } catch (error) {
-      return 'Voice input is not available: $error';
+      return _voiceInputFailure(error.toString());
     }
 
     _activeController = null;
