@@ -34,7 +34,7 @@ class NavigationArPage extends StatefulWidget {
 }
 
 class _NavigationArPageState extends State<NavigationArPage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   static const Color _accent = Color(0xFF63F7F2);
 
   final _obstacleScanner = ObstacleScannerService();
@@ -68,7 +68,28 @@ class _NavigationArPageState extends State<NavigationArPage>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     )..repeat();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_initCamera());
+  }
+
+  Future<void> _configureCameraForClarity(CameraController controller) async {
+    if (!controller.value.isInitialized) return;
+    try {
+      await controller.setFocusMode(FocusMode.auto);
+      await controller.setExposureMode(ExposureMode.auto);
+    } catch (error) {
+      debugPrint('NavigationArPage camera clarity config skipped: $error');
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final controller = _cameraController;
+      if (controller != null) {
+        unawaited(_configureCameraForClarity(controller));
+      }
+    }
   }
 
   Future<void> _initCamera() async {
@@ -102,7 +123,7 @@ class _NavigationArPageState extends State<NavigationArPage>
 
       final controller = CameraController(
         backCamera,
-        ResolutionPreset.medium,
+        ResolutionPreset.high,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.yuv420,
       );
@@ -124,6 +145,7 @@ class _NavigationArPageState extends State<NavigationArPage>
         }
         rethrow;
       }
+      await _configureCameraForClarity(controller);
       _cameraController = controller;
 
       _obstacleSub = _obstacleScanner.alerts.listen((alert) {
@@ -155,6 +177,7 @@ class _NavigationArPageState extends State<NavigationArPage>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     VoiceAssistantCoordinator.instance.releaseMicLock();
     _clearAlertTimer?.cancel();
     _pulseController.dispose();

@@ -28,6 +28,8 @@ import {
   reminderCountForFrequency,
   subscribeMedicationsByUserId,
   updateMedicationWithReminder,
+  cancelMedication,
+  MEDICATION_STATUS_CANCELLED,
 } from "./medications-service.js";
 import { releaseFirestoreListener } from "./firestore-realtime.js";
 
@@ -69,6 +71,7 @@ const addMedicationErrorEl = document.getElementById("add-medication-error");
 const addMedicationSubmitBtn = document.getElementById("add-medication-submit");
 const addMedicationSaveLabelEl = document.getElementById("add-medication-save-label");
 const addMedicationTitleEl = document.getElementById("add-medication-title");
+const addMedicationCancelMedBtn = document.getElementById("add-medication-cancel-med");
 const addHealthRecordModalEl = document.getElementById("add-health-record-modal");
 const addHealthRecordFormEl = document.getElementById("add-health-record-form");
 const addHealthRecordPatientEl = document.getElementById("add-health-record-patient");
@@ -412,10 +415,23 @@ function syncAddMedicationDateConstraints(isEdit = Boolean(editingMedicationId))
   }
 }
 
-function setMedicationFormMode(mode) {
+function setMedicationFormFieldsDisabled(disabled) {
+  for (const el of addMedicationFormEl.querySelectorAll("input, select, textarea")) {
+    el.disabled = disabled;
+  }
+}
+
+function setMedicationFormMode(mode, { cancelled = false } = {}) {
   const isEdit = mode === "edit";
-  addMedicationTitleEl.textContent = isEdit ? "Edit Medication" : "Add Medication";
+  addMedicationTitleEl.textContent = isEdit
+    ? cancelled
+      ? "Medication (Cancelled)"
+      : "Edit Medication"
+    : "Add Medication";
   addMedicationSaveLabelEl.textContent = isEdit ? "Save Changes" : "Add Medication";
+  addMedicationCancelMedBtn.hidden = !isEdit || cancelled;
+  addMedicationSubmitBtn.hidden = cancelled;
+  setMedicationFormFieldsDisabled(cancelled);
 }
 
 function populateMedicationFormFromRecord(medication) {
@@ -492,7 +508,9 @@ async function openEditMedicationModal(medicationId) {
   editingMedicationId = medication.medicationId;
   addMedicationFormEl.reset();
   populateMedicationFormFromRecord(medication);
-  setMedicationFormMode("edit");
+  const cancelled =
+    String(medication.status || "").trim() === MEDICATION_STATUS_CANCELLED;
+  setMedicationFormMode("edit", { cancelled });
   addMedicationModalEl.hidden = false;
   syncBodyModalLock();
   addMedicationNameEl.focus();
@@ -501,10 +519,52 @@ async function openEditMedicationModal(medicationId) {
 function closeAddMedicationModal() {
   editingMedicationId = null;
   setMedicationFormMode("add");
+  setMedicationFormFieldsDisabled(false);
+  addMedicationSubmitBtn.hidden = false;
+  addMedicationCancelMedBtn.hidden = true;
   addMedicationModalEl.hidden = true;
   syncBodyModalLock();
   if (!medicationsModalEl.hidden) {
     medicationsCloseBtn.focus();
+  }
+}
+
+async function handleCancelMedicationClick() {
+  if (!editingMedicationId || isSavingMedication) return;
+
+  const patient = getPatientById(activeMedicationsPatientId);
+  const medicationName = addMedicationNameEl.value.trim() || editingMedicationId;
+  const confirmed = window.confirm(
+    `Cancel ${medicationName} for ${patient?.name || "this patient"}? ` +
+      "The patient will no longer receive reminders for this medication.",
+  );
+  if (!confirmed) return;
+
+  if (!loggedInStaffId) {
+    addMedicationErrorEl.textContent = "Staff ID is missing. Please sign in again.";
+    addMedicationErrorEl.hidden = false;
+    return;
+  }
+
+  isSavingMedication = true;
+  addMedicationCancelMedBtn.disabled = true;
+  addMedicationSubmitBtn.disabled = true;
+  addMedicationErrorEl.hidden = true;
+
+  try {
+    await cancelMedication({
+      medicationId: editingMedicationId,
+      staffId: loggedInStaffId,
+    });
+    closeAddMedicationModal();
+  } catch (error) {
+    addMedicationErrorEl.textContent =
+      error?.message || "Could not cancel medication. Please try again.";
+    addMedicationErrorEl.hidden = false;
+  } finally {
+    isSavingMedication = false;
+    addMedicationCancelMedBtn.disabled = false;
+    addMedicationSubmitBtn.disabled = false;
   }
 }
 
@@ -1396,6 +1456,7 @@ medicationsListEl.addEventListener("click", (event) => {
 });
 document.getElementById("btn-add-medication").addEventListener("click", openAddMedicationModal);
 addMedicationCloseBtn.addEventListener("click", closeAddMedicationModal);
+addMedicationCancelMedBtn.addEventListener("click", handleCancelMedicationClick);
 addMedicationFormEl.addEventListener("submit", handleAddMedicationSubmit);
 addMedicationFrequencyEl.addEventListener("change", () => {
   syncAddMedicationReminderTimes();

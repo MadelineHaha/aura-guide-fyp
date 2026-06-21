@@ -56,7 +56,8 @@ Float32List _cameraToModelInputIsolate(_CameraToModelJob job) {
 
 /// Lightweight copy of a camera frame for background AI inference.
 class ObstacleFramePacket {
-  static const maxInferenceDimension = 320;
+  /// Match YOLO model input (640) so frames are not over-downscaled before inference.
+  static const maxInferenceDimension = 640;
 
   static ({int width, int height}) inferenceFrameSize(int srcWidth, int srcHeight) {
     if (srcWidth <= 0 || srcHeight <= 0) {
@@ -162,7 +163,7 @@ class ObstacleFramePacket {
         uvPixelStride: u?.bytesPerPixel ?? 1,
         inputSize: inputSize,
         inputLength: inputLength,
-        luminanceOnly: true,
+        luminanceOnly: false,
       ),
     );
   }
@@ -359,12 +360,14 @@ class ObstacleFramePacket {
     final padY = (size - scaledH) ~/ 2;
 
     for (var dy = 0; dy < scaledH; dy++) {
-      final srcY = math.min(height - 1, (dy / scale).floor());
+      final srcY =
+          math.min(height - 1, ((dy + 0.5) / scale - 0.5).round().clamp(0, height - 1));
       final yRow = srcY * yStride;
       final dstRow = padY + dy;
 
       for (var dx = 0; dx < scaledW; dx++) {
-        final srcX = math.min(width - 1, (dx / scale).floor());
+        final srcX =
+            math.min(width - 1, ((dx + 0.5) / scale - 0.5).round().clamp(0, width - 1));
         final yIndex = yRow + srcX;
         final yVal =
             yIndex >= 0 && yIndex < yBytes.length ? yBytes[yIndex] : 0;

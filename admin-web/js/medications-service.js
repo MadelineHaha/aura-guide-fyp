@@ -9,6 +9,7 @@ import {
   serverTimestamp,
   Timestamp,
   where,
+  writeBatch,
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { db } from "./firebase.js";
 import {
@@ -24,6 +25,8 @@ export const MEDICATIONS_COLLECTION = "medications";
 export const MEDICATION_REMINDERS_COLLECTION = "medicationreminders";
 export const MEDICATION_COUNTER_PATH = ["system", "medicationCounter"];
 export const REMINDER_COUNTER_PATH = ["system", "medicationReminderCounter"];
+export const MEDICATION_STATUS_ACTIVE = "Active";
+export const MEDICATION_STATUS_CANCELLED = "Cancelled";
 
 const USER_ID_PATTERN = /^U\d{5}$/;
 const STAFF_ID_PATTERN = /^S\d{5}$/;
@@ -196,12 +199,158 @@ export async function fetchMedicationWithReminders(medicationId) {
     endDate: (data.endDate || "").trim(),
     userId: (data.userId || data.userID || "").trim(),
     staffId: (data.staffId || data.staffID || "").trim(),
+    status: String(data.status || MEDICATION_STATUS_ACTIVE).trim(),
     reminderTimes,
   };
 }
 
+export function defaultReminderTimesForFrequency(frequency) {
+  switch (String(frequency || "").trim()) {
+    case "Twice daily":
+      return ["08:00", "20:00"];
+    case "Three times daily":
+      return ["08:00", "14:00", "20:00"];
+    case "Once daily":
+    case "Weekly":
+    default:
+      return ["08:00"];
+  }
+}
+
+function pickMissingReminderTimes(existingTimes, frequency, countNeeded) {
+  const defaults = defaultReminderTimesForFrequency(frequency);
+  const missing = [];
+  for (const time of defaults) {
+    if (missing.length >= countNeeded) break;
+    if (!existingTimes.includes(time)) missing.push(time);
+  }
+  let index = 0;
+  while (missing.length < countNeeded && defaults.length > 0) {
+    const time = defaults[index % defaults.length];
+    if (!existingTimes.includes(time) && !missing.includes(time)) {
+      missing.push(time);
+    }
+    index += 1;
+    if (index > defaults.length * 4) break;
+  }
+  return missing;
+}
+
 /**
- * Creates Medication (Table 4.5) + MedicationReminder (Table 4.6).
+ * Creates missing MedicationReminder rows for medications that have none
+ * (or fewer than frequency requires).
+ */
+export async function ensureRemindersForMedications(userId) {
+  const trimmedUserId = String(userId || "").trim();
+  if (!USER_ID_PATTERN.test(trimmedUserId)) return { created: 0 };
+
+  const [medsSnap, remindersSnap] = await Promise.all([
+    getDocs(
+      query(
+        collection(db, MEDICATIONS_COLLECTION),
+        where("userId", "==", trimmedUserId),
+      ),
+    ),
+    getDocs(
+      query(
+        collection(db, MEDICATION_REMINDERS_COLLECTION),
+        where("userId", "==", trimmedUserId),
+      ),
+    ),
+  ]);
+
+  if (medsSnap.empty) return { created: 0 };
+
+  const remindersByMed = new Map();
+  for (const docSnap of remindersSnap.docs) {
+    const medId = String(docSnap.data().medicationId || "").trim();
+    if (!medId) continue;
+    if (!remindersByMed.has(medId)) remindersByMed.set(medId, []);
+    remindersByMed.get(medId).push(docSnap);
+  }
+
+  const reminderCounterRef = doc(db, ...REMINDER_COUNTER_PATH);
+  const remindersRef = collection(db, MEDICATION_REMINDERS_COLLECTION);
+  let totalCreated = 0;
+
+  await runTransaction(db, async (transaction) => {
+    const remCounterSnap = await transaction.get(reminderCounterRef);
+    let remNext = remCounterSnap.exists()
+      ? Number(remCounterSnap.data().next) || 1
+      : 1;
+
+    for (const medDoc of medsSnap.docs) {
+      const med = medDoc.data();
+      const medicationId = String(med.medicationId || medDoc.id).trim();
+      if (!medicationId) continue;
+      if (
+        String(med.status || MEDICATION_STATUS_ACTIVE).trim() ===
+        MEDICATION_STATUS_CANCELLED
+      ) {
+        continue;
+      }
+
+      const frequency = String(med.frequency || "").trim();
+      const expectedCount = reminderCountForFrequency(frequency);
+      const existingDocs = remindersByMed.get(medicationId) || [];
+      if (existingDocs.length >= expectedCount) continue;
+
+      const existingTimes = sortReminderDocsByTime(existingDocs).map((docSnap) =>
+        reminderTimeInputFromTimestamp(docSnap.data().reminderTime),
+      );
+      const timesToAdd = pickMissingReminderTimes(
+        existingTimes,
+        frequency,
+        expectedCount - existingTimes.length,
+      );
+      if (timesToAdd.length === 0) continue;
+
+      const startDate = String(med.startDate || "").trim() || todayDateString();
+      const repeatPattern = repeatPatternForFrequency(frequency);
+      const name = String(med.name || "").trim();
+      const dosage = String(med.dosage || "").trim();
+      const message =
+        name && dosage
+          ? `Take ${name} — ${dosage}`
+          : `Medication reminder for ${name || medicationId}`;
+      const staffId = String(med.staffId || med.staffID || "").trim();
+      if (!staffId || !STAFF_ID_PATTERN.test(staffId)) continue;
+
+      for (const reminderTime of timesToAdd) {
+        const reminderId = `R${String(remNext).padStart(5, "0")}`;
+        remNext += 1;
+        totalCreated += 1;
+
+        const reminderDateTime = combineDateAndTime(startDate, reminderTime);
+        const reminderTs = Timestamp.fromDate(reminderDateTime);
+        const reminderLabel = formatReminderLabel(reminderDateTime);
+
+        transaction.set(doc(remindersRef, reminderId), {
+          reminderId,
+          reminderTime: reminderTs,
+          reminderTimeLabel: reminderLabel,
+          reminderType: "Notification",
+          reminderMessage: message,
+          repeatPattern,
+          status: "Pending",
+          medicationId,
+          userId: trimmedUserId,
+          staffId,
+          completedDate: "",
+          createdAt: serverTimestamp(),
+        });
+      }
+    }
+
+    if (totalCreated > 0) {
+      transaction.set(reminderCounterRef, { next: remNext }, { merge: true });
+    }
+  });
+
+  return { created: totalCreated };
+}
+
+/**
  * @returns {Promise<{ medicationId: string, reminderId: string }>}
  */
 export async function createMedicationWithReminder({
@@ -269,6 +418,7 @@ export async function createMedicationWithReminder({
       endDate,
       userId,
       staffId,
+      status: MEDICATION_STATUS_ACTIVE,
       createdAt: serverTimestamp(),
     });
 
@@ -324,6 +474,13 @@ export async function updateMedicationWithReminder({
   const medicationSnap = await getDoc(medicationRef);
   if (!medicationSnap.exists()) {
     throw new Error("Medication not found.");
+  }
+
+  if (
+    String(medicationSnap.data().status || MEDICATION_STATUS_ACTIVE).trim() ===
+    MEDICATION_STATUS_CANCELLED
+  ) {
+    throw new Error("Cancelled medications cannot be edited.");
   }
 
   const userId = (medicationSnap.data().userId || medicationSnap.data().userID || "").trim();
@@ -436,11 +593,68 @@ export async function updateMedicationWithReminder({
   return { medicationId: trimmedId };
 }
 
+/**
+ * Cancels a medication and stops its reminders (staff action from edit modal).
+ */
+export async function cancelMedication({ medicationId, staffId }) {
+  const trimmedId = String(medicationId || "").trim();
+  if (!trimmedId) {
+    throw new Error("Medication is required.");
+  }
+  if (!staffId || !STAFF_ID_PATTERN.test(staffId)) {
+    throw new Error("Staff ID is missing or invalid.");
+  }
+
+  const medicationRef = doc(db, MEDICATIONS_COLLECTION, trimmedId);
+  const medicationSnap = await getDoc(medicationRef);
+  if (!medicationSnap.exists()) {
+    throw new Error("Medication not found.");
+  }
+
+  const data = medicationSnap.data();
+  if (
+    String(data.status || MEDICATION_STATUS_ACTIVE).trim() ===
+    MEDICATION_STATUS_CANCELLED
+  ) {
+    throw new Error("This medication is already cancelled.");
+  }
+
+  const today = todayDateString();
+  const remindersSnap = await getDocs(
+    query(
+      collection(db, MEDICATION_REMINDERS_COLLECTION),
+      where("medicationId", "==", trimmedId),
+    ),
+  );
+
+  const batch = writeBatch(db);
+  batch.update(medicationRef, {
+    status: MEDICATION_STATUS_CANCELLED,
+    endDate: today,
+    cancelledAt: serverTimestamp(),
+    staffId,
+    updatedAt: serverTimestamp(),
+  });
+
+  for (const docSnap of remindersSnap.docs) {
+    batch.update(docSnap.ref, {
+      status: "Missed",
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  await batch.commit();
+  return { medicationId: trimmedId };
+}
+
 function staffDisplayName(staff) {
   return formatStaffDisplayName(staff);
 }
 
-export function isMedicationActiveOnDate(startDate, endDate, yyyyMmDd) {
+export function isMedicationActiveOnDate(startDate, endDate, yyyyMmDd, status = MEDICATION_STATUS_ACTIVE) {
+  if (String(status || MEDICATION_STATUS_ACTIVE).trim() === MEDICATION_STATUS_CANCELLED) {
+    return false;
+  }
   const start = String(startDate || "").trim();
   const end = String(endDate || "").trim();
   if (!start || !end) return false;
@@ -454,6 +668,8 @@ export function mapMedicationDoc(docSnap, staffByStaffId) {
   const today = todayDateString();
   const startDate = (data.startDate || "").trim();
   const endDate = (data.endDate || "").trim();
+  const status = String(data.status || MEDICATION_STATUS_ACTIVE).trim();
+  const cancelled = status === MEDICATION_STATUS_CANCELLED;
 
   return {
     medicationId: (data.medicationId || docSnap.id || "").trim(),
@@ -463,7 +679,9 @@ export function mapMedicationDoc(docSnap, staffByStaffId) {
     instructions: (data.instructions || "").trim(),
     startDate,
     endDate,
-    active: isMedicationActiveOnDate(startDate, endDate, today),
+    status,
+    cancelled,
+    active: isMedicationActiveOnDate(startDate, endDate, today, status),
     doctor: staff ? staffDisplayName(staff) : staffId || "—",
   };
 }
@@ -471,6 +689,10 @@ export function mapMedicationDoc(docSnap, staffByStaffId) {
 function mapMedicationsSnap(snap, staffByStaffId) {
   if (snap.empty) return [];
   return snap.docs
+    .filter((docSnap) => {
+      const status = String(docSnap.data().status || MEDICATION_STATUS_ACTIVE).trim();
+      return status !== MEDICATION_STATUS_CANCELLED;
+    })
     .map((docSnap) => mapMedicationDoc(docSnap, staffByStaffId))
     .sort((a, b) => String(b.startDate).localeCompare(String(a.startDate)));
 }
@@ -490,10 +712,22 @@ export function subscribeMedicationsByUserId(userId, onData, onError) {
   const trimmedUserId = String(userId || "").trim();
   let staffByStaffId = new Map();
   let medicationsSnap = null;
+  let ensureTimer = null;
 
   function emit() {
     if (!medicationsSnap) return;
     onData(mapMedicationsSnap(medicationsSnap, staffByStaffId));
+  }
+
+  async function scheduleEnsure() {
+    clearTimeout(ensureTimer);
+    ensureTimer = setTimeout(async () => {
+      try {
+        await ensureRemindersForMedications(trimmedUserId);
+      } catch (error) {
+        console.warn("ensureRemindersForMedications failed:", error);
+      }
+    }, 400);
   }
 
   const medicationsQuery = query(
@@ -525,6 +759,7 @@ export function subscribeMedicationsByUserId(userId, onData, onError) {
       medicationsQuery,
       (snap) => {
         medicationsSnap = snap;
+        scheduleEnsure();
         emit();
       },
       onError,
@@ -532,6 +767,7 @@ export function subscribeMedicationsByUserId(userId, onData, onError) {
   ];
 
   const stopAll = () => {
+    clearTimeout(ensureTimer);
     for (const unsub of unsubs) {
       if (typeof unsub === "function") unsub();
     }

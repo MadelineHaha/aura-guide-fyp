@@ -11,10 +11,11 @@ class DevicePermissionsService {
 
   Future<bool> get hasCamera => _isGranted(Permission.camera);
 
-  /// Prompts for mic and camera when the app starts (if not already granted).
+  /// Prompts for mic, camera, and notifications when the app starts.
   Future<void> requestMicAndCameraOnLaunch() async {
     await _requestIfNeeded(Permission.microphone);
     await _requestIfNeeded(Permission.camera);
+    await _requestIfNeeded(Permission.notification);
   }
 
   /// Ensures microphone access before voice capture.

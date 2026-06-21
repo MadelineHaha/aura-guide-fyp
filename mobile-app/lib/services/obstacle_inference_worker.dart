@@ -89,17 +89,13 @@ class ObstacleInferenceWorker {
         inputSize: _inputSize,
         inputLength: _inputLength,
       );
-      final frame = ObstacleFramePacket.inferenceFrameSize(
-        image.width,
-        image.height,
-      );
       return _runInference(
         isolateInterpreter,
         inputShape,
         outputShape,
         inputFlat,
-        frameWidth: frame.width,
-        frameHeight: frame.height,
+        frameWidth: image.width,
+        frameHeight: image.height,
       );
     } catch (error, stack) {
       debugPrint('ObstacleInferenceWorker detectFromCamera failed: $error\n$stack');

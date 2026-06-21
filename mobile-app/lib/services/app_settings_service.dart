@@ -103,12 +103,24 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
   bool _cloudSaveInFlight = false;
   bool _cloudSaveQueued = false;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _settingsSub;
+  Future<void> Function(bool enabled)? _notificationsPreferenceHandler;
+  Future<void> Function()? _afterSettingsSyncHandler;
 
   static const _emergencySoundChannel = MethodChannel(
     'com.example.aura_guide_fyp/emergency_sound',
   );
 
   AppSettings get settings => _settings;
+
+  void registerNotificationsPreferenceHandler(
+    Future<void> Function(bool enabled) handler,
+  ) {
+    _notificationsPreferenceHandler = handler;
+  }
+
+  void registerAfterSettingsSyncHandler(Future<void> Function() handler) {
+    _afterSettingsSyncHandler = handler;
+  }
 
   Future<void> load() async {
     _ensureLifecycleAttached();
@@ -153,6 +165,11 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
           (raw is Map && raw.isEmpty);
       if (isEmpty) {
         await _saveToFirestoreNow();
+      }
+
+      final afterSync = _afterSettingsSyncHandler;
+      if (afterSync != null) {
+        unawaited(afterSync());
       }
     } catch (e) {
       debugPrint('AppSettingsService.syncFromFirestore failed: $e');
@@ -205,6 +222,10 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
     _settings = _settings.copyWith(notificationsEnabled: value);
     notifyListeners();
     await _persist();
+    final handler = _notificationsPreferenceHandler;
+    if (handler != null) {
+      unawaited(handler(value));
+    }
   }
 
   Future<void> setFallDetectionEnabled(bool value) async {

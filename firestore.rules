@@ -222,6 +222,25 @@ service cloud.firestore {
             .hasOnly(['status', 'completedDate', 'updatedAt']);
     }
 
+    function isPatientCreatingOwnMedicationReminder() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && request.resource.data.userId == patientUserId()
+        && request.resource.data.medicationId is string
+        && request.resource.data.reminderId is string
+        && request.resource.data.reminderTime is timestamp
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.reminderType is string
+        && request.resource.data.repeatPattern is string
+        && exists(/databases/$(database)/documents/medications/$(request.resource.data.medicationId))
+        && (
+          get(/databases/$(database)/documents/medications/$(request.resource.data.medicationId)).data.userId
+            == patientUserId()
+          || get(/databases/$(database)/documents/medications/$(request.resource.data.medicationId)).data.userID
+            == patientUserId()
+        );
+    }
+
     match /medications/{medicationId} {
       allow get: if isActiveStaff() || isOwnPatientMedication();
 
@@ -249,7 +268,7 @@ service cloud.firestore {
         && patientUserId() is string
         && resource.data.userID == patientUserId();
 
-      allow create: if isActiveStaff();
+      allow create: if isActiveStaff() || isPatientCreatingOwnMedicationReminder();
       allow delete: if isActiveStaff();
       allow update: if isActiveStaff() || isPatientMedicationReminderStatusUpdate();
     }

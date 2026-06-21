@@ -9,6 +9,8 @@ import 'password_recovery_page.dart';
 import 'models/voice_profile_data.dart';
 import 'services/app_settings_service.dart';
 import 'services/fall_detection_coordinator.dart';
+import 'services/medication_push_service.dart';
+import 'services/medication_local_reminder_service.dart';
 import 'services/user_profile_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
@@ -136,6 +138,51 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _onNotificationsChanged(bool value) async {
+    await _settings.setNotificationsEnabled(value);
+    if (!mounted || !value) return;
+
+    final result = await MedicationPushService.instance.registerForReminders(
+      enableNotificationsSetting: false,
+    );
+    if (!mounted) return;
+
+    final message = switch (result.status) {
+      PushTokenSyncStatus.saved ||
+      PushTokenSyncStatus.unchanged =>
+        context.l10n.t('pushTokenSavedShort'),
+      PushTokenSyncStatus.tokenUnavailable =>
+        result.message ?? context.l10n.t('pushTokenUnavailable'),
+      PushTokenSyncStatus.saveFailed =>
+        result.message ?? context.l10n.t('pushTokenSaveFailed'),
+      _ => context.l10n.t('pushTokenSaveFailed'),
+    };
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+
+    if (result.isSuccess) {
+      final hasExact =
+          await MedicationLocalReminderService.instance.hasExactAlarmPermission();
+      if (!mounted || hasExact) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.l10n.t('notificationExactAlarmHint')),
+          action: SnackBarAction(
+            label: context.l10n.t('openAlarmSettings'),
+            onPressed: () {
+              unawaited(
+                MedicationLocalReminderService.instance.openExactAlarmSettings(),
+              );
+            },
+          ),
+          duration: const Duration(seconds: 8),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = _settings.settings;
@@ -198,7 +245,7 @@ class _SettingsPageState extends State<SettingsPage> {
               value: settings.notificationsEnabled,
               activeColor: Colors.white,
               activeTrackColor: _accent,
-              onChanged: _settings.setNotificationsEnabled,
+              onChanged: _onNotificationsChanged,
             ),
           ),
           _SettingsCard(

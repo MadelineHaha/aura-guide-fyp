@@ -41,6 +41,9 @@ dependencies:
   firebase_core: ^4.7.0
   firebase_auth: ^6.4.0
   cloud_firestore: ^6.3.0
+  firebase_messaging: ^16.0.4
+  flutter_local_notifications: ^19.4.2
+  timezone: ^0.10.1
   speech_to_text: ^7.0.0
   cloud_functions: ^6.2.0
   flutter_tts: ^4.2.5

@@ -10,9 +10,13 @@ class MedicationEntity {
     required this.endDate,
     required this.userId,
     required this.staffId,
+    this.status = statusActive,
   });
 
   static final RegExp medicationIdPattern = RegExp(r'^M\d{5}$');
+
+  static const statusActive = 'Active';
+  static const statusCancelled = 'Cancelled';
 
   final String medicationId;
   final String name;
@@ -25,6 +29,7 @@ class MedicationEntity {
   final String endDate;
   final String userId;
   final String staffId;
+  final String status;
 
   static MedicationEntity? fromFirestore(
     String docId,
@@ -64,10 +69,14 @@ class MedicationEntity {
       staffId: (data['staffId'] as String?)?.trim() ??
           (data['staffID'] as String?)?.trim() ??
           '',
+      status: (data['status'] as String?)?.trim() ?? statusActive,
     );
   }
 
+  bool get isCancelled => status == statusCancelled;
+
   bool isActiveOnDate(String yyyyMmDd) {
+    if (isCancelled) return false;
     return yyyyMmDd.compareTo(startDate) >= 0 &&
         yyyyMmDd.compareTo(endDate) <= 0;
   }
