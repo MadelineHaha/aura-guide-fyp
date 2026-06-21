@@ -10,12 +10,16 @@ enum ObstacleDirection {
 }
 
 /// Maps a bounding box center to a spoken direction (left / front / right).
-ObstacleDirection directionFromBounds(ObstacleBounds bounds) {
-  final centerX = bounds.left + bounds.width / 2;
-  if (centerX < 0.30) return ObstacleDirection.left;
-  if (centerX < 0.42) return ObstacleDirection.slightlyLeft;
-  if (centerX > 0.70) return ObstacleDirection.right;
-  if (centerX > 0.58) return ObstacleDirection.slightlyRight;
+/// Uses preview-oriented coordinates so speech matches what the user sees.
+ObstacleDirection directionFromBounds(
+  ObstacleBounds bounds, {
+  bool? rotateForPortrait,
+}) {
+  final centerX = bounds.displayCenterX(rotateForPortrait: rotateForPortrait);
+  if (centerX < 0.28) return ObstacleDirection.left;
+  if (centerX < 0.40) return ObstacleDirection.slightlyLeft;
+  if (centerX > 0.72) return ObstacleDirection.right;
+  if (centerX > 0.60) return ObstacleDirection.slightlyRight;
   return ObstacleDirection.front;
 }
 

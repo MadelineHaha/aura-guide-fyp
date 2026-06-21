@@ -56,8 +56,11 @@ Float32List _cameraToModelInputIsolate(_CameraToModelJob job) {
 
 /// Lightweight copy of a camera frame for background AI inference.
 class ObstacleFramePacket {
-  /// Match YOLO model input (640) so frames are not over-downscaled before inference.
+  /// YOLO model input size — preview can stay at full camera resolution.
   static const maxInferenceDimension = 640;
+
+  /// Shrink stream frames before isolate handoff (preview quality unchanged).
+  static const streamProcessingMaxDimension = 512;
 
   static ({int width, int height}) inferenceFrameSize(int srcWidth, int srcHeight) {
     if (srcWidth <= 0 || srcHeight <= 0) {
@@ -146,26 +149,103 @@ class ObstacleFramePacket {
       return Future.value(Float32List(inputLength));
     }
 
-    final y = image.planes[0];
-    final u = image.planes.length > 1 ? image.planes[1] : null;
-    final v = image.planes.length > 2 ? image.planes[2] : null;
-
     return compute(
       _cameraToModelInputIsolate,
-      _CameraToModelJob(
-        width: image.width,
-        height: image.height,
-        yBytes: y.bytes,
-        yStride: y.bytesPerRow,
-        uBytes: u?.bytes ?? Uint8List(0),
-        vBytes: v?.bytes ?? Uint8List(0),
-        uvStride: u?.bytesPerRow ?? 0,
-        uvPixelStride: u?.bytesPerPixel ?? 1,
+      _compactModelJobFromCamera(
+        image,
         inputSize: inputSize,
         inputLength: inputLength,
-        luminanceOnly: false,
       ),
     );
+  }
+
+  /// Builds a small Y-only payload so high-res preview does not slow inference.
+  static _CameraToModelJob _compactModelJobFromCamera(
+    CameraImage image, {
+    required int inputSize,
+    required int inputLength,
+  }) {
+    final y = image.planes[0];
+    final compact = compactYPlaneForStream(
+      src: y.bytes,
+      srcW: image.width,
+      srcH: image.height,
+      srcStride: y.bytesPerRow,
+    );
+
+    return _CameraToModelJob(
+      width: compact.width,
+      height: compact.height,
+      yBytes: compact.yBytes,
+      yStride: compact.yStride,
+      uBytes: Uint8List(0),
+      vBytes: Uint8List(0),
+      uvStride: 0,
+      uvPixelStride: 1,
+      inputSize: inputSize,
+      inputLength: inputLength,
+      luminanceOnly: true,
+    );
+  }
+
+  /// Downsamples the Y plane for AI inference while keeping the live preview sharp.
+  static ({int width, int height, Uint8List yBytes, int yStride})
+      compactYPlaneForStream({
+    required Uint8List src,
+    required int srcW,
+    required int srcH,
+    required int srcStride,
+  }) {
+    final longest = math.max(srcW, srcH);
+    if (longest <= streamProcessingMaxDimension) {
+      return (
+        width: srcW,
+        height: srcH,
+        yBytes: src,
+        yStride: srcStride,
+      );
+    }
+
+    final shrunk = _fastDownsampleY(
+      src: src,
+      srcW: srcW,
+      srcH: srcH,
+      srcStride: srcStride,
+      maxDim: streamProcessingMaxDimension,
+    );
+    return (
+      width: shrunk.width,
+      height: shrunk.height,
+      yBytes: shrunk.yBytes,
+      yStride: shrunk.width,
+    );
+  }
+
+  static ({int width, int height, Uint8List yBytes}) _fastDownsampleY({
+    required Uint8List src,
+    required int srcW,
+    required int srcH,
+    required int srcStride,
+    required int maxDim,
+  }) {
+    final scale = maxDim / math.max(srcW, srcH);
+    final dstW = math.max(1, (srcW * scale).round());
+    final dstH = math.max(1, (srcH * scale).round());
+    final xStep = srcW / dstW;
+    final yStep = srcH / dstH;
+    final out = Uint8List(dstW * dstH);
+
+    var dst = 0;
+    for (var dy = 0; dy < dstH; dy++) {
+      final sy = math.min(srcH - 1, (dy * yStep).floor());
+      final row = sy * srcStride;
+      for (var dx = 0; dx < dstW; dx++) {
+        final sx = math.min(srcW - 1, (dx * xStep).floor());
+        out[dst++] = src[row + sx];
+      }
+    }
+
+    return (width: dstW, height: dstH, yBytes: out);
   }
 
   static ObstacleFramePacket _empty() {

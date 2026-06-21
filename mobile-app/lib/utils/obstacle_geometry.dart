@@ -74,7 +74,7 @@ class LetterboxMapping {
       contentBottom,
     );
     final boxArea = math.max(1.0, (rightPx - leftPx) * (bottomPx - topPx));
-    if (overlap / boxArea < 0.45) return null;
+    if (overlap / boxArea < 0.35) return null;
 
     var left = (leftPx - padX) / scaledW;
     var top = (topPx - padY) / scaledH;
@@ -88,7 +88,7 @@ class LetterboxMapping {
 
     final width = right - left;
     final height = bottom - top;
-    if (width < 0.035 || height < 0.035) return null;
+    if (width < 0.028 || height < 0.028) return null;
 
     return ObstacleBounds(
       left: left,
