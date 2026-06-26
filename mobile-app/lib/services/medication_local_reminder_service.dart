@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -25,6 +26,8 @@ const _channelId = 'medication_reminders';
 const _channelName = 'Medication reminders';
 const _clinicTimezone = 'Asia/Kuala_Lumpur';
 const _firedPrefsPrefix = 'med_reminder_fired_';
+const _firedAtPrefsPrefix = 'med_reminder_fired_at_';
+const _missedPrefsPrefix = 'med_reminder_missed_';
 const _scheduleDays = 14;
 
 /// Schedules medication reminders on the device — no Cloud Functions or Blaze plan.
@@ -35,7 +38,7 @@ class MedicationLocalReminderService with WidgetsBindingObserver {
       MedicationLocalReminderService._();
 
   final FlutterLocalNotificationsPlugin _notifications =
-      FlutterLocalNotificationsPlugin();
+      MedicationPushService.instance.localNotifications;
 
   bool _timezoneReady = false;
   StreamSubscription<List<MedicationItem>>? _watchSub;
@@ -62,6 +65,7 @@ class MedicationLocalReminderService with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       unawaited(syncSchedules());
       unawaited(_checkDueRemindersNow(force: true));
+      unawaited(_syncMissedStatuses());
     }
   }
 
@@ -142,6 +146,8 @@ class MedicationLocalReminderService with WidgetsBindingObserver {
     final patientId = await _patientUserId();
     if (patientId == null) return;
 
+    await MedicationsService().ensureRemindersForPatient(patientId);
+
     final location = tz.getLocation(_clinicTimezone);
     final today = MedicationsService.todayDateString();
     final now = tz.TZDateTime.now(location);
@@ -199,7 +205,15 @@ class MedicationLocalReminderService with WidgetsBindingObserver {
     _minuteTimer?.cancel();
     _minuteTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       unawaited(_checkDueRemindersNow());
+      unawaited(_checkMissedFollowUps());
+      unawaited(_syncMissedStatuses());
     });
+  }
+
+  Future<void> _syncMissedStatuses() async {
+    final patientId = await _patientUserId();
+    if (patientId == null) return;
+    await MedicationsService().syncTodayReminderStatuses(patientId);
   }
 
   /// Fires a notification when clinic clock matches reminderTime (HH:mm).
@@ -340,11 +354,105 @@ class MedicationLocalReminderService with WidgetsBindingObserver {
       reminderId: reminder.reminderId,
     );
 
+    await _persistNotificationToFirestore(
+      reminderId: reminder.reminderId,
+      kind: 'reminder',
+    );
+
     await _markFiredToday(reminder.reminderId, today);
     debugPrint(
       'MedicationLocalReminderService delivered ${reminder.reminderId} at '
       '${_formatSlot(ClinicDateTime.nowClinic().hour, ClinicDateTime.nowClinic().minute)}',
     );
+  }
+
+  Future<void> _checkMissedFollowUps() async {
+    if (kIsWeb) return;
+    if (!AppSettingsService.instance.settings.notificationsEnabled) return;
+
+    final today = MedicationsService.todayDateString();
+    if (_cachedReminders.isEmpty) {
+      final patientId = await _patientUserId();
+      if (patientId == null) return;
+      _cachedMeds = await _loadMedications(patientId);
+      _cachedReminders = await _loadReminders(patientId);
+    }
+
+    for (final reminder in _cachedReminders) {
+      final medication = _cachedMeds[reminder.medicationId];
+      if (medication == null) continue;
+      if (!_isReminderEligible(reminder, medication, today)) continue;
+      if (reminder.isTakenOnDate(today)) continue;
+      if (await _missedFollowUpSentToday(reminder.reminderId, today)) continue;
+      if (!await _alreadyFiredToday(reminder.reminderId, today)) continue;
+
+      final firedAt = await _firedAtToday(reminder.reminderId, today);
+      if (firedAt == null) continue;
+      if (DateTime.now().difference(firedAt) < const Duration(minutes: 5)) {
+        continue;
+      }
+
+      await _deliverMissedFollowUp(
+        reminder: reminder,
+        medication: medication,
+      );
+    }
+  }
+
+  Future<void> _deliverMissedFollowUp({
+    required MedicationReminderEntity reminder,
+    required MedicationEntity medication,
+  }) async {
+    final today = MedicationsService.todayDateString();
+    if (await _missedFollowUpSentToday(reminder.reminderId, today)) return;
+
+    await MedicationPushService.instance.ensureNotificationsReady();
+
+    final body =
+        '${medication.name} was not marked as taken. Please take it now.';
+    final notificationId = _notificationId(reminder.reminderId) + 500000;
+
+    await _notifications.show(
+      notificationId,
+      'Missed medication',
+      body,
+      _notificationDetails(),
+      payload: reminder.reminderId,
+    );
+
+    await NotificationHistoryService.instance.record(
+      title: 'Missed medication',
+      body: body,
+      reminderId: reminder.reminderId,
+    );
+
+    await _persistNotificationToFirestore(
+      reminderId: reminder.reminderId,
+      kind: 'missed',
+    );
+
+    await _markMissedFollowUpSent(reminder.reminderId, today);
+    debugPrint(
+      'MedicationLocalReminderService missed follow-up ${reminder.reminderId}',
+    );
+  }
+
+  Future<void> _persistNotificationToFirestore({
+    required String reminderId,
+    required String kind,
+  }) async {
+    try {
+      await FirebaseFunctions.instance
+          .httpsCallable('recordMedicationPatientNotification')
+          .call({
+        'reminderId': reminderId.trim(),
+        'kind': kind,
+      });
+    } catch (error, stack) {
+      debugPrint(
+        'recordMedicationPatientNotification failed: $error\n$stack',
+      );
+    }
   }
 
   bool _isReminderEligible(
@@ -353,7 +461,10 @@ class MedicationLocalReminderService with WidgetsBindingObserver {
     String today,
   ) {
     if (!medication.isActiveOnDate(today)) return false;
-    if (reminder.status == MedicationReminderEntity.statusMissed) return false;
+    if (reminder.status == MedicationReminderEntity.statusMissed &&
+        reminder.missedDate == today) {
+      return false;
+    }
     if (reminder.isTakenOnDate(today)) return false;
 
     final repeat = reminder.repeatPattern.trim().toLowerCase();
@@ -388,6 +499,28 @@ class MedicationLocalReminderService with WidgetsBindingObserver {
   Future<void> _markFiredToday(String reminderId, String today) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('$_firedPrefsPrefix${reminderId}_$today', true);
+    await prefs.setInt(
+      '$_firedAtPrefsPrefix${reminderId}_$today',
+      DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  Future<DateTime?> _firedAtToday(String reminderId, String today) async {
+    final prefs = await SharedPreferences.getInstance();
+    final millis =
+        prefs.getInt('$_firedAtPrefsPrefix${reminderId}_$today');
+    if (millis == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(millis);
+  }
+
+  Future<bool> _missedFollowUpSentToday(String reminderId, String today) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('$_missedPrefsPrefix${reminderId}_$today') ?? false;
+  }
+
+  Future<void> _markMissedFollowUpSent(String reminderId, String today) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('$_missedPrefsPrefix${reminderId}_$today', true);
   }
 
   Future<void> _ensureTimezone() async {
@@ -499,14 +632,25 @@ class MedicationLocalReminderService with WidgetsBindingObserver {
         .where('userId', isEqualTo: patientId)
         .get();
 
-    final list = <MedicationReminderEntity>[];
+    final all = <MedicationReminderEntity>[];
     for (final doc in snap.docs) {
       final entity = MedicationReminderEntity.fromFirestore(doc.id, doc.data());
       if (entity != null) {
-        list.add(entity);
+        all.add(entity);
       }
     }
-    return list;
+
+    final today = MedicationsService.todayDateString();
+    final dailyToday =
+        all.where((r) => r.isDailyInstance && r.doseDate == today).toList();
+    if (dailyToday.isNotEmpty) {
+      dailyToday.sort((a, b) => a.reminderTime.compareTo(b.reminderTime));
+      return dailyToday;
+    }
+
+    final slots = all.where((r) => !r.isDailyInstance).toList()
+      ..sort((a, b) => a.reminderTime.compareTo(b.reminderTime));
+    return slots;
   }
 
   DateTime? _clinicTimeFromReminder(MedicationReminderEntity reminder) {

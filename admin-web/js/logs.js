@@ -1,4 +1,5 @@
 import { initStaffAuth } from "./staff-shell.js";
+import { isAdmin } from "./staff-rbac.js";
 import { subscribeActivityLogs } from "./activity-logs-service.js";
 
 const tbodyEl = document.getElementById("logs-tbody");
@@ -208,6 +209,10 @@ window.addEventListener("pagehide", () => {
   if (unsubscribeLogs) unsubscribeLogs();
 });
 
-initStaffAuth(() => {
+initStaffAuth((profile) => {
+  if (!isAdmin(profile?.role)) {
+    window.location.href = "dashboard.html";
+    return;
+  }
   startLogsSubscription();
 });

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reports — Aura Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body class="staff-app">
+  <header class="staff-nav">
+    <a class="staff-nav-brand" href="staff-dashboard.html">
+      <img class="logo" src="../assets/images/logo.png" alt="" width="40" height="40" />
+      <span class="staff-nav-brand-text">Aura Guide</span>
+    </a>
+    <div class="staff-nav-links-wrap">
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--prev" aria-label="Scroll navigation left">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <nav class="staff-nav-links" aria-label="Main">
+        <!-- Dynamically injected by staff-shell.js -->
+      </nav>
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--next" aria-label="Scroll navigation right">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
+    <div class="staff-nav-user">
+      <button type="button" class="staff-avatar" id="btn-user-menu" aria-label="Account menu">
+        <span class="staff-avatar-initials" id="staff-avatar-initials">—</span>
+      </button>
+      <div class="staff-user-menu" id="user-menu" hidden>
+        <p class="staff-user-menu-name" id="menu-staff-name">—</p>
+        <p class="staff-user-menu-role" id="menu-staff-role">—</p>
+        <button type="button" class="staff-user-menu-signout" id="btn-sign-out">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="staff-page reports-page">
+    <header class="page-toolbar">
+      <div class="page-toolbar-heading">
+        <h1 class="page-title">Appointment Performance Report</h1>
+        <p class="page-subtitle">Understand your workload patterns and consultation volume.</p>
+      </div>
+      <div class="reports-export-actions">
+        <button type="button" class="btn-secondary" id="btn-export-csv">Export CSV</button>
+        <button type="button" class="btn-primary btn-quick-action" id="btn-export-pdf">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          Export PDF
+        </button>
+      </div>
+    </header>
+
+    <div class="reports-print-header" id="reports-print-header">
+      <p class="reports-print-brand">Aura Guide — Doctor Reports</p>
+      <p class="reports-print-meta" id="reports-print-meta">—</p>
+    </div>
+
+    <section class="reports-section table-card" aria-labelledby="appointment-performance-heading">
+      <div class="reports-section-header">
+        <h2 class="panel-title" id="appointment-performance-heading">Performance Metrics</h2>
+      </div>
+      <div class="stat-cards" style="padding: 18px 18px 0; margin-bottom: 0; grid-template-columns: repeat(4, 1fr);">
+        <article class="stat-card">
+          <p class="stat-card-label">Appointments This Week</p>
+          <p class="stat-card-value" id="appointments-week">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Appointments This Month</p>
+          <p class="stat-card-value" id="appointments-month">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Average Daily Consultations</p>
+          <p class="stat-card-value" id="average-daily">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Peak Consultation Day</p>
+          <p class="stat-card-value" id="peak-day">—</p>
+        </article>
+      </div>
+      <div class="reports-section-body" style="padding: 24px 18px;">
+        <p class="form-hint" id="reports-last-updated">Last computed: just now</p>
+      </div>
+    </section>
+
+    <section class="reports-section table-card" aria-labelledby="med-adherence-heading">
+      <div class="reports-section-header">
+        <div>
+          <h2 class="panel-title" id="med-adherence-heading">Medication Adherence Report</h2>
+          <p class="reports-chart-description">All assigned patients on active medication for the selected period. Patients below 100% adherence are highlighted.</p>
+        </div>
+        <select id="med-adherence-timeframe" class="form-input reports-no-print" style="width:auto; padding:6px 10px; border-radius:6px; font-size:0.875rem;" aria-label="Medication adherence time range">
+          <option value="today">Today</option>
+          <option value="month" selected>This Month</option>
+          <option value="0">All Time</option>
+        </select>
+      </div>
+      <div class="stat-cards" style="padding: 18px 18px 0; margin-bottom: 0; grid-template-columns: repeat(2, 1fr);">
+        <article class="stat-card">
+          <p class="stat-card-label">On Active Medication</p>
+          <p class="stat-card-value" id="medication-patient-count">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Low Adherence (&lt; 100%)</p>
+          <p class="stat-card-value" id="low-adherence-count">—</p>
+        </article>
+      </div>
+      <div class="table-scroll" style="padding: 18px;">
+        <table class="data-table reports-activity-table" id="low-adherence-table">
+          <thead>
+            <tr>
+              <th scope="col" class="reports-patient-col">Patient</th>
+              <th scope="col" class="reports-med-adherence-col">Adherence</th>
+              <th scope="col" class="reports-caregiver-col">Caregiver</th>
+            </tr>
+          </thead>
+          <tbody id="low-adherence-tbody"></tbody>
+        </table>
+        <p class="dashboard-empty" id="low-adherence-empty" hidden>No patients with active medication for this period.</p>
+        <p class="form-hint" id="med-adherence-last-updated" hidden></p>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="../js/staff-reports.js"></script>
+</body>
+</html>

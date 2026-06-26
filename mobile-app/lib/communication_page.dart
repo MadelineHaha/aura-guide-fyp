@@ -7,6 +7,7 @@ import 'models/conversation_thread.dart';
 import 'models/staff_option.dart';
 import 'services/communication_service.dart';
 import 'services/patient_call_session.dart';
+import 'widgets/grouped_conversation_list_view.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
 
@@ -479,12 +480,11 @@ class _MessagesTabState extends State<_MessagesTab> {
           return const _AddContactEmptyState();
         }
 
-        return ListView.separated(
+        return GroupedConversationListView(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 88),
-          itemCount: threads.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12),
-          itemBuilder: (context, index) {
-            final thread = threads[index];
+          itemSpacing: 12,
+          threads: threads,
+          itemBuilder: (context, thread) {
             return _ThreadCard(
               thread: thread,
               onTap: () => widget.onOpenChat(thread),
@@ -568,12 +568,11 @@ class _ArchivedTabState extends State<_ArchivedTab> {
           );
         }
 
-        return ListView.separated(
+        return GroupedConversationListView(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          itemCount: threads.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12),
-          itemBuilder: (context, index) {
-            final thread = threads[index];
+          itemSpacing: 12,
+          threads: threads,
+          itemBuilder: (context, thread) {
             return _ThreadCard(
               thread: thread,
               onTap: () => widget.onOpenChat(thread),

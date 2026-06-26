@@ -1,16 +1,61 @@
 import 'package:flutter/material.dart';
 
+import 'app_route_observer.dart';
 import 'l10n/app_localizations.dart';
 import 'login_page.dart';
+import 'pin_onboarding_page.dart';
 import 'register_page.dart';
+import 'services/voice_flow_coordinator.dart';
 import 'widgets/accessible_focus_region.dart';
 
-class StartPage extends StatelessWidget {
+class StartPage extends StatefulWidget {
   const StartPage({super.key});
 
-  static const Color _accent = Color(0xFF63C3C4);
-  static const Color _bg = Color(0xFF000000);
-  static const Color _subtext = Color(0xFFB0B0B0);
+  static const Color accent = Color(0xFF63C3C4);
+  static const Color bg = Color(0xFF000000);
+  static const Color subtext = Color(0xFFB0B0B0);
+
+  @override
+  State<StartPage> createState() => _StartPageState();
+}
+
+class _StartPageState extends State<StartPage> with RouteAware {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      VoiceFlowCoordinator.instance.startWelcomeFlow();
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    VoiceFlowCoordinator.instance.cancelWelcomeFlow();
+    super.dispose();
+  }
+
+  @override
+  void didPopNext() {
+    VoiceFlowCoordinator.instance.startWelcomeFlow();
+  }
+
+  @override
+  void didPushNext() {
+    // Intentionally do not cancel the welcome flow here. 
+    // This allows the VoiceFlowCoordinator to guide the user 
+    // through the LoginPage and RegisterPage via voice!
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -23,6 +68,7 @@ class StartPage extends StatelessWidget {
     void openLogin() {
       Navigator.of(context).push(
         MaterialPageRoute<void>(
+          settings: const RouteSettings(name: 'LoginPage'),
           builder: (context) => const LoginPage(),
         ),
       );
@@ -31,13 +77,23 @@ class StartPage extends StatelessWidget {
     void openRegister() {
       Navigator.of(context).push(
         MaterialPageRoute<void>(
+          settings: const RouteSettings(name: 'RegisterPage'),
           builder: (context) => const RegisterPage(),
         ),
       );
     }
 
+    void openPinOnboarding() {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          settings: const RouteSettings(name: 'PinOnboardingPage'),
+          builder: (context) => const PinOnboardingPage(),
+        ),
+      );
+    }
+
     return Scaffold(
-      backgroundColor: _bg,
+      backgroundColor: StartPage.bg,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -72,7 +128,7 @@ class StartPage extends StatelessWidget {
                       l10n.t('appTagline'),
                       textAlign: TextAlign.center,
                       style: const TextStyle(
-                        color: _subtext,
+                        color: StartPage.subtext,
                         fontSize: 15,
                       ),
                     ),
@@ -86,7 +142,7 @@ class StartPage extends StatelessWidget {
                 child: FilledButton(
                   onPressed: openLogin,
                   style: FilledButton.styleFrom(
-                    backgroundColor: _accent,
+                    backgroundColor: StartPage.accent,
                     foregroundColor: Colors.black,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
@@ -101,13 +157,33 @@ class StartPage extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               AccessibleFocusRegion(
+                label: l10n.t('patientOnboardingStartAction'),
+                onActivate: openPinOnboarding,
+                child: OutlinedButton(
+                  onPressed: openPinOnboarding,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: StartPage.accent, width: 1.4),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text(
+                    l10n.t('patientOnboardingStartAction'),
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              AccessibleFocusRegion(
                 label: l10n.t('createAccount'),
                 onActivate: openRegister,
                 child: OutlinedButton(
                   onPressed: openRegister,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.white,
-                    side: const BorderSide(color: _accent, width: 1.4),
+                    side: const BorderSide(color: StartPage.accent, width: 1.4),
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),

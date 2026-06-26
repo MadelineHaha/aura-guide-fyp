@@ -4,6 +4,7 @@ class NavDestination {
     required this.address,
     this.latitude,
     this.longitude,
+    this.category,
     this.isSavedHome = false,
     this.isSavedWork = false,
   });
@@ -12,6 +13,9 @@ class NavDestination {
   final String address;
   final double? latitude;
   final double? longitude;
+
+  /// Optional place type, e.g. "Restaurant", "Cafe", "Hospital".
+  final String? category;
   final bool isSavedHome;
   final bool isSavedWork;
 
@@ -22,6 +26,7 @@ class NavDestination {
     String? address,
     double? latitude,
     double? longitude,
+    String? category,
     bool? isSavedHome,
     bool? isSavedWork,
   }) {
@@ -30,6 +35,7 @@ class NavDestination {
       address: address ?? this.address,
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
+      category: category ?? this.category,
       isSavedHome: isSavedHome ?? this.isSavedHome,
       isSavedWork: isSavedWork ?? this.isSavedWork,
     );
@@ -40,6 +46,7 @@ class NavDestination {
         'address': address,
         if (latitude != null) 'latitude': latitude,
         if (longitude != null) 'longitude': longitude,
+        if (category != null && category!.isNotEmpty) 'category': category,
         'isSavedHome': isSavedHome,
         'isSavedWork': isSavedWork,
       };
@@ -50,6 +57,7 @@ class NavDestination {
       address: json['address'] as String? ?? '',
       latitude: (json['latitude'] as num?)?.toDouble(),
       longitude: (json['longitude'] as num?)?.toDouble(),
+      category: json['category'] as String?,
       isSavedHome: json['isSavedHome'] as bool? ?? false,
       isSavedWork: json['isSavedWork'] as bool? ?? false,
     );

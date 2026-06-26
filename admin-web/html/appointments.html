@@ -20,13 +20,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
       <nav class="staff-nav-links" aria-label="Main">
-        <a class="staff-nav-link" href="dashboard.html">Dashboard</a>
-        <a class="staff-nav-link is-active" href="appointments.html">Appointments</a>
-        <a class="staff-nav-link" href="patients.html">Patients</a>
-        <a class="staff-nav-link" href="emergencies.html">Emergencies</a>
-        <a class="staff-nav-link" href="reports.html">Reports</a>
-        <a class="staff-nav-link" href="communication.html">Communication</a>
-        <a class="staff-nav-link" href="logs.html">Logs</a>
+        <!-- Dynamically injected by staff-shell.js -->
       </nav>
       <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--next" aria-label="Scroll navigation right">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
@@ -50,31 +44,58 @@
         <h1 class="page-title">Appointments</h1>
         <p class="page-subtitle" id="appointments-count"></p>
       </div>
-      <button type="button" class="btn-primary" id="btn-add-appointment">+ Add Appointment</button>
+      <button type="button" class="btn-primary btn-quick-action" id="btn-add-appointment">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        Add Appointment
+      </button>
     </header>
 
     <div class="appointments-toolbar">
-      <label class="search-field">
-        <span class="search-field-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="7" />
-            <line x1="16.5" y1="16.5" x2="21" y2="21" />
-          </svg>
-        </span>
-        <input
-          type="search"
-          class="search-field-input"
-          id="appointment-search"
-          placeholder="Search patient or doctor..."
-          autocomplete="off"
-        />
-      </label>
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex: 1;">
+        <label class="search-field">
+          <span class="search-field-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="7" />
+              <line x1="16.5" y1="16.5" x2="21" y2="21" />
+            </svg>
+          </span>
+          <input
+            type="search"
+            class="search-field-input"
+            id="appointment-search"
+            placeholder="Search patient or doctor..."
+            autocomplete="off"
+          />
+        </label>
+
+        <div style="display: flex; align-items: center; gap: 8px;" id="admin-role-filter-container">
+          <span style="font-size: 14px; font-weight: 500; color: var(--text-secondary);">Role:</span>
+          <select class="form-field-input form-field-select" id="appointment-staff-role-filter" style="width: auto; height: 38px; padding: 0 32px 0 12px; margin: 0; font-size: 14px;">
+            <option value="all">All Roles</option>
+            <option value="doctor">Doctors</option>
+            <option value="therapist">Therapists</option>
+          </select>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px;" id="admin-sort-container">
+          <span style="font-size: 14px; font-weight: 500; color: var(--text-secondary);">Sort:</span>
+          <select class="form-field-input form-field-select" id="appointment-sort-select" style="width: auto; height: 38px; padding: 0 32px 0 12px; margin: 0; font-size: 14px;">
+            <option value="datetime">Date &amp; Time</option>
+            <option value="doctor-first">Doctors First</option>
+            <option value="therapist-first">Therapists First</option>
+          </select>
+        </div>
+      </div>
       <div class="filter-tabs" role="tablist" aria-label="Filter by status">
         <button type="button" class="filter-tab is-active" data-status="all">All</button>
         <button type="button" class="filter-tab" data-status="pending">Pending</button>
         <button type="button" class="filter-tab" data-status="scheduled">Scheduled</button>
         <button type="button" class="filter-tab" data-status="rescheduled">Rescheduled</button>
         <button type="button" class="filter-tab" data-status="done">Done</button>
+        <button type="button" class="filter-tab" data-status="missed">Missed</button>
         <button type="button" class="filter-tab" data-status="cancelled">Cancelled</button>
       </div>
     </div>
@@ -153,16 +174,23 @@
             />
           </label>
           <label class="form-field">
+            <span class="form-field-label">Staff Role</span>
+            <select class="form-field-input form-field-select" id="add-appointment-staff-role" required>
+              <option value="">Select role</option>
+              <option value="doctor">Doctor</option>
+              <option value="therapist">Therapist</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span class="form-field-label">Assigned Staff</span>
+            <select class="form-field-input form-field-select" id="add-appointment-staff" required disabled>
+              <option value="">Select role first</option>
+            </select>
+          </label>
+          <label class="form-field">
             <span class="form-field-label">Appointment Type</span>
-            <select class="form-field-input form-field-select" id="add-appointment-type" required>
-              <option value="">Select type</option>
-              <option value="General Check-up">General Check-up</option>
-              <option value="Therapist Session">Therapist Session</option>
-              <option value="Urgent Consultation">Urgent Consultation</option>
-              <option value="Consultation">Consultation</option>
-              <option value="Follow-up">Follow-up</option>
-              <option value="Therapy Session">Therapy Session</option>
-              <option value="Emergency">Emergency</option>
+            <select class="form-field-input form-field-select" id="add-appointment-type" required disabled>
+              <option value="">Select staff role and assigned staff first</option>
             </select>
           </label>
           <label class="form-field">
@@ -445,6 +473,6 @@
     </div>
   </div>
 
-  <script type="module" src="../js/appointments.js"></script>
+  <script type="module" src="../js/appointments.js?v=2"></script>
 </body>
 </html>

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 
 import '../auth_session.dart';
 import '../models/medication_entity.dart';
@@ -27,11 +28,124 @@ class NotificationsService {
 
   static const _medications = 'medications';
   static const _reminders = 'medicationreminders';
+  static const _patientNotifications = 'patientnotifications';
 
   Stream<List<PatientNotificationItem>>? _streamCache;
+  Stream<int>? _unreadStreamCache;
 
   Stream<List<PatientNotificationItem>> watchForCurrentPatient() {
     return _streamCache ??= _createWatchStream();
+  }
+
+  Stream<int> watchUnreadCount() {
+    return _unreadStreamCache ??= _createUnreadWatchStream();
+  }
+
+  /// Marks notifications as read in Firestore and clears the menu badge.
+  Future<void> markAllViewedForPatient(String patientId) async {
+    final trimmedId = patientId.trim();
+    if (trimmedId.isEmpty) return;
+
+    final snap = await _firestore
+        .collection(_patientNotifications)
+        .where('userId', isEqualTo: trimmedId)
+        .get();
+
+    final batch = _firestore.batch();
+    var hasWrites = false;
+    final now = FieldValue.serverTimestamp();
+    for (final doc in snap.docs) {
+      final data = doc.data();
+      if (data['readAt'] != null) continue;
+      batch.update(doc.reference, {
+        'readAt': now,
+        'updatedAt': now,
+      });
+      hasWrites = true;
+    }
+    if (hasWrites) {
+      try {
+        await batch.commit();
+      } catch (error, stack) {
+        debugPrint(
+          'NotificationsService markAllViewedForPatient failed: $error\n$stack',
+        );
+      }
+    }
+
+    final upTo = DateTime.now().millisecondsSinceEpoch;
+    await NotificationHistoryService.instance.markViewed(upToMillis: upTo);
+  }
+
+  Stream<int> _createUnreadWatchStream() {
+    return Stream.multi((controller) async {
+      Future<void> emit() async {
+        if (controller.isClosed) return;
+        try {
+          final patientId = await _patientUserId();
+          if (patientId == null) {
+            controller.add(0);
+            return;
+          }
+          final items = await _buildItems(patientId);
+          final lastViewed =
+              await NotificationHistoryService.instance.lastViewedMillis();
+          final count = items.where((item) {
+            if (item.isUnreadInFirestore) return true;
+            return item.sortMillis > lastViewed;
+          }).length;
+          controller.add(count);
+        } catch (e, st) {
+          if (!controller.isClosed) {
+            controller.addError(e, st);
+          }
+        }
+      }
+
+      try {
+        final patientId = await _patientUserId();
+        if (patientId == null) {
+          controller.add(0);
+          await controller.close();
+          return;
+        }
+
+        await emit();
+
+        final subs = <StreamSubscription<dynamic>>[
+          NotificationHistoryService.instance.changes.listen((_) => emit()),
+          ...[
+            _medications,
+            _reminders,
+            _patientNotifications,
+          ].map(
+            (collection) => _firestore
+                .collection(collection)
+                .where('userId', isEqualTo: patientId)
+                .snapshots()
+                .listen(
+                  (_) => emit(),
+                  onError: (error, stack) {
+                    debugPrint(
+                      'NotificationsService $collection listener failed: $error\n$stack',
+                    );
+                    unawaited(emit());
+                  },
+                ),
+          ),
+        ];
+
+        controller.onCancel = () {
+          for (final sub in subs) {
+            sub.cancel();
+          }
+        };
+      } catch (e, st) {
+        if (!controller.isClosed) {
+          controller.addError(e, st);
+        }
+      }
+    });
   }
 
   Stream<List<PatientNotificationItem>> _createWatchStream() {
@@ -59,12 +173,24 @@ class NotificationsService {
 
         final subs = <StreamSubscription<dynamic>>[
           NotificationHistoryService.instance.changes.listen((_) => emit()),
-          ...[_medications, _reminders].map(
+          ...[
+            _medications,
+            _reminders,
+            _patientNotifications,
+          ].map(
             (collection) => _firestore
                 .collection(collection)
                 .where('userId', isEqualTo: patientId)
                 .snapshots()
-                .listen((_) => emit(), onError: controller.addError),
+                .listen(
+                  (_) => emit(),
+                  onError: (error, stack) {
+                    debugPrint(
+                      'NotificationsService $collection listener failed: $error\n$stack',
+                    );
+                    unawaited(emit());
+                  },
+                ),
           ),
         ];
 
@@ -94,23 +220,12 @@ class NotificationsService {
     final today = MedicationsService.todayDateString();
     final nowClinic = ClinicDateTime.nowClinic();
 
-    final history = await NotificationHistoryService.instance.readAll();
-    final delivered = history
-        .map(
-          (entry) => PatientNotificationItem(
-            id: 'history_${entry.id}',
-            title: entry.title.isNotEmpty
-                ? entry.title
-                : 'Medication reminder',
-            body: entry.body,
-            timeLabel: entry.timeLabel,
-            dateLabel: entry.dateLabel,
-            kind: PatientNotificationKind.delivered,
-            status: PatientNotificationStatus.delivered,
-            sortMillis: entry.shownAt.toUtc().millisecondsSinceEpoch,
-          ),
-        )
-        .toList();
+    final delivered = await _deliveredNotifications(patientId);
+    final deliveredReminderKeys = delivered
+        .map((item) => item.reminderId)
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet();
 
     final medsSnap = await _firestore
         .collection(_medications)
@@ -130,11 +245,6 @@ class NotificationsService {
         .get();
 
     final scheduled = <PatientNotificationItem>[];
-    final deliveredReminderIds = history
-        .map((e) => e.reminderId)
-        .whereType<String>()
-        .where((id) => id.isNotEmpty)
-        .toSet();
 
     for (final doc in remindersSnap.docs) {
       final reminder = MedicationReminderEntity.fromFirestore(doc.id, doc.data());
@@ -142,15 +252,21 @@ class NotificationsService {
 
       final medication = medsById[reminder.medicationId];
       if (medication == null) continue;
-      if (!medication.isActiveOnDate(today)) continue;
+
+      final doseDate = reminder.doseDate.isNotEmpty
+          ? reminder.doseDate
+          : today;
+      if (!medication.isActiveOnDate(doseDate)) continue;
+
+      if (reminder.isDailyInstance && reminder.doseDate != today) continue;
 
       final repeat = reminder.repeatPattern.trim().toLowerCase();
-      if (repeat != 'daily') {
+      if (!reminder.isDailyInstance && repeat != 'daily') {
         final reminderDate = _dateFromTimestamp(reminder.reminderTime);
         if (reminderDate != today) continue;
       }
 
-      if (deliveredReminderIds.contains(reminder.reminderId)) continue;
+      if (deliveredReminderKeys.contains(reminder.reminderId)) continue;
 
       final clinicTime = ClinicDateTime.fromFirestore(reminder.reminderTime);
       if (clinicTime == null) continue;
@@ -167,11 +283,12 @@ class NotificationsService {
           timeLabel: MedicationReminderEntity.formatClockLabel(
             reminder.reminderTime,
           ),
-          dateLabel: today,
+          dateLabel: doseDate,
           kind: PatientNotificationKind.scheduled,
           status: status,
           scheduledTime: reminder.reminderTime,
           medicationName: medication.name,
+          reminderId: reminder.reminderId,
           sortMillis: reminder.reminderTime.millisecondsSinceEpoch,
         ),
       );
@@ -180,6 +297,108 @@ class NotificationsService {
     final combined = [...delivered, ...scheduled];
     combined.sort((a, b) => b.sortMillis.compareTo(a.sortMillis));
     return combined;
+  }
+
+  Future<List<PatientNotificationItem>> _deliveredNotifications(
+    String patientId,
+  ) async {
+    try {
+      final snap = await _firestore
+          .collection(_patientNotifications)
+          .where('userId', isEqualTo: patientId)
+          .get();
+
+      if (snap.docs.isNotEmpty) {
+        return snap.docs
+            .map(_mapFirestoreNotification)
+            .whereType<PatientNotificationItem>()
+            .toList();
+      }
+    } catch (error, stack) {
+      debugPrint(
+        'NotificationsService patientnotifications fetch failed: $error\n$stack',
+      );
+    }
+
+    final history = await NotificationHistoryService.instance.readAll();
+    return history
+        .map(
+          (entry) => PatientNotificationItem(
+            id: 'history_${entry.id}',
+            title: entry.title.isNotEmpty
+                ? entry.title
+                : 'Medication reminder',
+            body: entry.body,
+            timeLabel: entry.timeLabel,
+            dateLabel: entry.dateLabel,
+            kind: PatientNotificationKind.delivered,
+            status: PatientNotificationStatus.delivered,
+            reminderId: entry.reminderId,
+            sortMillis: entry.shownAt.toUtc().millisecondsSinceEpoch,
+          ),
+        )
+        .toList();
+  }
+
+  PatientNotificationItem? _mapFirestoreNotification(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data();
+    final createdAt = data['createdAt'];
+    Timestamp? ts;
+    if (createdAt is Timestamp) {
+      ts = createdAt;
+    }
+    final sortMillis = ts?.millisecondsSinceEpoch ??
+        DateTime.now().millisecondsSinceEpoch;
+
+    final doseDate = (data['doseDate'] as String?)?.trim() ?? '';
+    final slot = (data['slot'] as String?)?.trim() ?? '';
+    final timeLabel = _formatSlotLabel(slot, ts);
+
+    final reminderId = (data['reminderId'] as String?)?.trim();
+    final medicationId = (data['medicationId'] as String?)?.trim();
+    final title = (data['title'] as String?)?.trim() ?? 'Medication reminder';
+    final body = (data['body'] as String?)?.trim() ?? '';
+    final firestoreStatus = (data['status'] as String?)?.trim() ?? '';
+
+    var status = PatientNotificationStatus.delivered;
+    if (firestoreStatus == 'Missed') {
+      status = PatientNotificationStatus.missed;
+    }
+
+    return PatientNotificationItem(
+      id: (data['notificationId'] as String?)?.trim() ?? doc.id,
+      title: title,
+      body: body,
+      timeLabel: timeLabel,
+      dateLabel: doseDate.isNotEmpty
+          ? doseDate
+          : _dateFromTimestamp(ts ?? Timestamp.now()),
+      kind: PatientNotificationKind.delivered,
+      status: status,
+      reminderId: reminderId,
+      medicationId: medicationId,
+      isUnreadInFirestore: data['readAt'] == null,
+      sortMillis: sortMillis,
+    );
+  }
+
+  String _formatSlotLabel(String slot, Timestamp? createdAt) {
+    if (slot.isNotEmpty) {
+      final parts = slot.split(':');
+      if (parts.length >= 2) {
+        final hour = int.tryParse(parts[0]) ?? 0;
+        final minute = parts[1].padLeft(2, '0');
+        final period = hour >= 12 ? 'PM' : 'AM';
+        final h12 = hour % 12 == 0 ? 12 : hour % 12;
+        return '$h12:$minute $period';
+      }
+    }
+    if (createdAt != null) {
+      return MedicationReminderEntity.formatClockLabel(createdAt);
+    }
+    return '—';
   }
 
   String _dateFromTimestamp(Timestamp ts) {

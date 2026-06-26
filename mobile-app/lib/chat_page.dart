@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
@@ -14,8 +15,10 @@ import 'services/device_permissions_service.dart';
 import 'services/field_speech_input.dart';
 import 'services/patient_call_session.dart';
 import 'services/voice_call_service.dart';
+import 'utils/chat_date_grouping.dart';
 import 'utils/chat_search_highlight.dart';
 import 'widgets/accessible_focus_region.dart';
+import 'widgets/chat_date_divider.dart';
 import 'widgets/app_back_button.dart';
 import 'widgets/chat_voice_composer.dart';
 import 'widgets/listening_mic_button.dart';
@@ -481,13 +484,12 @@ class _ChatPageState extends State<ChatPage> {
   List<ChatListItem> _filterItems(List<ChatListItem> items) {
     final query = _searchController.text.trim().toLowerCase();
     if (!_searchOpen || query.isEmpty) return items;
-    return items
-        .where(
-          (item) =>
-              item.type != ChatListItemType.divider &&
-              (item.text ?? '').toLowerCase().contains(query),
-        )
-        .toList();
+    final matched = items.where((item) {
+      if (item.type == ChatListItemType.divider) return false;
+      final haystack = '${item.text ?? ''} ${item.label ?? ''}'.toLowerCase();
+      return haystack.contains(query);
+    }).toList();
+    return ChatDateGrouping.withDateDividers(matched);
   }
 
   @override
@@ -629,9 +631,23 @@ class _ChatPageState extends State<ChatPage> {
                       case ChatListItemType.divider:
                         return AccessibleFocusRegion(
                           label: item.label ?? '',
-                          child: _DateDivider(label: item.label ?? ''),
+                          child: ChatDateDivider(label: item.label ?? ''),
                         );
                       case ChatListItemType.incoming:
+                        if (item.isPhoto) {
+                          return AccessibleFocusRegion(
+                            label: context.l10n.t('photoMessageBubbleA11y', {
+                              'label': item.text ?? 'Photo',
+                            }),
+                            child: _PhotoBubble(
+                              key: isFirstMatch ? _firstSearchMatchKey : null,
+                              imageUrl: item.imageUrl,
+                              label: item.text ?? 'Photo',
+                              time: item.time ?? '',
+                              outgoing: false,
+                            ),
+                          );
+                        }
                         if (item.isVoice) {
                           return AccessibleFocusRegion(
                             label: context.l10n.t('voiceMessageBubbleA11y', {
@@ -659,6 +675,20 @@ class _ChatPageState extends State<ChatPage> {
                           ),
                         );
                       case ChatListItemType.outgoing:
+                        if (item.isPhoto) {
+                          return AccessibleFocusRegion(
+                            label: context.l10n.t('photoMessageBubbleA11y', {
+                              'label': item.text ?? 'Photo',
+                            }),
+                            child: _PhotoBubble(
+                              key: isFirstMatch ? _firstSearchMatchKey : null,
+                              imageUrl: item.imageUrl,
+                              label: item.text ?? 'Photo',
+                              time: item.time ?? '',
+                              outgoing: true,
+                            ),
+                          );
+                        }
                         if (item.isVoice) {
                           return AccessibleFocusRegion(
                             label: context.l10n.t('voiceMessageBubbleA11y', {
@@ -827,28 +857,6 @@ class _ConversationSearchBar extends StatelessWidget {
   }
 }
 
-class _DateDivider extends StatelessWidget {
-  const _DateDivider({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      child: Center(
-        child: Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 class _VoiceBubble extends StatefulWidget {
   const _VoiceBubble({
@@ -961,6 +969,210 @@ class _VoiceBubbleState extends State<_VoiceBubble> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PhotoBubble extends StatelessWidget {
+  const _PhotoBubble({
+    super.key,
+    required this.imageUrl,
+    required this.label,
+    required this.time,
+    required this.outgoing,
+  });
+
+  final String? imageUrl;
+  final String label;
+  final String time;
+  final bool outgoing;
+
+  static const Color _incoming = Color(0xFF63C3C4);
+
+  Uint8List? _decodeDataUrl(String dataUrl) {
+    final match = RegExp(r'^data:[^;]+;base64,(.+)$').firstMatch(dataUrl);
+    if (match == null) return null;
+    try {
+      return base64Decode(match.group(1)!);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _openPreview(BuildContext context) {
+    final url = imageUrl;
+    if (url == null || url.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _PhotoPreviewPage(imageUrl: url, label: label),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = outgoing ? Colors.white : _incoming;
+    final fg = Colors.black;
+    final url = imageUrl;
+
+    return Align(
+      alignment: outgoing ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.sizeOf(context).width * 0.78,
+        ),
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(outgoing ? 16 : 4),
+            bottomRight: Radius.circular(outgoing ? 4 : 16),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (url == null || url.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: Text(label, style: TextStyle(color: fg, fontSize: 15)),
+              )
+            else
+              AccessibleFocusRegion(
+                label: context.l10n.t('photoMessageOpenA11y', {'label': label}),
+                onActivate: () => _openPreview(context),
+                child: GestureDetector(
+                  onTap: () => _openPreview(context),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxWidth: 240,
+                        maxHeight: 280,
+                      ),
+                      child: _ChatPhotoImage(url: url, decodeDataUrl: _decodeDataUrl),
+                    ),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Text(
+                time,
+                style: TextStyle(
+                  color: fg.withValues(alpha: 0.65),
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatPhotoImage extends StatelessWidget {
+  const _ChatPhotoImage({
+    required this.url,
+    required this.decodeDataUrl,
+  });
+
+  final String url;
+  final Uint8List? Function(String dataUrl) decodeDataUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    if (url.startsWith('data:')) {
+      final bytes = decodeDataUrl(url);
+      if (bytes == null) {
+        return const _PhotoLoadError();
+      }
+      return Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => const _PhotoLoadError(),
+      );
+    }
+
+    return Image.network(
+      url,
+      fit: BoxFit.cover,
+      gaplessPlayback: true,
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) return child;
+        return const SizedBox(
+          width: 200,
+          height: 160,
+          child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+        );
+      },
+      errorBuilder: (_, __, ___) => const _PhotoLoadError(),
+    );
+  }
+}
+
+class _PhotoLoadError extends StatelessWidget {
+  const _PhotoLoadError();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 200,
+      height: 160,
+      color: const Color(0xFF2A2A2A),
+      alignment: Alignment.center,
+      child: const Icon(Icons.broken_image_outlined, color: Colors.white54),
+    );
+  }
+}
+
+class _PhotoPreviewPage extends StatelessWidget {
+  const _PhotoPreviewPage({
+    required this.imageUrl,
+    required this.label,
+  });
+
+  final String imageUrl;
+  final String label;
+
+  Uint8List? _decodeDataUrl(String dataUrl) {
+    final match = RegExp(r'^data:[^;]+;base64,(.+)$').firstMatch(dataUrl);
+    if (match == null) return null;
+    try {
+      return base64Decode(match.group(1)!);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: Text(label),
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          child: imageUrl.startsWith('data:')
+              ? () {
+                  final bytes = _decodeDataUrl(imageUrl);
+                  if (bytes == null) {
+                    return const _PhotoLoadError();
+                  }
+                  return Image.memory(bytes, fit: BoxFit.contain);
+                }()
+              : Image.network(imageUrl, fit: BoxFit.contain),
         ),
       ),
     );

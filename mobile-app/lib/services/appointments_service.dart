@@ -260,16 +260,65 @@ class AppointmentsService {
   Future<List<AppointmentItem>> fetchForCurrentPatient() async {
     final patientId = await _patientUserId();
     if (patientId == null) return [];
+    return fetchForPatient(patientId);
+  }
+
+  Future<List<AppointmentItem>> fetchForPatient(String patientId) async {
+    final trimmed = patientId.trim();
+    if (trimmed.isEmpty) return [];
 
     final staffLookup = await _staffByStaffId();
     final snap = await _firestore
         .collection(_appointments)
-        .where('userId', isEqualTo: patientId)
+        .where('userId', isEqualTo: trimmed)
         .orderBy('dateTime')
         .get();
 
+    return _mapAppointmentDocs(snap.docs, staffLookup);
+  }
+
+  Future<List<AppointmentItem>> fetchForStaff(String staffId) async {
+    final trimmedStaffId = staffId.trim();
+    if (trimmedStaffId.isEmpty) return [];
+
+    final staffLookup = await _staffByStaffId();
+    final seen = <String>{};
+    final docs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+
+    Future<void> collect(String field) async {
+      final snap = await _firestore
+          .collection(_appointments)
+          .where(field, isEqualTo: trimmedStaffId)
+          .orderBy('dateTime')
+          .get();
+      for (final doc in snap.docs) {
+        if (seen.add(doc.id)) docs.add(doc);
+      }
+    }
+
+    await collect('staffId');
+    await collect('staffID');
+
+    docs.sort((a, b) {
+      final aTime = _parseDateTime(a.data()['dateTime']) ??
+          _parseDateTime(a.data()['scheduledAt']);
+      final bTime = _parseDateTime(b.data()['dateTime']) ??
+          _parseDateTime(b.data()['scheduledAt']);
+      if (aTime == null && bTime == null) return 0;
+      if (aTime == null) return 1;
+      if (bTime == null) return -1;
+      return aTime.compareTo(bTime);
+    });
+
+    return _mapAppointmentDocs(docs, staffLookup);
+  }
+
+  List<AppointmentItem> _mapAppointmentDocs(
+    Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    Map<String, Map<String, dynamic>> staffLookup,
+  ) {
     final items = <AppointmentItem>[];
-    for (final doc in snap.docs) {
+    for (final doc in docs) {
       final data = doc.data();
       final dateTime =
           _parseDateTime(data['dateTime']) ?? _parseDateTime(data['scheduledAt']);
@@ -278,14 +327,14 @@ class AppointmentsService {
       final status = (data['status'] as String?)?.trim() ?? 'Scheduled';
       if (status.toLowerCase() == 'cancelled') continue;
 
-      final staffId = _staffIdFromAppointmentData(data) ?? '';
-      final staff = staffLookup[staffId];
+      final docStaffId = _staffIdFromAppointmentData(data) ?? '';
+      final staff = staffLookup[docStaffId];
 
       items.add(
         AppointmentItem(
           id: doc.id,
-          staffId: staffId,
-          doctorName: _staffDisplayName(staff, staffId),
+          staffId: docStaffId,
+          doctorName: _staffDisplayName(staff, docStaffId),
           appointmentType: _appointmentType(data),
           dateTime: dateTime,
           location: (data['location'] as String?)?.trim() ?? '',

@@ -15,6 +15,7 @@ class EmergencyAlertEntity {
 
   static const alertTypeManualSos = 'Manual SOS';
   static const alertTypeFallDetection = 'Fall Detection';
+  static const alertTypeFallDetectionTest = 'Fall Detection Test';
 
   static const statusActive = 'Active';
   static const statusResponded = 'Responded';

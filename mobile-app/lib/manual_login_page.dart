@@ -9,12 +9,12 @@ import 'widgets/listening_mic_button.dart';
 import 'widgets/password_field_suffix.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_auth_helper.dart';
-import 'main_menu_page.dart';
 import 'password_recovery_page.dart';
 import 'services/activity_log_actions.dart';
 import 'services/activity_log_service.dart';
 import 'services/field_speech_input.dart';
 import 'services/login_lockout_service.dart';
+import 'utils/post_auth_navigation.dart';
 
 class ManualLoginPage extends StatefulWidget {
   const ManualLoginPage({super.key});
@@ -155,12 +155,7 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l10n.t('signedInSuccessfully'))),
       );
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute<void>(
-          builder: (context) => const MainMenuPage(),
-        ),
-        (route) => false,
-      );
+      returnToRoleHome(context);
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       final message = firebaseLoginErrorMessage(e);
@@ -383,11 +378,6 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
           controller: _emailController,
           hintText: l10n.t('emailHint'),
           prefixIcon: Icons.mail_outline,
-          onMic: () => _dictateTo(
-            _emailController,
-            listenMode: ListenMode.search,
-          ),
-          micListening: _fieldSpeech.isListeningFor(_emailController),
           keyboardType: TextInputType.emailAddress,
         ),
       ],
@@ -418,8 +408,6 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
           controller: _passwordController,
           hintText: l10n.t('enterPassword'),
           prefixIcon: Icons.lock_outline,
-          onMic: () => _dictateTo(_passwordController),
-          micListening: _fieldSpeech.isListeningFor(_passwordController),
           obscureText: true,
         ),
         const SizedBox(height: 18),
@@ -429,6 +417,7 @@ class _ManualLoginPageState extends State<ManualLoginPage> {
             onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
+                  settings: const RouteSettings(name: 'PasswordRecoveryPage'),
                   builder: (context) => const PasswordRecoveryPage(),
                 ),
               );
@@ -455,8 +444,6 @@ class _LoginInputField extends StatefulWidget {
     required this.controller,
     required this.hintText,
     required this.prefixIcon,
-    required this.onMic,
-    this.micListening = false,
     this.keyboardType,
     this.obscureText = false,
   });
@@ -464,8 +451,6 @@ class _LoginInputField extends StatefulWidget {
   final TextEditingController controller;
   final String hintText;
   final IconData prefixIcon;
-  final VoidCallback onMic;
-  final bool micListening;
   final TextInputType? keyboardType;
   final bool obscureText;
 
@@ -495,17 +480,8 @@ class _LoginInputFieldState extends State<_LoginInputField> {
             ? PasswordFieldSuffix(
                 obscured: _obscured,
                 onToggleObscured: () => setState(() => _obscured = !_obscured),
-                onMic: widget.onMic,
-                micListening: widget.micListening,
               )
-            : Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ListeningMicButton(
-                  listening: widget.micListening,
-                  onPressed: widget.onMic,
-                  size: 44,
-                ),
-              ),
+            : null,
         contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 4),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),

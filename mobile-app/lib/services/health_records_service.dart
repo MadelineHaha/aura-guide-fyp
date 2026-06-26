@@ -139,6 +139,72 @@ class HealthRecordsService {
     return _recordsStreamCache ??= _createWatchStream();
   }
 
+  Future<List<HealthRecordItem>> fetchForPatient(String patientId) async {
+    final trimmed = patientId.trim();
+    if (trimmed.isEmpty) return [];
+    final staffLookup = await _staffByStaffId();
+    final snap = await _firestore
+        .collection(_collection)
+        .where('userId', isEqualTo: trimmed)
+        .get();
+    return _mapAndSort(snap, staffLookup);
+  }
+
+  Stream<List<HealthRecordItem>> watchForPatient(String patientId) {
+    final trimmed = patientId.trim();
+    if (trimmed.isEmpty) {
+      return Stream.value(const []);
+    }
+    return Stream.multi((controller) async {
+      Future<void> emitRecords(
+        QuerySnapshot<Map<String, dynamic>> snap,
+      ) async {
+        if (controller.isClosed) return;
+        try {
+          final staffLookup = await _staffByStaffId();
+          controller.add(_mapAndSort(snap, staffLookup));
+        } catch (e) {
+          if (_isPermissionDenied(e)) {
+            controller.add([]);
+          } else if (!controller.isClosed) {
+            controller.addError(e);
+          }
+        }
+      }
+
+      try {
+        final recordsSnap = await _firestore
+            .collection(_collection)
+            .where('userId', isEqualTo: trimmed)
+            .get();
+        await emitRecords(recordsSnap);
+
+        final recordsSub = _firestore
+            .collection(_collection)
+            .where('userId', isEqualTo: trimmed)
+            .snapshots()
+            .listen(
+          emitRecords,
+          onError: (error) {
+            if (_isPermissionDenied(error)) {
+              controller.add([]);
+            } else if (!controller.isClosed) {
+              controller.addError(error);
+            }
+          },
+        );
+
+        controller.onCancel = recordsSub.cancel;
+      } catch (e, st) {
+        if (_isPermissionDenied(e)) {
+          if (!controller.isClosed) controller.add([]);
+        } else if (!controller.isClosed) {
+          controller.addError(e, st);
+        }
+      }
+    });
+  }
+
   bool _isPermissionDenied(Object error) {
     if (error is FirebaseException) {
       return error.code == 'permission-denied';

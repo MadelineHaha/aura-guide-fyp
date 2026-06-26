@@ -680,6 +680,18 @@ class _SearchResultTile extends StatelessWidget {
                           fontSize: 15,
                         ),
                       ),
+                      if (destination.category != null &&
+                          destination.category!.trim().isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          destination.category!,
+                          style: const TextStyle(
+                            color: Color(0xFF63C3C4),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 2),
                       Text(
                         destination.address,

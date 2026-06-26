@@ -10,6 +10,7 @@ import '../models/chat_list_item.dart';
 import '../models/conversation_thread.dart';
 import '../models/message_entity.dart';
 import '../models/staff_option.dart';
+import '../utils/chat_date_grouping.dart';
 import '../utils/chat_time_format.dart';
 import '../utils/clinic_datetime.dart';
 import '../utils/localized_staff_name.dart';
@@ -17,6 +18,8 @@ import 'app_settings_service.dart';
 import 'activity_log_actions.dart';
 import 'activity_log_service.dart';
 import 'healthcare_staff_service.dart';
+import 'staff_profile_service.dart';
+import '../caregiver/services/caregiver_profile_service.dart';
 import 'user_profile_service.dart';
 
 class CommunicationService {
@@ -42,6 +45,9 @@ class CommunicationService {
 
   static const auraGuideTitle = 'Aura Guide';
   static const auraGuideStaffId = 'S00000';
+  static const auraGuideSystemId = 'system_aura_guide';
+  static const auraGuideVirtualConversationId = 'sys_ag_virtual';
+  static const _announcements = 'announcements';
 
   Future<String?> _patientUserId() async {
     final user = AuthSession.resolveUser() ?? _auth.currentUser;
@@ -208,8 +214,13 @@ class CommunicationService {
     return letters.isEmpty ? '?' : letters.toUpperCase();
   }
 
-  bool _isAuraGuideParticipant(String id) =>
-      id == auraGuideStaffId || id.toUpperCase() == 'AURA';
+  bool _isAuraGuideParticipant(String id) {
+    final normalized = id.trim().toLowerCase();
+    return normalized == auraGuideStaffId.toLowerCase() ||
+        normalized == 'aura' ||
+        normalized == auraGuideSystemId ||
+        normalized == 'sys001';
+  }
 
   Future<Map<String, Map<String, dynamic>>> _staffLookup() async {
     final snap = await _firestore
@@ -221,8 +232,98 @@ class CommunicationService {
       final data = doc.data();
       final sid = _pickId(data, ['staffID', 'staffId', 'staff_id']);
       if (sid != null) map[sid] = data;
+      map[doc.id] = data;
     }
     return map;
+  }
+
+  Map<String, dynamic>? _mapAnnouncementDoc(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data();
+    final status = (data['status'] as String?)?.trim() ?? 'Active';
+    if (status.toLowerCase() == 'inactive') return null;
+    return {
+      'id': doc.id,
+      'type': (data['type'] as String?)?.trim() ?? 'Broadcast Message',
+      'title': (data['title'] as String?)?.trim() ?? '',
+      'message': (data['message'] as String?)?.trim() ?? '',
+      'timestamp': data['createdAt'],
+    };
+  }
+
+  Future<Map<String, dynamic>?> _fetchLatestActiveAnnouncement() async {
+    final snap = await _firestore
+        .collection(_announcements)
+        .orderBy('createdAt', descending: true)
+        .limit(1)
+        .get();
+    if (snap.docs.isEmpty) return null;
+    return _mapAnnouncementDoc(snap.docs.first);
+  }
+
+  String _broadcastMessageContent(Map<String, dynamic> announcement) {
+    final type = announcement['type'] as String? ?? 'Broadcast Message';
+    final title = announcement['title'] as String? ?? '';
+    final message = announcement['message'] as String? ?? '';
+    return '📢 $type\n$title\n$message'.trim();
+  }
+
+  ConversationThread _auraGuideVirtualThread({
+    Map<String, dynamic>? latestAnnouncement,
+  }) {
+    final ts = latestAnnouncement?['timestamp'];
+    final lastMs = ts != null
+        ? _timestampMs(ts)
+        : DateTime.now().millisecondsSinceEpoch;
+    return ConversationThread(
+      conversationId: auraGuideVirtualConversationId,
+      title: auraGuideTitle,
+      preview: latestAnnouncement != null
+          ? 'Broadcast Message'
+          : 'No broadcast message yet',
+      timeLabel: latestAnnouncement != null ? ChatTimeFormat.listTime(ts) : '—',
+      lastMessageAtMs: lastMs,
+      unread: false,
+      staffId: auraGuideSystemId,
+      isAuraGuide: true,
+      specialty: 'Broadcasts',
+      initials: 'AG',
+    );
+  }
+
+  List<ChatListItem> buildBroadcastChatItems(
+    List<Map<String, dynamic>> announcements,
+  ) {
+    if (announcements.isEmpty) {
+      return const [
+        ChatListItem.incoming(
+          text: 'There is no broadcast message yet',
+          time: '',
+        ),
+      ];
+    }
+
+    final sorted = [...announcements]
+      ..sort(
+        (a, b) => _timestampMs(a['timestamp']).compareTo(
+          _timestampMs(b['timestamp']),
+        ),
+      );
+
+    final items = <ChatListItem>[];
+    for (final announcement in sorted) {
+      final ts = announcement['timestamp'];
+      final messageDateKey = ChatTimeFormat.dateKey(ts);
+      items.add(
+        ChatListItem.incoming(
+          text: _broadcastMessageContent(announcement),
+          time: ChatTimeFormat.messageClock(ts),
+          dateKey: messageDateKey,
+        ),
+      );
+    }
+    return ChatDateGrouping.withDateDividers(items);
   }
 
   void _addConversationDoc(
@@ -333,7 +434,7 @@ class CommunicationService {
     final type = (message['messageType'] as String).toLowerCase();
     switch (type) {
       case 'voice':
-        final media = _parseVoiceMessageContent(message['content']);
+        final media = _parseMediaMessageContent(message['content']);
         final durationSeconds = _voiceDurationSeconds(message, media);
         return _formatVoiceMessageLabel(durationSeconds);
       case 'call':
@@ -542,7 +643,11 @@ class CommunicationService {
     final displayMessages = messages
         .where((m) {
           final type = (m['messageType'] as String).toLowerCase();
-          return type == 'text' || type == 'call' || type == 'voice';
+          return type == 'text' ||
+              type == 'call' ||
+              type == 'voice' ||
+              type == 'photo' ||
+              type == 'video';
         })
         .where((m) => _isMessageVisibleForPatient(m, patientId))
         .toList()
@@ -553,28 +658,33 @@ class CommunicationService {
       );
 
     final items = <ChatListItem>[];
-    String? lastDivider;
     for (final message in displayMessages) {
-      final divider = ChatTimeFormat.dividerLabel(message['timestamp']);
-      if (divider != lastDivider) {
-        items.add(ChatListItem.divider(label: divider));
-        lastDivider = divider;
-      }
+      final messageDateKey = ChatTimeFormat.dateKey(message['timestamp']);
       final isOutgoing = message['senderId'] == patientId;
       final clock = ChatTimeFormat.messageClock(message['timestamp']);
       final type = (message['messageType'] as String).toLowerCase();
       if (type == 'call') {
         final text = _formatCallMessageText(message);
         if (isOutgoing) {
-          items.add(ChatListItem.outgoing(text: text, time: clock));
+          items.add(ChatListItem.outgoing(
+            text: text,
+            time: clock,
+            isCall: true,
+            dateKey: messageDateKey,
+          ));
         } else {
-          items.add(ChatListItem.incoming(text: text, time: clock));
+          items.add(ChatListItem.incoming(
+            text: text,
+            time: clock,
+            isCall: true,
+            dateKey: messageDateKey,
+          ));
         }
         continue;
       }
 
       if (type == 'voice') {
-        final media = _parseVoiceMessageContent(message['content']);
+        final media = _parseMediaMessageContent(message['content']);
         final durationSeconds = _voiceDurationSeconds(message, media);
         final label = _formatVoiceMessageLabel(durationSeconds);
         if (isOutgoing) {
@@ -584,6 +694,7 @@ class CommunicationService {
               voiceUrl: media?.url,
               durationSeconds: durationSeconds,
               time: clock,
+              dateKey: messageDateKey,
             ),
           );
         } else {
@@ -593,6 +704,57 @@ class CommunicationService {
               voiceUrl: media?.url,
               durationSeconds: durationSeconds,
               time: clock,
+              dateKey: messageDateKey,
+            ),
+          );
+        }
+        continue;
+      }
+
+      if (type == 'photo') {
+        final media = _parseMediaMessageContent(message['content']);
+        final label = media?.fileName ?? 'Photo';
+        if (isOutgoing) {
+          items.add(
+            ChatListItem.outgoingPhoto(
+              imageUrl: media?.url,
+              label: label,
+              time: clock,
+              dateKey: messageDateKey,
+            ),
+          );
+        } else {
+          items.add(
+            ChatListItem.incomingPhoto(
+              imageUrl: media?.url,
+              label: label,
+              time: clock,
+              dateKey: messageDateKey,
+            ),
+          );
+        }
+        continue;
+      }
+
+      if (type == 'video') {
+        final media = _parseMediaMessageContent(message['content']);
+        final label = media?.fileName ?? 'Video';
+        if (isOutgoing) {
+          items.add(
+            ChatListItem.outgoingVideo(
+              videoUrl: media?.url,
+              label: label,
+              time: clock,
+              dateKey: messageDateKey,
+            ),
+          );
+        } else {
+          items.add(
+            ChatListItem.incomingVideo(
+              videoUrl: media?.url,
+              label: label,
+              time: clock,
+              dateKey: messageDateKey,
             ),
           );
         }
@@ -613,12 +775,20 @@ class CommunicationService {
         text = 'Forwarded\n$text';
       }
       if (isOutgoing) {
-        items.add(ChatListItem.outgoing(text: text, time: clock));
+        items.add(ChatListItem.outgoing(
+          text: text,
+          time: clock,
+          dateKey: messageDateKey,
+        ));
       } else {
-        items.add(ChatListItem.incoming(text: text, time: clock));
+        items.add(ChatListItem.incoming(
+          text: text,
+          time: clock,
+          dateKey: messageDateKey,
+        ));
       }
     }
-    return items;
+    return ChatDateGrouping.withDateDividers(items);
   }
 
   String _formatCallDurationLabel(int totalSeconds) {
@@ -959,7 +1129,7 @@ class CommunicationService {
     return persistMessage(message);
   }
 
-  _ParsedVoiceMedia? _parseVoiceMessageContent(dynamic rawContent) {
+  _ParsedMedia? _parseMediaMessageContent(dynamic rawContent) {
     final raw = rawContent?.toString().trim() ?? '';
     if (raw.isEmpty) return null;
     try {
@@ -967,23 +1137,23 @@ class CommunicationService {
       if (parsed is! Map) return null;
       final fileData = parsed['fileData']?.toString().trim();
       if (fileData != null && fileData.isNotEmpty) {
-        return _ParsedVoiceMedia(
+        return _ParsedMedia(
           url: fileData,
-          fileName: parsed['fileName']?.toString() ?? 'Voice message',
+          fileName: parsed['fileName']?.toString() ?? 'Attachment',
           mimeType: parsed['mimeType']?.toString() ?? '',
         );
       }
       final url = parsed['url']?.toString().trim();
       if (url != null && url.isNotEmpty) {
-        return _ParsedVoiceMedia(
+        return _ParsedMedia(
           url: url,
-          fileName: parsed['fileName']?.toString() ?? 'Voice message',
+          fileName: parsed['fileName']?.toString() ?? 'Attachment',
           mimeType: parsed['mimeType']?.toString() ?? '',
         );
       }
     } catch (_) {
       if (raw.startsWith('data:') || raw.startsWith('http')) {
-        return _ParsedVoiceMedia(url: raw, fileName: 'Voice message', mimeType: '');
+        return _ParsedMedia(url: raw, fileName: 'Attachment', mimeType: '');
       }
     }
     return null;
@@ -991,7 +1161,7 @@ class CommunicationService {
 
   int _voiceDurationSeconds(
     Map<String, dynamic> message,
-    _ParsedVoiceMedia? media,
+    _ParsedMedia? media,
   ) {
     final rawContent = message['content']?.toString() ?? '';
     try {
@@ -1101,10 +1271,847 @@ class CommunicationService {
   /// Unread conversations for the main menu Communication tile subtitle.
   Stream<int> watchUnreadMessageCount() =>
       watchThreads().map(countUnread);
+
+  // --- Staff (doctor) communication ---
+
+  Stream<List<ConversationThread>>? _staffThreadsStreamCache;
+
+  Future<String?> _staffParticipantId() async {
+    final service = StaffProfileService(
+      firestore: _firestore,
+      auth: _auth,
+    );
+    return service.currentStaffId();
+  }
+
+  Future<Map<String, String>> _patientNameById() async {
+    final snap = await _firestore.collection('users').get();
+    final map = <String, String>{};
+    for (final doc in snap.docs) {
+      final data = doc.data();
+      final role = data['role']?.toString().trim().toLowerCase() ?? 'patient';
+      if (role != 'patient') continue;
+      final patientId = _pickId(data, ['userId', 'patientId']);
+      if (patientId == null) continue;
+      final status = (data['accountStatus'] as String?)?.trim() ??
+          (data['status'] as String?)?.trim() ??
+          'Active';
+      if (status.toLowerCase() == 'inactive') continue;
+      final name = (data['name'] as String?)?.trim();
+      map[patientId] = name?.isNotEmpty == true ? name! : patientId;
+    }
+    return map;
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchConversationsForParticipant(
+    String participantId, {
+    bool archivedOnly = false,
+  }) async {
+    final trimmed = participantId.trim();
+    if (trimmed.isEmpty) return [];
+
+    final list = <Map<String, dynamic>>[];
+    final seen = <String>{};
+
+    Future<void> runQuery(String field) async {
+      final snap = await _firestore
+          .collection(_conversations)
+          .where(field, isEqualTo: trimmed)
+          .get();
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final conversationId = data['conversationId']?.toString().trim() ?? doc.id;
+        if (conversationId.isEmpty || !seen.add(conversationId)) continue;
+        final status = (data['status'] as String?)?.trim().toLowerCase() ?? 'active';
+        final isArchived = status == 'archived';
+        if (archivedOnly != isArchived) continue;
+        list.add({
+          ...data,
+          'conversationId': conversationId,
+          'docId': doc.id,
+        });
+      }
+    }
+
+    await runQuery('participant1Id');
+    await runQuery('participant2Id');
+    try {
+      await runQuery('participant1ID');
+      await runQuery('participant2ID');
+    } on FirebaseException catch (e) {
+      if (e.code != 'permission-denied') rethrow;
+    }
+    return list;
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _latestMessageByConversationForViewer(
+    List<String> conversationIds,
+    String viewerId,
+  ) async {
+    final latest = <String, Map<String, dynamic>>{};
+    for (final conversationId in conversationIds) {
+      final snap = await _firestore
+          .collection(_messages)
+          .where('conversationId', isEqualTo: conversationId)
+          .get();
+      Map<String, dynamic>? best;
+      var bestMs = 0;
+      for (final doc in snap.docs) {
+        final entity = _parseMessageDoc(doc);
+        if (entity == null) continue;
+        final type = entity.messageType.toLowerCase();
+        if (!_isDisplayableMessageType(type)) continue;
+        final map = _messageToRenderMap(entity);
+        if (!_isMessageVisibleForPatient(map, viewerId)) continue;
+        final ms = _timestampMs(map['timestamp']);
+        if (ms >= bestMs) {
+          bestMs = ms;
+          best = map;
+        }
+      }
+      if (best != null) latest[conversationId] = best;
+    }
+    return latest;
+  }
+
+  ConversationThread? _threadFromConversationForStaff({
+    required Map<String, dynamic> conversation,
+    required String staffId,
+    required Map<String, String> patientNameById,
+    Map<String, dynamic>? latestMessage,
+  }) {
+    final conversationId = conversation['conversationId'] as String;
+    if (!_isValidConversationId(conversationId)) return null;
+
+    final otherId = _otherParticipantId(conversation, staffId);
+    if (otherId.isEmpty) return null;
+
+    final isAura = _isAuraGuideParticipant(otherId);
+    final title = isAura
+        ? auraGuideTitle
+        : (patientNameById[otherId] ?? otherId);
+
+    final previewFromConversation = conversation['preview'] as String?;
+    final preview = latestMessage != null
+        ? _previewTextForMessage(latestMessage)
+        : previewFromConversation?.isNotEmpty == true
+            ? previewFromConversation!
+            : 'No messages yet';
+
+    final ts = latestMessage?['timestamp'] ??
+        conversation['previewTime'] ??
+        conversation['createdAt'];
+    final lastMs = _timestampMs(ts);
+
+    var unread = false;
+    if (latestMessage != null) {
+      unread = latestMessage['receiverId'] == staffId &&
+          (latestMessage['deliveryStatus'] as String).toLowerCase() != 'read';
+    } else if (conversation['lastSenderId'] != null) {
+      unread = conversation['lastSenderId'] != staffId;
+    }
+
+    return ConversationThread(
+      conversationId: conversationId,
+      title: title,
+      preview:
+          preview.length > 40 ? '${preview.substring(0, 37)}...' : preview,
+      timeLabel: ChatTimeFormat.listTime(ts),
+      lastMessageAtMs:
+          lastMs > 0 ? lastMs : DateTime.now().millisecondsSinceEpoch,
+      unread: unread,
+      staffId: isAura ? '' : otherId,
+      isAuraGuide: isAura,
+      specialty: isAura ? 'Care assistant' : 'Patient',
+      initials: isAura ? 'AG' : _initials(title),
+    );
+  }
+
+  Future<List<ConversationThread>> _buildThreadsForStaff(
+    List<Map<String, dynamic>> conversations,
+    String staffId,
+  ) async {
+    final patientNameById = await _patientNameById();
+    final activePatientIds = patientNameById.keys.toSet();
+    final filtered = conversations.where((conversation) {
+      final otherId = _otherParticipantId(conversation, staffId);
+      if (_isAuraGuideParticipant(otherId)) return false;
+      if (!otherId.startsWith('U')) return true;
+      return activePatientIds.contains(otherId);
+    }).toList();
+
+    final conversationIds = filtered
+        .map((conversation) => conversation['conversationId'] as String)
+        .toList();
+    final latestByConversation = await _latestMessageByConversationForViewer(
+      conversationIds,
+      staffId,
+    );
+
+    final threads = <ConversationThread>[];
+    for (final conversation in filtered) {
+      final conversationId = conversation['conversationId'] as String;
+      final thread = _threadFromConversationForStaff(
+        conversation: conversation,
+        staffId: staffId,
+        patientNameById: patientNameById,
+        latestMessage: latestByConversation[conversationId],
+      );
+      if (thread != null) threads.add(thread);
+    }
+
+    final latestAnnouncement = await _fetchLatestActiveAnnouncement();
+    threads.add(_auraGuideVirtualThread(latestAnnouncement: latestAnnouncement));
+
+    threads.sort((a, b) => b.lastMessageAtMs.compareTo(a.lastMessageAtMs));
+    return threads;
+  }
+
+  Future<List<ConversationThread>> fetchThreadsForStaff() async {
+    final staffId = await _staffParticipantId();
+    if (staffId == null) return [];
+    final conversations = await _fetchConversationsForParticipant(staffId);
+    return _buildThreadsForStaff(conversations, staffId);
+  }
+
+  Stream<List<ConversationThread>> watchThreadsForStaff() {
+    return _staffThreadsStreamCache ??= _createWatchStaffThreadsStream();
+  }
+
+  Stream<List<ConversationThread>> _createWatchStaffThreadsStream() {
+    return Stream.multi((controller) async {
+      Timer? debounce;
+
+      Future<void> emitNow() async {
+        if (controller.isClosed) return;
+        try {
+          controller.add(await fetchThreadsForStaff());
+        } catch (e, st) {
+          if (!controller.isClosed) {
+            controller.addError(e, st);
+          }
+        }
+      }
+
+      void scheduleEmit() {
+        debounce?.cancel();
+        debounce = Timer(const Duration(milliseconds: 250), emitNow);
+      }
+
+      try {
+        final staffId = await _staffParticipantId();
+        if (staffId == null) {
+          controller.add([]);
+          await controller.close();
+          return;
+        }
+
+        await emitNow();
+
+        final subs = <StreamSubscription<dynamic>>[];
+        for (final field in [
+          'participant1Id',
+          'participant2Id',
+          'participant1ID',
+          'participant2ID',
+        ]) {
+          subs.add(
+            _firestore
+                .collection(_conversations)
+                .where(field, isEqualTo: staffId)
+                .snapshots()
+                .listen((_) => scheduleEmit(), onError: controller.addError),
+          );
+        }
+        subs.add(
+          _firestore.collection('users').snapshots().listen(
+                (_) => scheduleEmit(),
+                onError: controller.addError,
+              ),
+        );
+        subs.add(
+          _firestore
+              .collection(_announcements)
+              .orderBy('createdAt', descending: true)
+              .snapshots()
+              .listen(
+                (_) => scheduleEmit(),
+                onError: controller.addError,
+              ),
+        );
+
+        controller.onCancel = () {
+          debounce?.cancel();
+          for (final sub in subs) {
+            sub.cancel();
+          }
+        };
+      } catch (e, st) {
+        if (!controller.isClosed) {
+          controller.addError(e, st);
+        }
+      }
+    });
+  }
+
+  Stream<int> watchUnreadMessageCountForStaff() =>
+      watchThreadsForStaff().map(countUnread);
+
+  Future<void> markConversationReadForStaff({
+    required String conversationId,
+  }) async {
+    if (conversationId == auraGuideVirtualConversationId) return;
+
+    final staffId = await _staffParticipantId();
+    if (staffId == null) return;
+
+    final snap = await _firestore
+        .collection(_messages)
+        .where('conversationId', isEqualTo: conversationId)
+        .get();
+
+    final batch = _firestore.batch();
+    var count = 0;
+    for (final doc in snap.docs) {
+      final msg = _parseMessageDoc(doc);
+      if (msg == null) continue;
+      if (msg.receiverId != staffId) continue;
+      if (msg.deliveryStatus.toLowerCase() == 'read') continue;
+      final data = doc.data();
+      final updates = <String, dynamic>{
+        'deliveryStatus': MessageEntity.deliveryRead,
+        'readAt': FieldValue.serverTimestamp(),
+      };
+      if (data['deliveredAt'] == null) {
+        updates['deliveredAt'] = FieldValue.serverTimestamp();
+      }
+      batch.update(doc.reference, updates);
+      count++;
+      if (count >= 400) break;
+    }
+    if (count > 0) await batch.commit();
+    _clearThreadStreamCaches();
+    _staffThreadsStreamCache = null;
+  }
+
+  Stream<List<ChatListItem>> watchMessagesForStaff({
+    required String conversationId,
+  }) async* {
+    if (conversationId == auraGuideVirtualConversationId) {
+      yield* watchBroadcastMessagesForStaff();
+      return;
+    }
+
+    final staffId = await _staffParticipantId();
+    if (staffId == null) {
+      yield [];
+      return;
+    }
+
+    await for (final snap in _firestore
+        .collection(_messages)
+        .where('conversationId', isEqualTo: conversationId)
+        .snapshots()) {
+      final messages = snap.docs
+          .map(_parseMessageDoc)
+          .whereType<MessageEntity>()
+          .map(_messageToRenderMap)
+          .toList();
+      yield buildChatItems(messages, staffId);
+    }
+  }
+
+  Stream<List<ChatListItem>> watchBroadcastMessagesForStaff() async* {
+    await for (final snap in _firestore
+        .collection(_announcements)
+        .orderBy('createdAt')
+        .snapshots()) {
+      final announcements = snap.docs
+          .map(_mapAnnouncementDoc)
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      yield buildBroadcastChatItems(announcements);
+    }
+  }
+
+  Future<String> sendTextMessageAsStaff({
+    required String conversationId,
+    required String patientId,
+    required String content,
+  }) async {
+    final staffId = await _staffParticipantId();
+    if (staffId == null) {
+      throw StateError('Staff profile not found.');
+    }
+
+    final trimmed = content.trim();
+    if (trimmed.isEmpty) {
+      throw StateError('Message cannot be empty.');
+    }
+    if (trimmed.length > 255) {
+      throw StateError('Message must be 255 characters or less.');
+    }
+
+    final messageId = await _reserveMessageId();
+    final message = MessageEntity(
+      messageId: messageId,
+      conversationId: conversationId.trim(),
+      messageType: MessageEntity.messageTypeText,
+      content: trimmed,
+      timestamp: FieldValue.serverTimestamp(),
+      deliveryStatus: MessageEntity.deliverySent,
+      senderId: staffId,
+      receiverId: patientId.trim(),
+      callDuration: null,
+    );
+
+    await persistMessage(message);
+    _staffThreadsStreamCache = null;
+    unawaited(
+      ActivityLogService.instance.log(
+        action: ActivityLogActions.sendMessage,
+        details: 'Staff sent text message to patient $patientId.',
+      ),
+    );
+    return messageId;
+  }
+
+  Future<String> ensureConversationWithPatient(String patientId) async {
+    final staffId = await _staffParticipantId();
+    if (staffId == null) {
+      throw StateError('Staff profile not found.');
+    }
+
+    final trimmedPatient = patientId.trim();
+    final active = await _fetchConversationsForParticipant(staffId);
+    final activeId = _conversationIdWithStaff(active, trimmedPatient, staffId);
+    if (activeId != null) return activeId;
+
+    final archived = await _fetchConversationsForParticipant(
+      staffId,
+      archivedOnly: true,
+    );
+    final archivedId =
+        _conversationIdWithStaff(archived, trimmedPatient, staffId);
+    if (archivedId != null) {
+      final ref = _firestore.collection(_conversations).doc(archivedId);
+      await ref.update({
+        'status': 'Active',
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      _clearThreadStreamCaches();
+      _staffThreadsStreamCache = null;
+      return archivedId;
+    }
+
+    return _createConversation(
+      staffId: staffId,
+      patientId: trimmedPatient,
+    );
+  }
+
+  Future<DocumentReference<Map<String, dynamic>>> _conversationDocumentRefForStaff(
+    String conversationId,
+  ) async {
+    final trimmedId = conversationId.trim();
+    if (trimmedId.isEmpty) {
+      throw StateError('Invalid conversation.');
+    }
+
+    final staffId = await _staffParticipantId();
+    if (staffId == null) {
+      throw StateError('Staff profile not found.');
+    }
+
+    final ref = _firestore.collection(_conversations).doc(trimmedId);
+    final snap = await ref.get();
+    if (snap.exists) return ref;
+
+    for (final row in await _fetchConversationsForParticipant(
+      staffId,
+      archivedOnly: true,
+    )) {
+      if (row['conversationId'] == trimmedId) {
+        final docId = row['docId'] as String? ?? trimmedId;
+        return _firestore.collection(_conversations).doc(docId);
+      }
+    }
+    for (final row in await _fetchConversationsForParticipant(staffId)) {
+      if (row['conversationId'] == trimmedId) {
+        final docId = row['docId'] as String? ?? trimmedId;
+        return _firestore.collection(_conversations).doc(docId);
+      }
+    }
+
+    throw StateError('Conversation not found.');
+  }
+
+  Future<void> archiveConversationForStaff(String conversationId) async {
+    final ref = await _conversationDocumentRefForStaff(conversationId);
+    await ref.update({
+      'status': 'Archived',
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    _staffThreadsStreamCache = null;
+  }
+
+  Future<void> unarchiveConversationForStaff(String conversationId) async {
+    final ref = await _conversationDocumentRefForStaff(conversationId);
+    await ref.update({
+      'status': 'Active',
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    _staffThreadsStreamCache = null;
+  }
+
+  Future<void> deleteConversationForStaff(String conversationId) async {
+    final ref = await _conversationDocumentRefForStaff(conversationId);
+    await ref.delete();
+    _staffThreadsStreamCache = null;
+  }
+
+  Future<String> sendCallMessageAsStaff({
+    required String conversationId,
+    required String patientId,
+    required int durationSeconds,
+    required String status,
+  }) async {
+    final staffId = await _staffParticipantId();
+    if (staffId == null) {
+      throw StateError('Staff profile not found.');
+    }
+
+    final connectedSeconds = durationSeconds.clamp(0, 86400);
+    final content = _buildCallMessageContent(connectedSeconds, status);
+    final callDuration = connectedSeconds > 0
+        ? (connectedSeconds / 60).ceil().clamp(1, 9999)
+        : null;
+
+    final messageId = await _reserveMessageId();
+    final message = MessageEntity(
+      messageId: messageId,
+      conversationId: conversationId.trim(),
+      messageType: MessageEntity.messageTypeCall,
+      content: content,
+      timestamp: FieldValue.serverTimestamp(),
+      deliveryStatus: MessageEntity.deliverySent,
+      senderId: staffId,
+      receiverId: patientId.trim(),
+      callDuration: callDuration,
+      callDurationSeconds: connectedSeconds > 0 ? connectedSeconds : null,
+    );
+
+    await persistMessage(message);
+    _staffThreadsStreamCache = null;
+    return messageId;
+  }
+
+  // --- Caregiver communication ---
+
+  Stream<List<ConversationThread>>? _caregiverThreadsStreamCache;
+
+  Future<String?> _caregiverParticipantId() async {
+    final service = CaregiverProfileService(
+      firestore: _firestore,
+      auth: _auth,
+    );
+    return service.currentCaregiverId();
+  }
+
+  Future<Set<String>> _connectedPatientIdsForCaregiver() async {
+    final service = CaregiverProfileService(
+      firestore: _firestore,
+      auth: _auth,
+    );
+    return service.currentConnectedUserIds();
+  }
+
+  Future<List<ConversationThread>> _buildThreadsForCaregiver(
+    List<Map<String, dynamic>> conversations,
+    String caregiverId,
+  ) async {
+    final connectedIds = await _connectedPatientIdsForCaregiver();
+    final patientNameById = await _patientNameById();
+    final filtered = conversations.where((conversation) {
+      final otherId = _otherParticipantId(conversation, caregiverId);
+      if (otherId.isEmpty) return false;
+      if (!otherId.startsWith('U')) return false;
+      return connectedIds.contains(otherId);
+    }).toList();
+
+    final conversationIds = filtered
+        .map((conversation) => conversation['conversationId'] as String)
+        .toList();
+    final latestByConversation = await _latestMessageByConversationForViewer(
+      conversationIds,
+      caregiverId,
+    );
+
+    final threads = <ConversationThread>[];
+    for (final conversation in filtered) {
+      final conversationId = conversation['conversationId'] as String;
+      final thread = _threadFromConversationForStaff(
+        conversation: conversation,
+        staffId: caregiverId,
+        patientNameById: patientNameById,
+        latestMessage: latestByConversation[conversationId],
+      );
+      if (thread != null) threads.add(thread);
+    }
+
+    threads.sort((a, b) => b.lastMessageAtMs.compareTo(a.lastMessageAtMs));
+    return threads;
+  }
+
+  Future<List<ConversationThread>> _loadThreadsForCaregiver() async {
+    final caregiverId = await _caregiverParticipantId();
+    if (caregiverId == null) return [];
+    final conversations = await _fetchConversationsForParticipant(caregiverId);
+    return _buildThreadsForCaregiver(conversations, caregiverId);
+  }
+
+  Stream<List<ConversationThread>> watchThreadsForCaregiver() {
+    return _caregiverThreadsStreamCache ??= _createWatchCaregiverThreadsStream();
+  }
+
+  Stream<List<ConversationThread>> _createWatchCaregiverThreadsStream() {
+    return Stream.multi((controller) async {
+      Timer? debounce;
+
+      Future<void> emitNow() async {
+        if (controller.isClosed) return;
+        try {
+          controller.add(await _loadThreadsForCaregiver());
+        } catch (e, st) {
+          controller.addError(e, st);
+        }
+      }
+
+      void scheduleEmit() {
+        debounce?.cancel();
+        debounce = Timer(const Duration(milliseconds: 250), () {
+          unawaited(emitNow());
+        });
+      }
+
+      try {
+        final caregiverId = await _caregiverParticipantId();
+        if (caregiverId == null) {
+          controller.add([]);
+          await controller.close();
+          return;
+        }
+
+        await emitNow();
+
+        final subs = <StreamSubscription<dynamic>>[];
+        for (final field in [
+          'participant1Id',
+          'participant2Id',
+          'participant1ID',
+          'participant2ID',
+        ]) {
+          subs.add(
+            _firestore
+                .collection(_conversations)
+                .where(field, isEqualTo: caregiverId)
+                .snapshots()
+                .listen(
+                  (_) => scheduleEmit(),
+                  onError: controller.addError,
+                ),
+          );
+        }
+        subs.add(
+          _firestore
+              .collection(_messages)
+              .where('senderId', isEqualTo: caregiverId)
+              .snapshots()
+              .listen(
+                (_) => scheduleEmit(),
+                onError: controller.addError,
+              ),
+        );
+        subs.add(
+          _firestore
+              .collection(_messages)
+              .where('receiverId', isEqualTo: caregiverId)
+              .snapshots()
+              .listen(
+                (_) => scheduleEmit(),
+                onError: controller.addError,
+              ),
+        );
+        subs.add(
+          _firestore
+              .collection('caregiver')
+              .doc(_auth.currentUser?.uid ?? '')
+              .snapshots()
+              .listen(
+                (_) => scheduleEmit(),
+                onError: controller.addError,
+              ),
+        );
+
+        controller.onCancel = () {
+          debounce?.cancel();
+          for (final sub in subs) {
+            sub.cancel();
+          }
+        };
+      } catch (e, st) {
+        if (!controller.isClosed) {
+          controller.addError(e, st);
+        }
+      }
+    });
+  }
+
+  Stream<int> watchUnreadMessageCountForCaregiver() =>
+      watchThreadsForCaregiver().map(countUnread);
+
+  Future<void> markConversationReadForCaregiver({
+    required String conversationId,
+  }) async {
+    final caregiverId = await _caregiverParticipantId();
+    if (caregiverId == null) return;
+
+    final snap = await _firestore
+        .collection(_messages)
+        .where('conversationId', isEqualTo: conversationId)
+        .get();
+
+    final batch = _firestore.batch();
+    var count = 0;
+    for (final doc in snap.docs) {
+      final msg = _parseMessageDoc(doc);
+      if (msg == null) continue;
+      if (msg.receiverId != caregiverId) continue;
+      if (msg.deliveryStatus.toLowerCase() == 'read') continue;
+      final data = doc.data();
+      final updates = <String, dynamic>{
+        'deliveryStatus': MessageEntity.deliveryRead,
+        'readAt': FieldValue.serverTimestamp(),
+      };
+      if (data['deliveredAt'] == null) {
+        updates['deliveredAt'] = FieldValue.serverTimestamp();
+      }
+      batch.update(doc.reference, updates);
+      count++;
+      if (count >= 400) break;
+    }
+    if (count > 0) await batch.commit();
+    _caregiverThreadsStreamCache = null;
+  }
+
+  Stream<List<ChatListItem>> watchMessagesForCaregiver({
+    required String conversationId,
+  }) async* {
+    final caregiverId = await _caregiverParticipantId();
+    if (caregiverId == null) {
+      yield [];
+      return;
+    }
+
+    await for (final snap in _firestore
+        .collection(_messages)
+        .where('conversationId', isEqualTo: conversationId)
+        .snapshots()) {
+      final messages = snap.docs
+          .map(_parseMessageDoc)
+          .whereType<MessageEntity>()
+          .map(_messageToRenderMap)
+          .toList();
+      yield buildChatItems(messages, caregiverId);
+    }
+  }
+
+  Future<String> sendTextMessageAsCaregiver({
+    required String conversationId,
+    required String patientId,
+    required String content,
+  }) async {
+    final caregiverId = await _caregiverParticipantId();
+    if (caregiverId == null) {
+      throw StateError('Caregiver profile not found.');
+    }
+
+    final trimmed = content.trim();
+    if (trimmed.isEmpty) {
+      throw StateError('Message cannot be empty.');
+    }
+    if (trimmed.length > 255) {
+      throw StateError('Message must be 255 characters or less.');
+    }
+
+    final messageId = await _reserveMessageId();
+    final message = MessageEntity(
+      messageId: messageId,
+      conversationId: conversationId.trim(),
+      messageType: MessageEntity.messageTypeText,
+      content: trimmed,
+      timestamp: FieldValue.serverTimestamp(),
+      deliveryStatus: MessageEntity.deliverySent,
+      senderId: caregiverId,
+      receiverId: patientId.trim(),
+      callDuration: null,
+    );
+
+    await persistMessage(message);
+    _caregiverThreadsStreamCache = null;
+    unawaited(
+      ActivityLogService.instance.log(
+        action: ActivityLogActions.sendMessage,
+        details: 'Caregiver sent text message to patient $patientId.',
+      ),
+    );
+    return messageId;
+  }
+
+  Future<String> ensureConversationWithPatientAsCaregiver(
+    String patientId,
+  ) async {
+    final caregiverId = await _caregiverParticipantId();
+    if (caregiverId == null) {
+      throw StateError('Caregiver profile not found.');
+    }
+
+    final trimmedPatient = patientId.trim();
+    final connected = await _connectedPatientIdsForCaregiver();
+    if (!connected.contains(trimmedPatient.toUpperCase())) {
+      throw StateError('Patient is not linked to this caregiver account.');
+    }
+
+    final active = await _fetchConversationsForParticipant(caregiverId);
+    final activeId =
+        _conversationIdWithStaff(active, trimmedPatient, caregiverId);
+    if (activeId != null) return activeId;
+
+    final archived = await _fetchConversationsForParticipant(
+      caregiverId,
+      archivedOnly: true,
+    );
+    final archivedId =
+        _conversationIdWithStaff(archived, trimmedPatient, caregiverId);
+    if (archivedId != null) {
+      final ref = _firestore.collection(_conversations).doc(archivedId);
+      await ref.update({
+        'status': 'Active',
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      _caregiverThreadsStreamCache = null;
+      return archivedId;
+    }
+
+    return _createConversation(
+      staffId: caregiverId,
+      patientId: trimmedPatient,
+    );
+  }
 }
 
-class _ParsedVoiceMedia {
-  const _ParsedVoiceMedia({
+class _ParsedMedia {
+  const _ParsedMedia({
     required this.url,
     required this.fileName,
     required this.mimeType,

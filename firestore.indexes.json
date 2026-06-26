@@ -95,6 +95,22 @@
         { "fieldPath": "UserID", "order": "ASCENDING" },
         { "fieldPath": "Status", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "onboardingPin", "order": "ASCENDING" },
+        { "fieldPath": "onboardingPending", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "pin", "order": "ASCENDING" },
+        { "fieldPath": "onboardingPending", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

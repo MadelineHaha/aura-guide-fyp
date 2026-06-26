@@ -7,13 +7,13 @@ import 'package:sensors_plus/sensors_plus.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import '../models/emergency_alert_entity.dart';
+import 'app_experience_service.dart';
 import 'app_settings_service.dart';
 import 'device_permissions_service.dart';
 import 'emergency_alert_service.dart';
 import 'emergency_ai_service.dart';
 import 'patient_call_session.dart';
 import 'voice_call_service.dart';
-
 
 enum FallResponsePhase { idle, responding, sending }
 
@@ -46,6 +46,10 @@ class FallDetectionCoordinator extends ChangeNotifier {
   bool _started = false;
   bool _speechReady = false;
   bool _appResumed = true;
+  bool _isDemoSession = false;
+  bool _isListeningForVoice = false;
+  String _heardVoicePreview = '';
+  EmergencyAnalysisResult? _lastVoiceAnalysis;
   int _responseGeneration = 0;
   DateTime? _lastFallAt;
   DateTime? _freeFallStartedAt;
@@ -56,6 +60,10 @@ class FallDetectionCoordinator extends ChangeNotifier {
 
   FallResponsePhase get phase => _phase;
   bool get isResponding => _phase == FallResponsePhase.responding;
+  bool get isDemoSession => _isDemoSession;
+  bool get isListeningForVoice => _isListeningForVoice;
+  String get heardVoicePreview => _heardVoicePreview;
+  EmergencyAnalysisResult? get lastVoiceAnalysis => _lastVoiceAnalysis;
 
   void ensureStarted() {
     if (_started) {
@@ -112,6 +120,7 @@ class FallDetectionCoordinator extends ChangeNotifier {
 
   bool get _canMonitor {
     if (!_appResumed) return false;
+    if (!AppExperienceService.instance.isPatientExperience) return false;
     if (FirebaseAuth.instance.currentUser == null) return false;
     if (!AppSettingsService.instance.settings.fallDetectionEnabled) return false;
     if (_phase != FallResponsePhase.idle) return false;
@@ -224,6 +233,10 @@ class FallDetectionCoordinator extends ChangeNotifier {
     _accelSub?.cancel();
     _accelSub = null;
 
+    _isDemoSession = true;
+    _heardVoicePreview = '';
+    _lastVoiceAnalysis = null;
+    _isListeningForVoice = false;
     _phase = FallResponsePhase.responding;
     notifyListeners();
 
@@ -247,6 +260,9 @@ class FallDetectionCoordinator extends ChangeNotifier {
 
     if (_isCallActive) return;
 
+    _isDemoSession = false;
+    _heardVoicePreview = '';
+    _lastVoiceAnalysis = null;
     _phase = FallResponsePhase.responding;
     notifyListeners();
 
@@ -255,7 +271,11 @@ class FallDetectionCoordinator extends ChangeNotifier {
   }
 
   Future<void> dismissResponse() async {
-    await _finishResponse(dismissed: true);
+    if (_isDemoSession) {
+      await _finishDemoNoAlert(_responseGeneration);
+    } else {
+      await _finishResponse(dismissed: true, speakDismissed: true);
+    }
   }
 
   Future<void> requestHelp() async {
@@ -265,15 +285,23 @@ class FallDetectionCoordinator extends ChangeNotifier {
 
   Future<void> _runResponseFlow(int generation) async {
     await AppSettingsService.instance.stopSpeaking();
+    await _emergencyAI.initialize();
+    final promptKey = _isDemoSession
+        ? 'fallDetectionDemoVoicePrompt'
+        : 'fallDetectionVoicePrompt';
     await AppSettingsService.instance.speakAndAwaitCompletion(
-      AppSettingsService.instance.localized('fallDetectionVoicePrompt'),
+      AppSettingsService.instance.localized(promptKey),
     );
     if (!_isResponseCurrent(generation)) return;
 
     final micGranted =
         await DevicePermissionsService.instance.ensureMicrophone();
     if (!micGranted) {
-      await _sendFallAlert(generation, announce: true);
+      if (_isDemoSession) {
+        await _finishDemoNoAlert(generation);
+      } else {
+        await _sendFallAlert(generation, announce: true);
+      }
       return;
     }
 
@@ -285,10 +313,19 @@ class FallDetectionCoordinator extends ChangeNotifier {
       );
       _speechReady = available;
       if (!available) {
-        await _sendFallAlert(generation, announce: true);
+        if (_isDemoSession) {
+          await _finishDemoNoAlert(generation);
+        } else {
+          await _sendFallAlert(generation, announce: true);
+        }
         return;
       }
     }
+
+    _heardVoicePreview = '';
+    _lastVoiceAnalysis = null;
+    _isListeningForVoice = true;
+    notifyListeners();
 
     final completer = Completer<_VoiceIntent>();
     try {
@@ -299,48 +336,26 @@ class FallDetectionCoordinator extends ChangeNotifier {
           partialResults: true,
           cancelOnError: false,
         ),
-        onResult: (result) async {
-
-          if (!result.finalResult) {
-            return;
-          }
-
-          final words =
-          result.recognizedWords.trim();
-
-          if (words.isEmpty) {
-            return;
-          }
-
-          final prediction =
-          await _emergencyAI
-              .classify(words);
-
-          debugPrint(
-            "Fall AI Prediction: $prediction",
+        onResult: (result) {
+          unawaited(
+            _handleSpeechResult(
+              generation: generation,
+              completer: completer,
+              words: result.recognizedWords.trim(),
+              isFinal: result.finalResult,
+            ),
           );
-
-          if (prediction == "SAFE") {
-
-            if (!completer.isCompleted) {
-              completer.complete(
-                _VoiceIntent.fine,
-              );
-            }
-
-          } else {
-
-            if (!completer.isCompleted) {
-              completer.complete(
-                _VoiceIntent.help,
-              );
-            }
-          }
         },
       );
     } catch (e) {
       debugPrint('FallDetectionCoordinator listen failed: $e');
-      await _sendFallAlert(generation, announce: true);
+      _isListeningForVoice = false;
+      notifyListeners();
+      if (_isDemoSession) {
+        await _finishDemoNoAlert(generation);
+      } else {
+        await _sendFallAlert(generation, announce: true);
+      }
       return;
     }
 
@@ -358,7 +373,23 @@ class FallDetectionCoordinator extends ChangeNotifier {
       await _speech.stop();
     } catch (_) {}
 
+    _isListeningForVoice = false;
+    notifyListeners();
+
     if (!_isResponseCurrent(generation)) return;
+
+    if (_isDemoSession) {
+      switch (intent) {
+        case _VoiceIntent.fine:
+          await _finishDemoNoAlert(generation);
+        case _VoiceIntent.help:
+          await _sendFallAlert(generation, announce: true);
+        case _VoiceIntent.timeout:
+        case _VoiceIntent.unknown:
+          await _finishDemoNoAlert(generation);
+      }
+      return;
+    }
 
     switch (intent) {
       case _VoiceIntent.fine:
@@ -372,12 +403,49 @@ class FallDetectionCoordinator extends ChangeNotifier {
     }
   }
 
+  Future<void> _handleSpeechResult({
+    required int generation,
+    required Completer<_VoiceIntent> completer,
+    required String words,
+    required bool isFinal,
+  }) async {
+    if (!_isResponseCurrent(generation) || completer.isCompleted) return;
+    if (words.isEmpty) return;
+
+    if (words != _heardVoicePreview) {
+      _heardVoicePreview = words;
+      notifyListeners();
+    }
+
+    final analysis = await _emergencyAI.analyze(words);
+    _lastVoiceAnalysis = analysis;
+    notifyListeners();
+
+    debugPrint(
+      'Fall detection voice -> ${analysis.label} '
+      '(${analysis.score.toStringAsFixed(3)}, ${analysis.source})',
+    );
+
+    if (analysis.isEmergency) {
+      completer.complete(_VoiceIntent.help);
+      return;
+    }
+
+    if (isFinal) {
+      completer.complete(_VoiceIntent.fine);
+    }
+  }
+
   bool _isResponseCurrent(int generation) {
     return generation == _responseGeneration &&
         _phase == FallResponsePhase.responding;
   }
 
-  Future<void> _sendFallAlert(int generation, {required bool announce}) async {
+  Future<void> _sendFallAlert(
+    int generation, {
+    required bool announce,
+    String? voiceTranscript,
+  }) async {
     if (_phase != FallResponsePhase.responding) return;
 
     _phase = FallResponsePhase.sending;
@@ -390,11 +458,17 @@ class FallDetectionCoordinator extends ChangeNotifier {
 
     try {
       await _alertService.triggerSos(
-        alertType: EmergencyAlertEntity.alertTypeFallDetection,
+        alertType: _isDemoSession
+            ? EmergencyAlertEntity.alertTypeFallDetectionTest
+            : EmergencyAlertEntity.alertTypeFallDetection,
+        voiceTranscript: voiceTranscript ?? _heardVoicePreview,
       );
       if (announce) {
+        final messageKey = _isDemoSession
+            ? 'fallDetectionDemoAlertSent'
+            : 'sosActiveMessage';
         await AppSettingsService.instance.speakAndAwaitCompletion(
-          AppSettingsService.instance.localized('sosActiveMessage'),
+          AppSettingsService.instance.localized(messageKey),
         );
       }
     } catch (e) {
@@ -407,9 +481,18 @@ class FallDetectionCoordinator extends ChangeNotifier {
     }
   }
 
+  Future<void> _finishDemoNoAlert(int generation) async {
+    if (!_isResponseCurrent(generation)) return;
+    await _finishResponse(
+      dismissed: true,
+      speakMessageKey: 'fallDetectionDemoNoAlertSent',
+    );
+  }
+
   Future<void> _finishResponse({
     required bool dismissed,
     bool speakDismissed = false,
+    String? speakMessageKey,
   }) async {
     _responseGeneration++;
     try {
@@ -417,13 +500,21 @@ class FallDetectionCoordinator extends ChangeNotifier {
     } catch (_) {}
     await AppSettingsService.instance.stopSpeaking();
 
-    if (speakDismissed) {
+    if (speakMessageKey != null) {
+      await AppSettingsService.instance.speakAndAwaitCompletion(
+        AppSettingsService.instance.localized(speakMessageKey),
+      );
+    } else if (speakDismissed) {
       await AppSettingsService.instance.speakAndAwaitCompletion(
         AppSettingsService.instance.localized('fallDetectionCheckCancelled'),
       );
     }
 
     _phase = FallResponsePhase.idle;
+    _isDemoSession = false;
+    _isListeningForVoice = false;
+    _heardVoicePreview = '';
+    _lastVoiceAnalysis = null;
     _resetFallTracking();
     notifyListeners();
     _syncMonitoring();

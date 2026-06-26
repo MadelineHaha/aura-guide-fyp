@@ -8,13 +8,20 @@ class VoiceEmbeddingService {
   static final VoiceEmbeddingService instance = VoiceEmbeddingService._();
 
   static const int embeddingSize = 64;
-  static const double matchThreshold = 0.72;
+  static const double matchThreshold = 0.82;
 
   List<double> extractFromWav(Uint8List wavBytes) {
     final decoded = _decodeWav(wavBytes);
     if (decoded == null || decoded.samples.isEmpty) {
       return List<double>.filled(embeddingSize, 0);
     }
+
+    // Check if the recording is too quiet (silence/static threshold)
+    final overallRms = _rms(decoded.samples);
+    if (overallRms < 0.008) {
+      return List<double>.filled(embeddingSize, 0);
+    }
+
     return _extractEmbedding(decoded.samples, decoded.sampleRate);
   }
 

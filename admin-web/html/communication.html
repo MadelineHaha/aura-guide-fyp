@@ -20,13 +20,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
       <nav class="staff-nav-links" aria-label="Main">
-        <a class="staff-nav-link" href="dashboard.html">Dashboard</a>
-        <a class="staff-nav-link" href="appointments.html">Appointments</a>
-        <a class="staff-nav-link" href="patients.html">Patients</a>
-        <a class="staff-nav-link" href="emergencies.html">Emergencies</a>
-        <a class="staff-nav-link" href="reports.html">Reports</a>
-        <a class="staff-nav-link is-active" href="communication.html">Communication</a>
-        <a class="staff-nav-link" href="logs.html">Logs</a>
+        <!-- Dynamically injected by staff-shell.js -->
       </nav>
       <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--next" aria-label="Scroll navigation right">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
@@ -45,6 +39,66 @@
   </header>
 
   <main class="staff-page communication-page">
+    <div id="admin-broadcast-panel" hidden style="display: flex; flex-direction: column; gap: 24px; margin-bottom: 24px;">
+      <section class="panel" aria-label="Publish Announcement">
+        <header class="page-toolbar">
+          <div class="page-toolbar-heading">
+            <h2 class="panel-title">Publish Announcement</h2>
+            <p class="page-subtitle">Create a new broadcast message, clinic notice, or emergency announcement.</p>
+          </div>
+        </header>
+        <form class="announcement-form" id="announcement-form" style="display: flex; flex-direction: column; gap: 24px; padding: 12px 0;">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px;">
+            <label class="form-field" style="margin: 0;">
+              <span class="form-field-label">Type</span>
+              <select class="form-field-input" id="announcement-type"></select>
+            </label>
+            <label class="form-field" style="margin: 0;">
+              <span class="form-field-label">Title</span>
+              <input class="form-field-input" type="text" id="announcement-title" required />
+            </label>
+          </div>
+          <label class="form-field" style="margin: 0;">
+            <span class="form-field-label">Message</span>
+            <textarea class="form-field-input form-field-textarea" id="announcement-message" rows="4" required style="resize: vertical; min-height: 100px;"></textarea>
+          </label>
+          <p class="form-error" id="announcement-error" hidden></p>
+          <div style="display: flex; justify-content: flex-start; margin-top: 8px;">
+            <button type="submit" class="btn-primary" style="padding: 10px 24px; font-weight: 600;">Publish announcement</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel" aria-label="Announcements History">
+        <header class="page-toolbar" style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f1f3f5; padding-bottom: 16px;">
+          <div class="page-toolbar-heading">
+            <h2 class="panel-title">Announcements History</h2>
+          </div>
+          <div style="position: relative; display: inline-flex; align-items: center;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position: absolute; left: 12px; width: 14px; height: 14px; color: #6c757d; pointer-events: none;">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+            </svg>
+            <select class="form-field-input" id="announcements-month-filter" style="width: auto; padding: 8px 32px 8px 36px; border-radius: 99px; border: 1px solid #e8ecef; font-size: 0.85rem; font-weight: 600; color: #495057; background-color: #f8f9fa; cursor: pointer; appearance: none; box-shadow: 0 1px 2px rgba(0,0,0,0.02); transition: all 0.2s ease;">
+              <option value="all">All Months</option>
+            </select>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position: absolute; right: 14px; width: 14px; height: 14px; color: #adb5bd; pointer-events: none;">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+        </header>
+
+        <div class="announcements-list" id="announcements-list"></div>
+        <p class="table-empty" id="announcements-empty" hidden>No announcements yet.</p>
+        <nav class="table-pagination" id="announcements-pagination" aria-label="Announcements pages" hidden>
+          <div style="display: flex; gap: 8px; align-items: center; justify-content: center; width: 100%; margin-top: 1rem;">
+            <button type="button" class="btn-secondary" id="announcements-prev" style="padding: 6px 16px; border-radius: 6px; font-weight: 500; font-size: 0.85rem; background: #fff; cursor: pointer;" disabled>Previous</button>
+            <span id="announcements-page-label" style="font-size: 0.85rem; font-weight: 600; color: #495057;">Page 1</span>
+            <button type="button" class="btn-secondary" id="announcements-next" style="padding: 6px 16px; border-radius: 6px; font-weight: 500; font-size: 0.85rem; background: #fff; cursor: pointer;" disabled>Next</button>
+          </div>
+        </nav>
+      </section>
+    </div>
+
     <div class="communication-layout">
       <aside class="communication-sidebar" aria-label="Chat list">
         <div class="communication-sidebar-inner">
@@ -581,6 +635,64 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="edit-announcement-modal" hidden>
+    <div
+      class="add-patient-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="edit-announcement-title"
+    >
+      <header class="modal-dialog-header">
+        <div class="modal-dialog-header-main">
+          <span class="modal-dialog-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+          </span>
+          <div>
+            <h2 class="modal-dialog-title" id="edit-announcement-title">Edit Announcement</h2>
+            <p class="health-records-patient">Update the details of the broadcast message.</p>
+          </div>
+        </div>
+        <button type="button" class="modal-dialog-close" id="edit-announcement-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+
+      <form class="add-patient-form" id="edit-announcement-form" novalidate>
+        <div class="add-patient-grid">
+          <label class="form-field form-field--full">
+            <span class="form-field-label">Type</span>
+            <select class="form-field-input" id="edit-announcement-type"></select>
+          </label>
+          <label class="form-field form-field--full">
+            <span class="form-field-label">Title</span>
+            <input class="form-field-input" type="text" id="edit-announcement-title-input" required />
+          </label>
+          <label class="form-field form-field--full">
+            <span class="form-field-label">Message</span>
+            <textarea class="form-field-input form-field-textarea" id="edit-announcement-message" rows="4" required style="resize: vertical; min-height: 100px;"></textarea>
+          </label>
+        </div>
+        <p class="add-patient-error" id="edit-announcement-error" role="alert" hidden></p>
+        <footer class="add-patient-footer">
+          <button type="submit" class="btn-primary btn-add-profile" id="edit-announcement-submit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+            Update announcement
+          </button>
+        </footer>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="../js/communication-admin.js"></script>
   <script type="module" src="../js/communication.js"></script>
 </body>
 </html>

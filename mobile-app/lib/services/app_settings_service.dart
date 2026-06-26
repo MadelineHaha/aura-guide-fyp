@@ -23,6 +23,7 @@ class AppSettings {
     this.notificationsEnabled = true,
     this.fallDetectionEnabled = true,
     this.voiceAssistantEnabled = true,
+    this.voiceOnlyModeEnabled = true,
     this.languageCode = 'en',
   });
 
@@ -30,6 +31,7 @@ class AppSettings {
   final bool notificationsEnabled;
   final bool fallDetectionEnabled;
   final bool voiceAssistantEnabled;
+  final bool voiceOnlyModeEnabled;
   final String languageCode;
 
   static const languages = <String, String>{
@@ -41,10 +43,14 @@ class AppSettings {
   factory AppSettings.fromMap(Map<String, dynamic>? map) {
     if (map == null || map.isEmpty) return const AppSettings();
     return AppSettings(
-      fontScale: ((map['fontScale'] as num?) ?? 1.0).toDouble().clamp(0.85, 1.35),
+      fontScale: ((map['fontScale'] as num?) ?? 1.0).toDouble().clamp(
+        0.85,
+        1.35,
+      ),
       notificationsEnabled: map['notificationsEnabled'] != false,
       fallDetectionEnabled: map['fallDetectionEnabled'] != false,
       voiceAssistantEnabled: map['voiceAssistantEnabled'] != false,
+      voiceOnlyModeEnabled: map['voiceOnlyModeEnabled'] != false,
       languageCode: _languageFromMap(map['languageCode']),
     );
   }
@@ -56,25 +62,29 @@ class AppSettings {
   }
 
   Map<String, dynamic> toMap() => {
-        'fontScale': fontScale,
-        'notificationsEnabled': notificationsEnabled,
-        'fallDetectionEnabled': fallDetectionEnabled,
-        'voiceAssistantEnabled': voiceAssistantEnabled,
-        'languageCode': languageCode,
-      };
+    'fontScale': fontScale,
+    'notificationsEnabled': notificationsEnabled,
+    'fallDetectionEnabled': fallDetectionEnabled,
+    'voiceAssistantEnabled': voiceAssistantEnabled,
+    'voiceOnlyModeEnabled': voiceOnlyModeEnabled,
+    'languageCode': languageCode,
+  };
 
   AppSettings copyWith({
     double? fontScale,
     bool? notificationsEnabled,
     bool? fallDetectionEnabled,
     bool? voiceAssistantEnabled,
+    bool? voiceOnlyModeEnabled,
     String? languageCode,
   }) {
     return AppSettings(
       fontScale: fontScale ?? this.fontScale,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
       fallDetectionEnabled: fallDetectionEnabled ?? this.fallDetectionEnabled,
-      voiceAssistantEnabled: voiceAssistantEnabled ?? this.voiceAssistantEnabled,
+      voiceAssistantEnabled:
+          voiceAssistantEnabled ?? this.voiceAssistantEnabled,
+      voiceOnlyModeEnabled: voiceOnlyModeEnabled ?? this.voiceOnlyModeEnabled,
       languageCode: languageCode ?? this.languageCode,
     );
   }
@@ -82,7 +92,7 @@ class AppSettings {
 
 class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
   AppSettingsService._({UserProfileService? profileService})
-      : _profileService = profileService ?? UserProfileService();
+    : _profileService = profileService ?? UserProfileService();
 
   static final AppSettingsService instance = AppSettingsService._();
 
@@ -90,10 +100,12 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
   static const _notificationsKey = 'settings_notifications';
   static const _fallDetectionKey = 'settings_fall_detection';
   static const _voiceAssistantKey = 'settings_voice_assistant';
+  static const _voiceOnlyModeKey = 'settings_voice_only_mode';
   static const _languageKey = 'settings_language';
 
   final UserProfileService _profileService;
   final FlutterTts _tts = FlutterTts();
+  final ValueNotifier<bool> isSpeakingNotifier = ValueNotifier(false);
 
   AppSettings _settings = const AppSettings();
   bool _ttsReady = false;
@@ -130,6 +142,7 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
       notificationsEnabled: prefs.getBool(_notificationsKey) ?? true,
       fallDetectionEnabled: prefs.getBool(_fallDetectionKey) ?? true,
       voiceAssistantEnabled: prefs.getBool(_voiceAssistantKey) ?? true,
+      voiceOnlyModeEnabled: prefs.getBool(_voiceOnlyModeKey) ?? true,
       languageCode: prefs.getString(_languageKey) ?? 'en',
     );
 
@@ -147,7 +160,10 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> syncFromFirestore(String uid) async {
     if (uid.isEmpty) return;
     try {
-      final result = await _profileService.loadProfile(uid, syncAuthFirst: false);
+      final result = await _profileService.loadProfile(
+        uid,
+        syncAuthFirst: false,
+      );
       final raw = AccessibilityPreferences.readFromUserDoc(result.data);
       final cloud = AccessibilityPreferences.fromFirestoreValue(raw);
 
@@ -160,7 +176,8 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
 
       _startFirestoreWatch(uid);
 
-      final isEmpty = raw == null ||
+      final isEmpty =
+          raw == null ||
           (raw is String && raw.trim().isEmpty) ||
           (raw is Map && raw.isEmpty);
       if (isEmpty) {
@@ -178,29 +195,35 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
 
   void _startFirestoreWatch(String uid) {
     _settingsSub?.cancel();
-    _settingsSub = _profileService.doc(uid).snapshots().listen(
-      (snap) {
-        if (_cloudSaveInFlight || !snap.exists) return;
-        final data = snap.data();
-        if (data == null) return;
+    _settingsSub = _profileService
+        .doc(uid)
+        .snapshots()
+        .listen(
+          (snap) {
+            if (_cloudSaveInFlight || !snap.exists) return;
+            final data = snap.data();
+            if (data == null) return;
 
-        final raw = AccessibilityPreferences.readFromUserDoc(data);
-        final cloud = AccessibilityPreferences.fromFirestoreValue(raw);
-        if (AccessibilityPreferences.mapsEqual(cloud.toMap(), _settings.toMap())) {
-          return;
-        }
+            final raw = AccessibilityPreferences.readFromUserDoc(data);
+            final cloud = AccessibilityPreferences.fromFirestoreValue(raw);
+            if (AccessibilityPreferences.mapsEqual(
+              cloud.toMap(),
+              _settings.toMap(),
+            )) {
+              return;
+            }
 
-        _settings = cloud;
-        _syncedUid = uid;
-        unawaited(_saveLocal());
-        unawaited(_applyTtsLanguage());
-        unawaited(_applyPlatformLocale());
-        notifyListeners();
-      },
-      onError: (Object error) {
-        debugPrint('AppSettingsService settings watch failed: $error');
-      },
-    );
+            _settings = cloud;
+            _syncedUid = uid;
+            unawaited(_saveLocal());
+            unawaited(_applyTtsLanguage());
+            unawaited(_applyPlatformLocale());
+            notifyListeners();
+          },
+          onError: (Object error) {
+            debugPrint('AppSettingsService settings watch failed: $error');
+          },
+        );
   }
 
   void clearCloudSync() {
@@ -235,9 +258,31 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> setVoiceAssistantEnabled(bool value) async {
-    _settings = _settings.copyWith(voiceAssistantEnabled: value);
+    final voiceOnly = value ? _settings.voiceOnlyModeEnabled : false;
+    _settings = _settings.copyWith(
+      voiceAssistantEnabled: value,
+      voiceOnlyModeEnabled: voiceOnly,
+    );
     notifyListeners();
     await _persist();
+  }
+
+  Future<void> setVoiceOnlyModeEnabled(bool value) async {
+    _settings = _settings.copyWith(
+      voiceOnlyModeEnabled: value,
+      voiceAssistantEnabled: value ? true : _settings.voiceAssistantEnabled,
+    );
+    notifyListeners();
+    await _persist();
+    if (value) {
+      await speakAndAwaitCompletion(
+        localized('voiceOnlyModeEnabledAnnouncement'),
+      );
+    } else {
+      await speakAndAwaitCompletion(
+        localized('voiceOnlyModeDisabledAnnouncement'),
+      );
+    }
   }
 
   Future<void> setLanguageCode(String code) async {
@@ -265,12 +310,14 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   String? _lastSpokenText;
+  String get lastSpokenText => _lastSpokenText ?? '';
   DateTime? _lastSpeakStartedAt;
   Object? _activeSpeakToken;
 
   /// Stops any in-progress voice prompt so the mic does not pick it up.
   Future<void> stopSpeaking() async {
     _activeSpeakToken = null;
+    isSpeakingNotifier.value = false;
     if (!kIsWeb && Platform.isAndroid) {
       try {
         await _emergencySoundChannel.invokeMethod<void>('stopEnglishTts');
@@ -307,9 +354,15 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
     await _tts.stop();
     if (_activeSpeakToken != token) return;
 
+    await _tts.awaitSpeakCompletion(true);
+    if (_activeSpeakToken != token) return;
     _lastSpokenText = trimmed;
     _lastSpeakStartedAt = now;
+    isSpeakingNotifier.value = true;
     await _tts.speak(trimmed);
+    if (_activeSpeakToken == token) {
+      isSpeakingNotifier.value = false;
+    }
   }
 
   /// Normal-speed speech using the device default TTS engine (e.g. Google TTS).
@@ -338,9 +391,15 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
     await _tts.stop();
     if (_activeSpeakToken != token) return;
 
+    await _tts.awaitSpeakCompletion(true);
+    if (_activeSpeakToken != token) return;
     _lastSpokenText = trimmed;
     _lastSpeakStartedAt = DateTime.now();
+    isSpeakingNotifier.value = true;
     await _tts.speak(trimmed);
+    if (_activeSpeakToken == token) {
+      isSpeakingNotifier.value = false;
+    }
   }
 
   /// Emergency prompts: always standard English at normal speed (not TalkBack voice).
@@ -413,6 +472,7 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
     if (_activeSpeakToken != token) return;
 
     await _tts.awaitSpeakCompletion(true);
+    if (_activeSpeakToken != token) return;
     _lastSpokenText = trimmed;
     _lastSpeakStartedAt = DateTime.now();
     if (!kIsWeb && Platform.isAndroid) {
@@ -437,9 +497,21 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
     if (_activeSpeakToken != token) return;
 
     await _tts.awaitSpeakCompletion(true);
+    if (_activeSpeakToken != token) return;
     _lastSpokenText = trimmed;
     _lastSpeakStartedAt = DateTime.now();
-    await _tts.speak(trimmed);
+    isSpeakingNotifier.value = true;
+    if (!kIsWeb && Platform.isAndroid) {
+      await _tts.speak(trimmed, focus: true);
+    } else {
+      await _tts.speak(trimmed);
+    }
+    if (_activeSpeakToken != token) return;
+
+    await _tts.awaitSpeakCompletion(true);
+    if (_activeSpeakToken == token) {
+      isSpeakingNotifier.value = false;
+    }
   }
 
   Future<void> _persist({bool debounceCloud = false}) async {
@@ -457,6 +529,7 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
     await prefs.setBool(_notificationsKey, _settings.notificationsEnabled);
     await prefs.setBool(_fallDetectionKey, _settings.fallDetectionEnabled);
     await prefs.setBool(_voiceAssistantKey, _settings.voiceAssistantEnabled);
+    await prefs.setBool(_voiceOnlyModeKey, _settings.voiceOnlyModeEnabled);
     await prefs.setString(_languageKey, _settings.languageCode);
   }
 
@@ -574,9 +647,7 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
 
       for (final entry in voicesRaw) {
         if (entry is! Map) continue;
-        final locale = _normalizeLocale(
-          (entry['locale'] ?? '').toString(),
-        );
+        final locale = _normalizeLocale((entry['locale'] ?? '').toString());
         if (!_isEnglishLocale(locale)) continue;
 
         final name = (entry['name'] ?? '').toString().toLowerCase();

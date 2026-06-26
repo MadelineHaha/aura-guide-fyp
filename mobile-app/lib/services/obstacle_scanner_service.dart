@@ -28,9 +28,9 @@ class ObstacleScannerService {
   int _consistentHits = 0;
 
   static const _scanInterval = Duration(milliseconds: 100);
-  static const _alertCooldown = Duration(milliseconds: 500);
+  static const _alertCooldown = Duration(milliseconds: 200);
   static const _strongConfidence = 0.30;
-  static const _weakConfidenceHits = 2;
+  static const _weakConfidenceHits = 1;
   static const _heuristicStall = Duration(milliseconds: 450);
 
   bool isRunning = false;
@@ -146,7 +146,13 @@ class ObstacleScannerService {
         _consistentHits = 1;
       }
 
+      if (detection.label == 'Person' &&
+          detection.confidence < 0.50) {
+        return;
+      }
+
       final strongHit = detection.confidence >= _strongConfidence;
+
       if (!strongHit && _consistentHits < _weakConfidenceHits) {
         return;
       }

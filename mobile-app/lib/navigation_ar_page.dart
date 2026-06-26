@@ -7,7 +7,6 @@ import 'models/navigation_destination.dart' show NavDestination;
 import 'l10n/app_localizations.dart';
 import 'services/activity_log_actions.dart';
 import 'services/activity_log_service.dart';
-import 'services/app_settings_service.dart';
 import 'services/device_permissions_service.dart';
 import 'services/navigation_guidance_controller.dart';
 import 'services/voice_assistant_coordinator.dart';
@@ -17,6 +16,7 @@ import 'utils/obstacle_direction.dart';
 import 'utils/obstacle_labels.dart';
 import 'widgets/app_back_button.dart';
 import 'widgets/ar_path_overlay.dart';
+import 'widgets/ar_route_polyline_overlay.dart';
 import 'widgets/obstacle_detection_overlay.dart';
 
 class NavigationArPage extends StatefulWidget {
@@ -49,8 +49,6 @@ class _NavigationArPageState extends State<NavigationArPage>
 
   NavigationGuidanceState _guidanceState = NavigationGuidanceState.initial;
   ObstacleAlert? _activeAlert;
-  DateTime? _lastObstacleSpeechAt;
-  String? _lastSpokenObstacleMessage;
   Timer? _clearAlertTimer;
 
   late final AnimationController _pulseController;
@@ -157,6 +155,7 @@ class _NavigationArPageState extends State<NavigationArPage>
         _clearAlertTimer = Timer(const Duration(seconds: 3), () {
           if (!mounted) return;
           setState(() => _activeAlert = null);
+          unawaited(widget.guidance.announcementManager.announceObstacleCleared());
         });
         unawaited(_announceObstacle(alert));
       });
@@ -191,20 +190,10 @@ class _NavigationArPageState extends State<NavigationArPage>
   }
 
   Future<void> _announceObstacle(ObstacleAlert alert) async {
-    final message = _obstacleLocatedMessage(alert);
-
-    final now = DateTime.now();
-    if (_lastSpokenObstacleMessage == message &&
-        _lastObstacleSpeechAt != null &&
-        now.difference(_lastObstacleSpeechAt!) <
-            const Duration(milliseconds: 1500)) {
-      return;
-    }
-
-    _lastObstacleSpeechAt = now;
-    _lastSpokenObstacleMessage = message;
-    await AppSettingsService.instance.stopSpeaking();
-    await AppSettingsService.instance.speakCalmSystemVoice(message);
+    await widget.guidance.announcementManager.announceObstacle(
+      spokenMessage: _obstacleLocatedMessage(alert),
+      dedupeKey: '${alert.label}:${alert.direction.name}',
+    );
   }
 
   String _obstacleLocatedMessage(ObstacleAlert alert) {
@@ -294,6 +283,15 @@ class _NavigationArPageState extends State<NavigationArPage>
             )
           else
             Container(color: Colors.black),
+          if (cameraReady)
+            ArRoutePolylineOverlay(
+              routePoints: widget.guidance.routePoints,
+              userLatitude: widget.guidance.currentPosition?.latitude,
+              userLongitude: widget.guidance.currentPosition?.longitude,
+              deviceHeading: _guidanceState.deviceHeading,
+              routeStartIndex: widget.guidance.routeProgressIndex,
+              routeProjection: widget.guidance.routeProjection,
+            ),
           if (cameraReady)
             AnimatedBuilder(
               animation: _pulseController,

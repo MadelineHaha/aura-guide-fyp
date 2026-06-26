@@ -17,6 +17,7 @@ import 'widgets/calendar_date_picker_dialog.dart';
 import 'widgets/date_select_field.dart';
 import 'widgets/listening_mic_button.dart';
 import 'widgets/password_field_suffix.dart';
+import 'widgets/accessible_focus_region.dart';
 
 /// Manual registration: 4-step "Create Account" flow (name, date of birth, email, password).
 class ManualRegisterPage extends StatefulWidget {
@@ -34,6 +35,8 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
   /// Selected calendar date of birth (age is derived when needed, not stored separately).
   DateTime? _birthDate;
 
+  String _selectedRole = 'patient';
+
   final _registration = UserRegistrationService();
   final _fieldSpeech = FieldSpeechInput.instance;
   int _step = 0;
@@ -43,7 +46,7 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
   static const Color _bg = Color(0xFF000000);
   static const Color _subtext = Color(0xFFB0B0B0);
 
-  static const int _totalSteps = 4;
+  static const int _totalSteps = 5;
 
   @override
   void initState() {
@@ -150,15 +153,19 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
     String? err;
     switch (_step) {
       case 0:
-        err = _validateStep0();
+        // Role step, no validation required
+        err = null;
         break;
       case 1:
-        err = _validateStep1();
+        err = _validateStep0();
         break;
       case 2:
-        err = _validateStep2();
+        err = _validateStep1();
         break;
       case 3:
+        err = _validateStep2();
+        break;
+      case 4:
         err = _validateStep3(l10n);
         if (err != null) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -214,6 +221,7 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
           phoneNumber: phoneNumber,
           accessibilityPreferences:
               AppSettingsService.instance.settings.toMap(),
+          role: _selectedRole,
         );
       } catch (e) {
         await _registration.deleteCurrentAuthUser();
@@ -339,16 +347,73 @@ class _ManualRegisterPageState extends State<ManualRegisterPage> {
     final l10n = context.l10n;
     switch (_step) {
       case 0:
-        return _buildNameStep(l10n);
+        return _buildRoleStep(l10n);
       case 1:
-        return _buildBirthDateStep(l10n);
+        return _buildNameStep(l10n);
       case 2:
-        return _buildEmailStep(l10n);
+        return _buildBirthDateStep(l10n);
       case 3:
+        return _buildEmailStep(l10n);
+      case 4:
         return _buildPasswordStep(l10n);
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  Widget _buildRoleStep(AppLocalizations l10n) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'Choose Your Role',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 10),
+        const Text(
+          'Select the interface and features you need to access.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: _subtext, fontSize: 15, height: 1.35),
+        ),
+        const SizedBox(height: 24),
+        _RoleCard(
+          title: 'Patient (User)',
+          description: 'Access health records, medications, and assistance services.',
+          icon: Icons.accessibility_new_rounded,
+          selected: _selectedRole == 'patient',
+          onTap: () => setState(() => _selectedRole = 'patient'),
+        ),
+        const SizedBox(height: 12),
+        _RoleCard(
+          title: 'Caregiver',
+          description: 'Monitor patient location, fall/SOS alerts, and medication adherence.',
+          icon: Icons.favorite_rounded,
+          selected: _selectedRole == 'caregiver',
+          onTap: () => setState(() => _selectedRole = 'caregiver'),
+        ),
+        const SizedBox(height: 12),
+        _RoleCard(
+          title: 'Doctor',
+          description: 'View patient records, prescribe medications, and upload reports.',
+          icon: Icons.medical_services_rounded,
+          selected: _selectedRole == 'doctor',
+          onTap: () => setState(() => _selectedRole = 'doctor'),
+        ),
+        const SizedBox(height: 12),
+        _RoleCard(
+          title: 'Therapist',
+          description: 'Schedule rehab sessions and record progress notes.',
+          icon: Icons.psychology_rounded,
+          selected: _selectedRole == 'therapist',
+          onTap: () => setState(() => _selectedRole = 'therapist'),
+        ),
+      ],
+    );
   }
 
   Widget _buildNameStep(AppLocalizations l10n) {
@@ -805,6 +870,88 @@ class _PrivacyNotice extends StatelessWidget {
             ),
             const TextSpan(text: ' regarding your sensitive health data.'),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RoleCard extends StatelessWidget {
+  const _RoleCard({
+    required this.title,
+    required this.description,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String description;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return AccessibleFocusRegion(
+      label: '$title. $description. ${selected ? "Selected" : "Not selected. Double tap to select"}',
+      onActivate: onTap,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFF143031) : const Color(0xFF1A1A1A),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? const Color(0xFF66C2BD) : const Color(0xFF333333),
+              width: 1.5,
+            ),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: selected ? const Color(0xFF225254) : const Color(0xFF2E2E2E),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  icon,
+                  color: selected ? const Color(0xFF66C2BD) : Colors.white70,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: selected ? Colors.white : const Color(0xFFEFEFEF),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: const TextStyle(
+                        color: Color(0xFFB0B0B0),
+                        fontSize: 13,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

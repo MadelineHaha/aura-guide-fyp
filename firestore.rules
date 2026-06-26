@@ -8,12 +8,67 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid)).data.status == 'Active';
     }
 
+    function staffRole() {
+      return get(/databases/$(database)/documents/healthcarestaff/$(request.auth.uid)).data.role;
+    }
+
+    function isAdminStaff() {
+      return isActiveStaff()
+        && staffRole() is string
+        && staffRole().lower() == 'admin';
+    }
+
+    function isPendingProfileCleanup() {
+      return request.auth != null
+        && resource.data.onboardingPending == true
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userId
+            == resource.data.userId
+          || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userID
+            == resource.data.userID
+        );
+    }
+
     match /users/{userId} {
-      allow read: if request.auth != null;
+      allow get: if request.auth != null
+        || resource.data.onboardingPending == true;
+
+      allow list: if isActiveStaff();
+
+      // Pre-auth voice login lookup by shared passphrase.
+      allow list: if isVoicePassphraseLookupQuery()
+        && resource.data.voicePassphrase is string
+        && resource.data.voiceProfile is map;
+
+      // Mobile PIN onboarding: query users where onboardingPin/pin + onboardingPending.
+      allow list: if request.auth != null
+        || (resource.data.onboardingPending == true
+          && (resource.data.onboardingPin is string
+            || resource.data.pin is string));
+
       allow create: if request.auth != null
         && (request.auth.uid == userId || isActiveStaff());
-      allow update, delete: if request.auth != null
+      allow update: if request.auth != null
         && (request.auth.uid == userId || isActiveStaff());
+      allow delete: if request.auth != null
+        && (request.auth.uid == userId || isActiveStaff() || isPendingProfileCleanup());
+    }
+
+    // Mobile PIN onboarding lookup: document id is the 4-digit PIN.
+    match /onboardingPins/{pin} {
+      allow get: if pin.matches('^\\d{4}$');
+      allow create, delete: if isActiveStaff();
+      allow update: if isActiveStaff()
+        || (request.auth != null
+          && resource.data.onboardingPending == true
+          && request.resource.data.onboardingPending == false
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['onboardingPending', 'activatedAt', 'authUid']));
+    }
+
+    function isVoicePassphraseLookupQuery() {
+      return request.query.limit <= 50;
     }
 
     function patientProfile() {
@@ -217,9 +272,9 @@ service cloud.firestore {
       return hasPatientProfile()
         && patientUserId() is string
         && isOwnPatientMedicationReminder()
-        && request.resource.data.status in ['Pending', 'Completed']
+        && request.resource.data.status in ['Pending', 'Completed', 'Missed']
         && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['status', 'completedDate', 'updatedAt']);
+            .hasOnly(['status', 'completedDate', 'missedDate', 'updatedAt']);
     }
 
     function isPatientCreatingOwnMedicationReminder() {
@@ -565,12 +620,82 @@ service cloud.firestore {
       allow delete: if isActiveStaff();
     }
 
+    match /caregiver/{caregiverId} {
+      allow get: if request.auth != null
+        && (request.auth.uid == caregiverId || isActiveStaff());
+
+      allow list: if isActiveStaff();
+
+      allow create: if isAdminStaff() || (
+        request.auth != null && 
+        request.auth.uid == caregiverId && 
+        request.resource.data.inviteId is string &&
+        exists(/databases/$(database)/documents/invitations/$(request.resource.data.inviteId))
+      );
+      allow update: if isAdminStaff() || (
+        request.auth != null && 
+        request.auth.uid == caregiverId &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['accountActivated', 'invitePending', 'activatedAt', 'updatedAt'])
+      );
+      allow delete: if isAdminStaff();
+    }
+
+    match /caregivers/{caregiverId} {
+      allow get: if request.auth != null
+        && (request.auth.uid == caregiverId || isActiveStaff());
+
+      allow list: if isActiveStaff();
+
+      allow create: if isAdminStaff() || (
+        request.auth != null && 
+        request.auth.uid == caregiverId && 
+        request.resource.data.inviteId is string &&
+        exists(/databases/$(database)/documents/invitations/$(request.resource.data.inviteId))
+      );
+      allow update: if isAdminStaff() || (
+        request.auth != null && 
+        request.auth.uid == caregiverId &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['accountActivated', 'invitePending', 'activatedAt', 'updatedAt'])
+      );
+      allow delete: if isAdminStaff();
+    }
+
+    match /invitations/{inviteId} {
+      allow get: if true;
+      allow list, create, update: if isAdminStaff();
+      allow delete: if isAdminStaff() || request.auth != null;
+    }
+
+
     // Patients book appointments: query with .where('status', '==', 'Active').
     match /healthcarestaff/{staffId} {
       allow read: if request.auth != null
         && (request.auth.uid == staffId
             || isActiveStaff()
             || resource.data.status == 'Active');
+
+      allow list: if isActiveStaff();
+
+      // Pre-auth voice login lookup by shared passphrase.
+      allow list: if isVoicePassphraseLookupQuery()
+        && resource.data.voicePassphrase is string
+        && resource.data.voiceProfile is map;
+
+      allow create: if isAdminStaff() || (
+        request.auth != null && 
+        request.auth.uid == staffId && 
+        request.resource.data.inviteId is string &&
+        exists(/databases/$(database)/documents/invitations/$(request.resource.data.inviteId))
+      );
+      allow update: if isAdminStaff() || (
+        request.auth != null && 
+        request.auth.uid == staffId &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['accountActivated', 'invitePending', 'activatedAt', 'updatedAt'])
+      );
+      allow delete: if false;
     }
 
     match /system/{document=**} {
@@ -638,10 +763,45 @@ service cloud.firestore {
       allow create, update: if isPatientDailyMetricWrite();
     }
 
+    function isOwnPatientNotification() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.userId == patientUserId();
+    }
+
+    function isPatientNotificationReadUpdate() {
+      return hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.userId == patientUserId()
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt', 'updatedAt'])
+        && request.resource.data.readAt is timestamp;
+    }
+
+    match /patientnotifications/{notificationId} {
+      allow get: if isActiveStaff() || isOwnPatientNotification();
+
+      allow list: if isActiveStaff();
+
+      allow list: if hasPatientProfile()
+        && patientUserId() is string
+        && resource.data.userId == patientUserId();
+
+      allow update: if isPatientNotificationReadUpdate();
+
+      allow create, delete: if false;
+    }
+
     match /activityLogs/{logId} {
       allow create: if (request.auth != null && isValidActivityLogCreate())
         || isSecurityAuditLogCreate();
       allow read, list: if isActiveStaff();
+    }
+
+    match /announcements/{announcementId} {
+      allow read: if isActiveStaff();
+      allow create: if isAdminStaff();
+      allow update, delete: if isAdminStaff();
     }
   }
 }

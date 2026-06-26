@@ -9,17 +9,17 @@ import 'auth_session.dart';
 import 'firebase_auth_helper.dart';
 import 'firebase_options.dart';
 import 'l10n/app_localizations.dart';
-import 'main_menu_page.dart';
+import 'widgets/role_home_gate.dart';
 import 'services/app_settings_service.dart';
 import 'services/device_permissions_service.dart';
 import 'services/system_accessibility_service.dart';
 import 'services/patient_call_session.dart';
 import 'start_page.dart';
-import 'widgets/fall_detection_host.dart';
+import 'widgets/patient_experience_host.dart';
 import 'widgets/patient_incoming_call_host.dart';
-import 'widgets/voice_assistant_host.dart';
 import 'services/emergency_ai_service.dart';
 import 'services/voice_assistant_coordinator.dart';
+import 'services/app_experience_service.dart';
 import 'services/activity_log_service.dart';
 import 'services/medication_push_service.dart';
 import 'services/medication_local_reminder_service.dart';
@@ -74,15 +74,13 @@ class MyApp extends StatelessWidget {
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
           builder: (context, child) {
-            return VoiceAssistantHost(
-              child: FallDetectionHost(
-                child: PatientIncomingCallHost(
-                  child: MediaQuery(
-                    data: MediaQuery.of(context).copyWith(
-                      textScaler: TextScaler.linear(settings.fontScale),
-                    ),
-                    child: child ?? const SizedBox.shrink(),
+            return PatientExperienceHost(
+              child: PatientIncomingCallHost(
+                child: MediaQuery(
+                  data: MediaQuery.of(context).copyWith(
+                    textScaler: TextScaler.linear(settings.fontScale),
                   ),
+                  child: child ?? const SizedBox.shrink(),
                 ),
               ),
             );
@@ -112,7 +110,7 @@ class _AuthGateState extends State<_AuthGate> {
     AuthSession.updateSignedInUser(user);
     await AppSettingsService.instance.syncFromFirestore(user.uid);
     unawaited(StepTrackingService.instance.start());
-    await MedicationPushService.instance.start();
+    unawaited(MedicationPushService.instance.start());
   }
 
   @override
@@ -142,6 +140,7 @@ class _AuthGateState extends State<_AuthGate> {
     if (AuthSession.explicitSignOutRequested) {
       AuthSession.clearExplicitSignOut();
       AuthSession.lastKnownUser = null;
+      AppExperienceService.instance.clear();
       AppSettingsService.instance.clearCloudSync();
       unawaited(PatientCallSession.instance.disposeOnSignOut());
       unawaited(StepTrackingService.instance.disposeOnSignOut());
@@ -190,7 +189,7 @@ class _AuthGateState extends State<_AuthGate> {
     }
 
     if (_user != null) {
-      return const MainMenuPage();
+      return RoleHomeGate(uid: _user!.uid);
     }
 
     return const StartPage();

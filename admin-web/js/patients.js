@@ -1,17 +1,30 @@
 import { initStaffAuth, getInitials } from "./staff-shell.js";
+import { formatFirestoreError } from "./staff-data-status.js";
+import {
+  filterPatientsForRole,
+  isAdmin,
+  isDoctor,
+  isTherapist,
+} from "./staff-rbac.js";
 import {
   createHealthRecord,
+  createTextHealthRecord,
   fetchHealthRecordById,
+  fetchHealthRecordsByUserId,
+  getHealthRecordFileUrl,
   isHealthRecordsAccessError,
   subscribeHealthRecordsByUserId,
   INLINE_FILE_MAX_BYTES,
   MAX_FILE_BYTES,
   MAX_FILE_SIZE_MESSAGE,
   PRESET_RECORD_TYPES,
+  REHAB_PLAN_RECORD_TYPE,
+  THERAPY_SESSION_RECORD_TYPE,
   prepareHealthRecordInput,
   updateHealthRecord,
   validateHealthRecordInput,
 } from "./health-records-service.js";
+import { fetchEmergencyAlertsByUserId } from "./emergency-alerts-service.js";
 import { getStaffSession } from "./staff-auth.js";
 import {
   createPatient,
@@ -31,6 +44,10 @@ import {
   cancelMedication,
   MEDICATION_STATUS_CANCELLED,
 } from "./medications-service.js";
+import {
+  formatVisitDate,
+  subscribeLatestDoneVisits,
+} from "./appointments-service.js";
 import { releaseFirestoreListener } from "./firestore-realtime.js";
 
 const PAGE_SIZE = 6;
@@ -42,17 +59,17 @@ const paginationEl = document.getElementById("patients-pagination");
 const searchEl = document.getElementById("patient-search");
 const filterTabs = document.querySelectorAll(".filter-tab");
 
-const healthModalEl = document.getElementById("health-records-modal");
-const modalPatientEl = document.getElementById("health-records-patient");
+const healthModalEl = null;
+const modalPatientEl = document.getElementById("patient-profile-name"); // Reused from profile modal
 const modalListEl = document.getElementById("health-records-list");
 const modalEmptyEl = document.getElementById("health-records-empty");
-const healthModalCloseBtn = document.getElementById("health-records-close");
+const healthModalCloseBtn = null;
 
-const medicationsModalEl = document.getElementById("medications-modal");
-const medicationsPatientEl = document.getElementById("medications-patient");
+const medicationsModalEl = null;
+const medicationsPatientEl = null;
 const medicationsListEl = document.getElementById("medications-list");
 const medicationsEmptyEl = document.getElementById("medications-empty");
-const medicationsCloseBtn = document.getElementById("medications-close");
+const medicationsCloseBtn = null;
 const addMedicationModalEl = document.getElementById("add-medication-modal");
 const addMedicationFormEl = document.getElementById("add-medication-form");
 const addMedicationPatientEl = document.getElementById("add-medication-patient");
@@ -85,7 +102,7 @@ const addHealthRecordSummaryEl = document.getElementById("add-health-record-summ
 const addHealthRecordFileEl = document.getElementById("add-health-record-file");
 const addHealthRecordFileNameEl = document.getElementById("add-health-record-file-name");
 const addHealthRecordErrorEl = document.getElementById("add-health-record-error");
-const addHealthRecordSubmitBtn = addHealthRecordFormEl.querySelector('[type="submit"]');
+const addHealthRecordSubmitBtn = addHealthRecordFormEl?.querySelector('[type="submit"]');
 const addHealthRecordSaveLabelEl = document.getElementById("add-health-record-save-label");
 const addHealthRecordTitleEl = document.getElementById("add-health-record-title");
 const addHealthRecordUploadHintEl = document.getElementById("add-health-record-upload-hint");
@@ -98,7 +115,12 @@ const addPatientFormEl = document.getElementById("add-patient-form");
 const addPatientCloseBtn = document.getElementById("add-patient-close");
 const addPatientBtn = document.getElementById("btn-add-patient");
 const addPatientErrorEl = document.getElementById("add-patient-error");
-const addPatientSubmitBtn = addPatientFormEl.querySelector('[type="submit"]');
+const addPatientSubmitBtn = addPatientFormEl?.querySelector('[type="submit"]');
+const patientPinSuccessModalEl = document.getElementById("patient-pin-success-modal");
+const patientPinSuccessUserIdEl = document.getElementById("patient-pin-success-userid");
+const patientPinSuccessPinEl = document.getElementById("patient-pin-success-pin");
+const patientPinSuccessCloseBtn = document.getElementById("patient-pin-success-close");
+const patientPinSuccessDoneBtn = document.getElementById("patient-pin-success-done");
 
 const profileModalEl = document.getElementById("patient-profile-modal");
 const profileCloseBtn = document.getElementById("patient-profile-close");
@@ -108,8 +130,7 @@ const profileUserIdEl = document.getElementById("patient-profile-userid");
 const profileEmailEl = document.getElementById("patient-profile-email");
 const profilePhoneEl = document.getElementById("patient-profile-phone");
 const profileAgeEl = document.getElementById("patient-profile-age");
-const profileConditionEl = document.getElementById("patient-profile-condition");
-const profileStatusEl = document.getElementById("patient-profile-status");
+const profileGenderEl = document.getElementById("patient-profile-gender");
 const profileAddressEl = document.getElementById("patient-profile-address");
 const profileGridEl = document.getElementById("patient-profile-grid");
 const profileFooterViewEl = document.getElementById("patient-profile-footer-view");
@@ -122,13 +143,21 @@ const profileEmailInput = document.getElementById("patient-profile-email-input")
 const profilePhoneInput = document.getElementById("patient-profile-phone-input");
 const profileAgeLabelEl = document.getElementById("patient-profile-age-label");
 const profileBirthdateInput = document.getElementById("patient-profile-birthdate-input");
-const profileConditionInput = document.getElementById("patient-profile-condition-input");
-const profileStatusInput = document.getElementById("patient-profile-status-input");
+const profileGenderInput = document.getElementById("patient-profile-gender-input");
 const profileAddressInput = document.getElementById("patient-profile-address-input");
 const profileSaveLabelEl = document.getElementById("patient-profile-save-label");
 const profileDeactivateBtn = document.getElementById("patient-profile-deactivate");
-const profileViewFields = profileModalEl.querySelectorAll(".profile-field-view");
-const profileEditFields = profileModalEl.querySelectorAll(".profile-field-edit");
+const addHealthRecordBtn = document.getElementById("btn-add-health-record");
+const addRehabPlanModalEl = document.getElementById("add-rehab-plan-modal");
+const addRehabPlanFormEl = document.getElementById("add-rehab-plan-form");
+const addRehabPlanCloseBtn = document.getElementById("add-rehab-plan-close");
+const addRehabPlanContentEl = document.getElementById("add-rehab-plan-content");
+const addTherapySessionModalEl = document.getElementById("add-therapy-session-modal");
+const addTherapySessionFormEl = document.getElementById("add-therapy-session-form");
+const addTherapySessionCloseBtn = document.getElementById("add-therapy-session-close");
+const addTherapySessionContentEl = document.getElementById("add-therapy-session-content");
+const profileViewFields = profileModalEl?.querySelectorAll(".profile-field-view") || [];
+const profileEditFields = profileModalEl?.querySelectorAll(".profile-field-edit") || [];
 
 let patients = [];
 let isProfileEditing = false;
@@ -146,7 +175,11 @@ let editingHealthRecordId = null;
 let editingMedicationId = null;
 let loggedInStaffName = "Staff";
 let loggedInStaffRole = "";
+let loggedInStaffUid = "";
+let showMedicationsColumn = true;
+let showHealthRecordsColumn = true;
 let loggedInStaffId = "";
+let isSavingTherapistRecord = false;
 
 function statusLabel(status) {
   return status.charAt(0).toUpperCase() + status.slice(1);
@@ -154,6 +187,51 @@ function statusLabel(status) {
 
 function patientStatusClass(status) {
   return `patient-status patient-status--${status}`;
+}
+
+function normalizedAccountStatus(patient) {
+  const value = String(patient?.accountStatus || "Active").trim();
+  return value.toLowerCase() === "inactive" ? "Inactive" : "Active";
+}
+
+function accountStatusBadgeHtml(patient) {
+  const status = normalizedAccountStatus(patient);
+  const active = status === "Active";
+  const cls = active
+    ? "patient-status patient-status--stable"
+    : "patient-status patient-status--monitoring";
+  return `<span class="${cls}">${status}</span>`;
+}
+
+const ADMIN_STATUS_FILTER_TABS = [
+  { status: "all", label: "All" },
+  { status: "active", label: "Active" },
+  { status: "inactive", label: "Inactive" },
+];
+
+const CLINICAL_STATUS_FILTER_TABS = [
+  { status: "all", label: "All" },
+  { status: "stable", label: "Stable" },
+  { status: "monitoring", label: "Monitoring" },
+  { status: "critical", label: "Critical" },
+];
+
+function applyPatientFilterTabs(admin) {
+  const tabConfig = admin ? ADMIN_STATUS_FILTER_TABS : CLINICAL_STATUS_FILTER_TABS;
+  filterTabs.forEach((tab, index) => {
+    const config = tabConfig[index];
+    if (!config) {
+      tab.hidden = true;
+      return;
+    }
+    tab.hidden = false;
+    tab.dataset.status = config.status;
+    tab.textContent = config.label;
+  });
+  const validStatuses = tabConfig.map((entry) => entry.status);
+  if (!validStatuses.includes(statusFilter)) {
+    setPatientStatusFilter("all");
+  }
 }
 
 function getPatientById(id) {
@@ -241,6 +319,10 @@ function renderMedicationCard(medication) {
 
 function renderRecordCard(record) {
   const recordId = record.recordId || "";
+  const viewBtn =
+    record.hasFile || record.filePath || record.hasInlineFile
+      ? `<button type="button" class="btn-record-view" data-record-id="${escapeHtml(recordId)}" data-record-title="${escapeHtml(record.description || record.type || "Medical report")}" data-file-type="${escapeHtml(record.fileType || "")}">View report</button>`
+      : "";
   return `
     <article class="health-record-card" data-record-id="${recordId}">
       <span class="health-record-tag">${formatRecordTypeTag(record.type)}</span>
@@ -253,7 +335,10 @@ function renderRecordCard(record) {
           </svg>
           ${record.doctor}
         </span>
-        <button type="button" class="btn-record-edit" data-record-id="${recordId}">Edit</button>
+        <div class="health-record-card-actions">
+          ${viewBtn}
+          <button type="button" class="btn-record-edit" data-record-id="${recordId}">Edit</button>
+        </div>
       </footer>
     </article>
   `;
@@ -309,24 +394,13 @@ function startMedicationsRealtime(patientId) {
   );
 }
 
-function openMedicationsModal(patientId) {
-  const patient = getPatientById(patientId);
-  if (!patient) return;
-
-  activeMedicationsPatientId = patientId;
-  medicationsPatientEl.textContent = `Patient: ${patient.name}`;
-  medicationsModalEl.hidden = false;
-  syncBodyModalLock();
-  medicationsCloseBtn.focus();
-  startMedicationsRealtime(patientId);
+async function openMedicationsModal(patientId) {
+  openPatientProfileModal(patientId);
+  switchClinicalTab("medications");
 }
 
 function closeMedicationsModal() {
-  closeAddMedicationModal();
-  stopMedicationsRealtime();
-  medicationsModalEl.hidden = true;
-  syncBodyModalLock();
-  activeMedicationsPatientId = null;
+  // Handled by closing the profile modal
 }
 
 function defaultReminderTimesForFrequency(frequency) {
@@ -524,8 +598,8 @@ function closeAddMedicationModal() {
   addMedicationCancelMedBtn.hidden = true;
   addMedicationModalEl.hidden = true;
   syncBodyModalLock();
-  if (!medicationsModalEl.hidden) {
-    medicationsCloseBtn.focus();
+  if (medicationsModalEl && !medicationsModalEl.hidden) {
+    medicationsCloseBtn?.focus();
   }
 }
 
@@ -683,16 +757,8 @@ function startHealthRecordsRealtime(patientId) {
 }
 
 async function openHealthRecordsModal(patientId) {
-  const patient = getPatientById(patientId);
-  if (!patient) return;
-
-  activePatientId = patientId;
-  modalPatientEl.textContent = `Patient: ${patient.name}`;
-
-  healthModalEl.hidden = false;
-  syncBodyModalLock();
-  healthModalCloseBtn.focus();
-  startHealthRecordsRealtime(patientId);
+  openPatientProfileModal(patientId);
+  switchClinicalTab("health-records");
 }
 
 function syncHealthRecordTypeOtherField() {
@@ -771,28 +837,25 @@ function closeAddHealthRecordModal() {
   setHealthRecordFormMode("add");
   addHealthRecordModalEl.hidden = true;
   syncBodyModalLock();
-  if (!healthModalEl.hidden) {
-    healthModalCloseBtn.focus();
+  if (healthModalEl && !healthModalEl.hidden) {
+    healthModalCloseBtn?.focus();
   }
 }
 
 function syncBodyModalLock() {
   const anyOpen =
-    !healthModalEl.hidden ||
-    !medicationsModalEl.hidden ||
+    (healthModalEl && !healthModalEl.hidden) ||
+    (medicationsModalEl && !medicationsModalEl.hidden) ||
     !addMedicationModalEl.hidden ||
     !addHealthRecordModalEl.hidden ||
     !addPatientModalEl.hidden ||
+    !patientPinSuccessModalEl?.hidden ||
     !profileModalEl.hidden;
   document.body.classList.toggle("modal-open", anyOpen);
 }
 
 function closeHealthRecordsModal() {
-  closeAddHealthRecordModal();
-  stopHealthRecordsRealtime();
-  healthModalEl.hidden = true;
-  syncBodyModalLock();
-  activePatientId = null;
+  // Now handled by closing the profile modal
 }
 
 async function handleHealthRecordFormSubmit(event) {
@@ -983,9 +1046,7 @@ function renderProfileView(patient) {
   renderProfileFieldValue(profileEmailEl, patient.email);
   renderProfileFieldValue(profilePhoneEl, patient.phone);
   renderProfileFieldValue(profileAgeEl, patient.age);
-  renderProfileFieldValue(profileConditionEl, patient.condition);
-  profileStatusEl.classList.remove("is-unset");
-  profileStatusEl.innerHTML = `<span class="${patientStatusClass(patient.status)}">${statusLabel(patient.status)}</span>`;
+  renderProfileFieldValue(profileGenderEl, patient.gender);
   renderProfileFieldValue(profileAddressEl, patient.address);
   syncProfileDeactivateButton(patient);
 }
@@ -997,9 +1058,10 @@ function fillProfileEditInputs(patient) {
     ? dateToInputValue(patient.birthDate)
     : "";
   profileBirthdateInput.max = todayDateString();
-  profileConditionInput.value =
-    patient.condition === "—" ? "" : patient.condition;
-  profileStatusInput.value = patient.status || "stable";
+  if (profileGenderInput) {
+    profileGenderInput.value =
+      patient.gender && patient.gender !== "—" ? patient.gender : "";
+  }
   profileAddressInput.value = patient.address || "";
 }
 
@@ -1008,9 +1070,8 @@ function getProfileFormData() {
     email: profileEmailInput.value.trim().toLowerCase(),
     phone: profilePhoneInput.value.trim(),
     birthDate: profileBirthdateInput.value,
-    condition: profileConditionInput.value.trim(),
-    clinicalStatus: profileStatusInput.value,
     address: profileAddressInput.value.trim(),
+    gender: profileGenderInput?.value.trim() || "",
   };
 }
 
@@ -1019,10 +1080,11 @@ function getPatientProfileBaseline(patient) {
     email: (patient.email || "").trim().toLowerCase(),
     phone: (patient.phone || "").trim(),
     birthDate: patient.birthDate ? dateToInputValue(patient.birthDate) : "",
-    condition:
-      patient.condition === "—" ? "" : String(patient.condition || "").trim(),
-    clinicalStatus: patient.status || "stable",
     address: (patient.address || "").trim(),
+    gender:
+      patient.gender && patient.gender !== "—"
+        ? String(patient.gender).trim()
+        : "",
   };
 }
 
@@ -1036,13 +1098,8 @@ function getProfileChangedFields(patient) {
   if (baseline.birthDate !== current.birthDate) {
     changes.birthDate = current.birthDate;
   }
-  if (baseline.condition !== current.condition) {
-    changes.condition = current.condition;
-  }
-  if (baseline.clinicalStatus !== current.clinicalStatus) {
-    changes.clinicalStatus = current.clinicalStatus;
-  }
   if (baseline.address !== current.address) changes.address = current.address;
+  if (baseline.gender !== current.gender) changes.gender = current.gender;
 
   return changes;
 }
@@ -1096,10 +1153,18 @@ function openPatientProfileModal(patientId) {
   profileUserIdEl.textContent = `User ID: ${patient.patientId}`;
   renderProfileView(patient);
   fillProfileEditInputs(patient);
+  if (isTherapist(loggedInStaffRole)) {
+    void loadTherapistPatientData(patient);
+  }
 
   profileModalEl.hidden = false;
   syncBodyModalLock();
   profileCloseBtn.focus();
+
+  if (isDoctor(loggedInStaffRole) || isTherapist(loggedInStaffRole)) {
+    startHealthRecordsRealtime(patientId);
+    startMedicationsRealtime(patientId);
+  }
 }
 
 function closePatientProfileModal() {
@@ -1107,6 +1172,9 @@ function closePatientProfileModal() {
   setProfileEditMode(false);
   syncBodyModalLock();
   activePatientId = null;
+  
+  stopHealthRecordsRealtime();
+  stopMedicationsRealtime();
 }
 
 function handleProfileUpdateClick() {
@@ -1209,15 +1277,52 @@ function isFutureBirthdate(dateStr) {
   return dateStr > todayDateString();
 }
 
+function closePatientPinSuccessModal() {
+  if (!patientPinSuccessModalEl) return;
+  patientPinSuccessModalEl.hidden = true;
+  syncBodyModalLock();
+}
+
+function openPatientPinSuccessModal({ userId, onboardingPin, pin }) {
+  const pinValue = String(onboardingPin || pin || "").trim();
+  const userIdValue = userId || "—";
+
+  if (!pinValue) {
+    window.alert(
+      "Patient was created, but the PIN could not be loaded. Deploy the latest Cloud Functions and try again.",
+    );
+    return;
+  }
+
+  if (patientPinSuccessUserIdEl) {
+    patientPinSuccessUserIdEl.textContent = userIdValue;
+  }
+  if (patientPinSuccessPinEl) {
+    patientPinSuccessPinEl.textContent = pinValue;
+  }
+
+  if (patientPinSuccessModalEl) {
+    patientPinSuccessModalEl.hidden = false;
+    syncBodyModalLock();
+    patientPinSuccessDoneBtn?.focus();
+    return;
+  }
+
+  window.alert(
+    `Patient added successfully.\n\nUser ID: ${userIdValue}\n4-digit PIN: ${pinValue}\n\nShare these with the patient for first-time app setup.`,
+  );
+}
+
 function openAddPatientModal() {
-  addPatientFormEl.reset();
+  if (!addPatientModalEl) return;
+  addPatientFormEl?.reset();
   addPatientErrorEl.hidden = true;
   addPatientErrorEl.textContent = "";
   const birthdateInput = document.getElementById("add-patient-birthdate");
-  birthdateInput.max = todayDateString();
+  if (birthdateInput) birthdateInput.max = todayDateString();
   addPatientModalEl.hidden = false;
   syncBodyModalLock();
-  document.getElementById("add-patient-name").focus();
+  document.getElementById("add-patient-name")?.focus();
 }
 
 function closeAddPatientModal() {
@@ -1226,31 +1331,431 @@ function closeAddPatientModal() {
 }
 
 let unsubscribePatients = null;
+let unsubscribeDoneVisits = null;
+let patientsBase = [];
+let latestDoneVisitByUserId = new Map();
+let patientsRealtimeStarted = false;
+let patientsLoading = false;
+let activePatientsStaffProfile = null;
+
+function switchClinicalTab(tabName) {
+  document.querySelectorAll(".clinical-tab").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.tab === tabName);
+  });
+  const panels = [
+    "health-records",
+    "medications",
+    "appointments",
+    "emergencies",
+    "rehab",
+    "sessions"
+  ];
+  panels.forEach((panel) => {
+    const el = document.getElementById(`clinical-tab-${panel}`);
+    if (el) el.hidden = tabName !== panel;
+  });
+}
+
+function renderRehabPlans(records) {
+  const listEl = document.getElementById("rehab-plans-list");
+  if (!listEl) return;
+  if (!records.length) {
+    listEl.innerHTML = `<p class="cell-secondary">No rehabilitation plans yet.</p>`;
+    return;
+  }
+  listEl.innerHTML = records
+    .map(
+      (record) => `
+      <article class="health-record-card">
+        <span class="health-record-tag">${escapeHtml(formatRecordTypeTag(record.type))}</span>
+        <p class="health-record-description">${escapeHtml(record.description)}</p>
+        <footer class="health-record-footer">
+          <span class="health-record-doctor">${escapeHtml(record.dateCreated)} · ${escapeHtml(record.doctor)}</span>
+        </footer>
+      </article>`,
+    )
+    .join("");
+}
+
+function renderTherapySessions(records) {
+  const listEl = document.getElementById("therapy-sessions-list");
+  if (!listEl) return;
+  if (!records.length) {
+    listEl.innerHTML = `<p class="cell-secondary">No therapy sessions recorded yet.</p>`;
+    return;
+  }
+  listEl.innerHTML = records
+    .map(
+      (record) => `
+      <article class="health-record-card">
+        <span class="health-record-tag">${escapeHtml(formatRecordTypeTag(record.type))}</span>
+        <p class="health-record-description">${escapeHtml(record.description)}</p>
+        <footer class="health-record-footer">
+          <span class="health-record-doctor">${escapeHtml(record.dateCreated)} · ${escapeHtml(record.doctor)}</span>
+        </footer>
+      </article>`,
+    )
+    .join("");
+}
+
+function renderPatientEmergencyHistory(alerts) {
+  const listEl = document.getElementById("patient-emergency-history-list");
+  if (!listEl) return;
+  if (!alerts.length) {
+    listEl.innerHTML = `<p class="cell-secondary">No emergency alerts for this patient.</p>`;
+    return;
+  }
+  listEl.innerHTML = alerts
+    .map(
+      (alert) => `
+      <article class="health-record-card">
+        <span class="health-record-tag">${escapeHtml(String(alert.status || "Active"))}</span>
+        <p class="health-record-description">${escapeHtml(alert.alertType || "Emergency")} — ${escapeHtml(alert.location || "Location pending")}</p>
+        <footer class="health-record-footer">
+          <span class="health-record-doctor">${escapeHtml(alert.dateTimeLabel || alert.dateTime || "—")}</span>
+        </footer>
+      </article>`,
+    )
+    .join("");
+}
+
+// Fetch therapy sessions dynamically
+async function loadTherapistPatientData(patient) {
+  if (!isTherapist(loggedInStaffRole) || !patient?.patientId) return;
+  try {
+    const { fetchTherapySessionsByUserId } = await import("./appointments-service.js");
+    const sessions = await fetchTherapySessionsByUserId(patient.patientId);
+
+    // Filter rehab plans (scheduled/pending therapy sessions)
+    const rehabPlans = sessions.filter(s => s.status === "scheduled" || s.status === "pending").map(s => ({
+      type: "Rehab Plan",
+      description: s.sessionName || "Unnamed Plan",
+      dateCreated: s.datetime || "—",
+      doctor: s.staff || "—"
+    }));
+    
+    // Filter completed/done therapy sessions
+    const therapySessions = sessions.filter(s => s.status !== "scheduled" && s.status !== "pending").map(s => ({
+      type: "Therapy Session",
+      description: s.sessionName || s.appointmentType || "Unnamed Session",
+      dateCreated: s.datetime || "—",
+      doctor: s.staff || "—"
+    }));
+
+    renderRehabPlans(rehabPlans);
+    renderTherapySessions(therapySessions);
+    
+    const alerts = await fetchEmergencyAlertsByUserId(patient.patientId);
+    renderPatientEmergencyHistory(alerts);
+  } catch (error) {
+    console.warn("Could not load therapist patient data:", error);
+  }
+}
+
+function openAddRehabPlanModal() {
+  const patient = getPatientById(activePatientId);
+  if (!patient) return;
+  addRehabPlanContentEl.value = "";
+  addRehabPlanModalEl.hidden = false;
+  syncBodyModalLock();
+  addRehabPlanContentEl.focus();
+}
+
+function closeAddRehabPlanModal() {
+  addRehabPlanModalEl.hidden = true;
+  syncBodyModalLock();
+}
+
+function openAddTherapySessionModal() {
+  const patient = getPatientById(activePatientId);
+  if (!patient) return;
+  addTherapySessionContentEl.value = "";
+  addTherapySessionModalEl.hidden = false;
+  syncBodyModalLock();
+  addTherapySessionContentEl.focus();
+}
+
+function closeAddTherapySessionModal() {
+  addTherapySessionModalEl.hidden = true;
+  syncBodyModalLock();
+}
+
+async function handleRehabPlanSubmit(event) {
+  event.preventDefault();
+  if (isSavingTherapistRecord) return;
+  const patient = getPatientById(activePatientId);
+  const content = addRehabPlanContentEl.value.trim();
+  if (!patient || !content) return;
+  if (!loggedInStaffId) {
+    window.alert("Your staff profile is missing a valid Staff ID.");
+    return;
+  }
+
+  isSavingTherapistRecord = true;
+  try {
+    await createTextHealthRecord({
+      userId: patient.patientId,
+      staffId: loggedInStaffId,
+      recordType: REHAB_PLAN_RECORD_TYPE,
+      title: content,
+    });
+    closeAddRehabPlanModal();
+    await loadTherapistPatientData(patient);
+  } catch (error) {
+    window.alert(error?.message || "Could not save rehabilitation plan.");
+  } finally {
+    isSavingTherapistRecord = false;
+  }
+}
+
+async function handleTherapySessionSubmit(event) {
+  event.preventDefault();
+  if (isSavingTherapistRecord) return;
+  const patient = getPatientById(activePatientId);
+  const content = addTherapySessionContentEl.value.trim();
+  if (!patient || !content) return;
+  if (!loggedInStaffId) {
+    window.alert("Your staff profile is missing a valid Staff ID.");
+    return;
+  }
+
+  isSavingTherapistRecord = true;
+  try {
+    await createTextHealthRecord({
+      userId: patient.patientId,
+      staffId: loggedInStaffId,
+      recordType: THERAPY_SESSION_RECORD_TYPE,
+      title: content,
+    });
+    closeAddTherapySessionModal();
+    await loadTherapistPatientData(patient);
+  } catch (error) {
+    window.alert(error?.message || "Could not save therapy session.");
+  } finally {
+    isSavingTherapistRecord = false;
+  }
+}
+
+function formatRegistrationDate(date) {
+  if (!date) return "—";
+  return date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+let adminMode = false;
+let accountStatusFilterMode = false;
+let showGenderContactReg = false;
+let showCondition = false;
+let showCaregiver = false;
+showHealthRecordsColumn = false;
+showMedicationsColumn = false;
+let showProfileColumn = false;
+let showActionsColumn = false;
+let showLastVisitColumn = false;
+
+function applyPatientsRoleUi(profile) {
+  const admin = isAdmin(profile?.role);
+  const doctor = isDoctor(profile?.role);
+  const therapist = isTherapist(profile?.role);
+  const clinicalListLayout = admin || doctor || therapist;
+
+  adminMode = admin;
+  accountStatusFilterMode = clinicalListLayout;
+
+  if (addPatientBtn) addPatientBtn.hidden = !admin;
+
+  if (admin) {
+    showGenderContactReg = true;
+    showCondition = false;
+    showCaregiver = false;
+    showLastVisitColumn = false;
+    showHealthRecordsColumn = false;
+    showMedicationsColumn = false;
+    showProfileColumn = false;
+    showActionsColumn = true;
+  } else if (doctor || therapist) {
+    showGenderContactReg = true;
+    showCondition = false;
+    showCaregiver = true;
+    showLastVisitColumn = false;
+    showHealthRecordsColumn = false;
+    showMedicationsColumn = false;
+    showProfileColumn = false;
+    showActionsColumn = false;
+  } else {
+    showGenderContactReg = false;
+    showCondition = true;
+    showCaregiver = true;
+    showLastVisitColumn = true;
+    showHealthRecordsColumn = true;
+    showMedicationsColumn = true;
+    showProfileColumn = true;
+    showActionsColumn = false;
+  }
+
+  document.querySelectorAll(".patients-col-gender, .patients-col-contact, .patients-col-registered").forEach((el) => {
+    el.hidden = !showGenderContactReg;
+  });
+  document.querySelectorAll(".patients-col-condition").forEach((el) => {
+    el.hidden = !showCondition;
+  });
+  document.querySelectorAll(".patients-col-caregiver").forEach((el) => {
+    el.hidden = !showCaregiver;
+  });
+  document.querySelectorAll(".patients-col-visit").forEach((el) => {
+    el.hidden = !showLastVisitColumn;
+  });
+  document.querySelectorAll(".patients-col-records").forEach((el) => {
+    el.hidden = !showHealthRecordsColumn;
+  });
+  document.querySelectorAll(".patients-col-meds").forEach((el) => {
+    el.hidden = !showMedicationsColumn;
+  });
+  document.querySelectorAll(".patients-col-profile").forEach((el) => {
+    el.hidden = !showProfileColumn;
+  });
+  document.querySelectorAll(".patients-col-actions").forEach((el) => {
+    el.hidden = !showActionsColumn;
+  });
+
+  applyPatientFilterTabs(clinicalListLayout);
+
+  const therapistSection = document.getElementById("therapist-section");
+  if (therapistSection) therapistSection.hidden = !therapist;
+
+  if (profileDeactivateBtn) profileDeactivateBtn.hidden = !admin;
+  if (profileUpdateBtn) profileUpdateBtn.hidden = !admin;
+  if (addHealthRecordBtn) addHealthRecordBtn.hidden = !(admin || doctor || therapist);
+
+  if (patientsBase.length > 0 || patients.length > 0) {
+    renderTable();
+  }
+}
+
+function setPatientsLoadingState(loading) {
+  patientsLoading = loading;
+  if (!countEl || !tbodyEl || !emptyEl) return;
+
+  if (loading) {
+    countEl.textContent = "Loading patients…";
+    emptyEl.hidden = true;
+    paginationEl.innerHTML = "";
+    tbodyEl.innerHTML = `
+      <tr class="patients-loading-row">
+        <td colspan="8">Loading patient records…</td>
+      </tr>`;
+    return;
+  }
+}
+
+function showPatientsInitError(message) {
+  if (countEl) countEl.textContent = "Could not load patients";
+  if (tbodyEl) tbodyEl.innerHTML = "";
+  if (emptyEl) {
+    emptyEl.textContent = message || "Could not initialize the patients page.";
+    emptyEl.hidden = false;
+  }
+}
+
+function initializePatientsPage(profile) {
+  if (!profile?.role) return;
+
+  try {
+    activePatientsStaffProfile = profile;
+    if (profile.name) loggedInStaffName = profile.name;
+    if (profile.role) loggedInStaffRole = profile.role;
+    if (profile.staffID) loggedInStaffId = profile.staffID;
+    if (profile.uid) loggedInStaffUid = profile.uid;
+
+    applyPatientsRoleUi(profile);
+
+    if (!patientsRealtimeStarted) {
+      patientsRealtimeStarted = true;
+      setPatientsLoadingState(true);
+      startPatientsRealtime();
+      return;
+    }
+
+    if (!patientsLoading) {
+      applyPatientsWithLastVisit();
+    }
+  } catch (error) {
+    console.error("Patients page init failed:", error);
+    showPatientsInitError(error?.message || "Could not initialize the patients page.");
+  }
+}
+
+function applyPatientsWithLastVisit() {
+  const scoped = filterPatientsForRole(patientsBase, activePatientsStaffProfile || {
+    role: loggedInStaffRole,
+    uid: loggedInStaffUid,
+  });
+  patients = scoped.map((patient) => ({
+    ...patient,
+    lastVisit: latestDoneVisitByUserId.has(patient.patientId)
+      ? formatVisitDate(latestDoneVisitByUserId.get(patient.patientId))
+      : "—",
+  }));
+  patientsLoading = false;
+  renderTable();
+}
 
 function startPatientsRealtime() {
   releaseFirestoreListener(unsubscribePatients);
+  releaseFirestoreListener(unsubscribeDoneVisits);
+
   unsubscribePatients = subscribePatients(
     (list) => {
-      patients = list;
-      renderTable();
+      patientsBase = list;
+      patientsLoading = false;
+      applyPatientsWithLastVisit();
     },
     (error) => {
+      patientsLoading = false;
+      patientsBase = [];
       patients = [];
       countEl.textContent = "Could not load patients";
       tbodyEl.innerHTML = "";
-      emptyEl.textContent =
-        error?.message || "Failed to load patients from Firestore.";
+      emptyEl.textContent = formatFirestoreError(error, "patients");
       emptyEl.hidden = false;
+    },
+  );
+
+  unsubscribeDoneVisits = subscribeLatestDoneVisits(
+    (visitMap) => {
+      latestDoneVisitByUserId = visitMap;
+      applyPatientsWithLastVisit();
+    },
+    (error) => {
+      console.warn("Could not load appointment visits:", error);
+      latestDoneVisitByUserId = new Map();
+      applyPatientsWithLastVisit();
     },
   );
 }
 
 function filterPatients() {
   const q = searchQuery.toLowerCase();
+  const usesAdminFilters = accountStatusFilterMode;
+  
   return patients.filter((patient) => {
-    if (isPatientAccountInactive(patient)) return false;
-    const matchesStatus =
-      statusFilter === "all" || patient.status === statusFilter;
+    if (!usesAdminFilters && isPatientAccountInactive(patient)) return false;
+
+    let matchesStatus = true;
+    if (statusFilter !== "all") {
+      if (usesAdminFilters) {
+        const isActive = normalizedAccountStatus(patient) === "Active";
+        matchesStatus =
+          (statusFilter === "active" && isActive) ||
+          (statusFilter === "inactive" && !isActive);
+      } else {
+        matchesStatus = patient.status === statusFilter;
+      }
+    }
+
     const haystack = `${patient.name} ${patient.patientId} ${patient.condition}`.toLowerCase();
     const matchesSearch = !q || haystack.includes(q);
     return matchesStatus && matchesSearch;
@@ -1258,19 +1763,23 @@ function filterPatients() {
 }
 
 function renderRow(patient) {
-  const ageDisplay =
-    typeof patient.age === "number" ? patient.age : patient.age;
+  const ageDisplay = typeof patient.age === "number" ? patient.age : patient.age;
+
   return `
     <tr data-id="${patient.id}">
-      <td>
-        <p class="cell-primary">${patient.name}</p>
-        <p class="cell-secondary">${patient.patientId}</p>
-      </td>
-      <td>${ageDisplay}</td>
-      <td>${patient.condition}</td>
-      <td>${patient.lastVisit}</td>
-      <td><span class="${patientStatusClass(patient.status)}">${statusLabel(patient.status)}</span></td>
-      <td>
+      <td class="patients-col-id"><p class="cell-primary">${escapeHtml(patient.patientId)}</p></td>
+      <td class="patients-col-name"><p class="cell-primary">${escapeHtml(patient.name)}</p></td>
+      <td class="patients-col-age">${ageDisplay}</td>
+      ${showGenderContactReg ? `
+      <td class="patients-col-gender">${escapeHtml(patient.gender || "—")}</td>
+      <td class="patients-col-contact">${escapeHtml(patient.phone || "—")}</td>
+      <td class="patients-col-registered">${formatRegistrationDate(patient.createdAt)}</td>
+      ` : ""}
+      ${showCondition ? `<td class="patients-col-condition">${escapeHtml(patient.condition)}</td>` : ""}
+      ${showCaregiver ? `<td class="patients-col-caregiver">${patient.assignedCaregiverName ? escapeHtml(patient.assignedCaregiverName) : '<span style="color:var(--gray-500)">None</span>'}</td>` : ""}
+      ${showLastVisitColumn ? `<td class="patients-col-visit">${escapeHtml(patient.lastVisit || "—")}</td>` : ""}
+      <td class="patients-col-status">${accountStatusBadgeHtml(patient)}</td>
+      ${showHealthRecordsColumn ? `<td class="patients-col-records">
         <button type="button" class="btn-view-records" data-patient-id="${patient.id}" aria-label="View health records for ${patient.name}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z" />
@@ -1278,8 +1787,8 @@ function renderRow(patient) {
           </svg>
           View
         </button>
-      </td>
-      <td>
+      </td>` : ""}
+      ${showMedicationsColumn ? `<td class="patients-col-meds">
         <button type="button" class="btn-view-records btn-view-medications" data-patient-id="${patient.id}" aria-label="View medications for ${patient.name}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M10.5 20.5l10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7z" />
@@ -1287,14 +1796,13 @@ function renderRow(patient) {
           </svg>
           View
         </button>
-      </td>
-      <td>
-        <button type="button" class="btn-profile-menu" data-patient-id="${patient.id}" aria-label="View profile for ${patient.name}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-      </td>
+      </td>` : ""}
+      ${showProfileColumn ? `<td class="table-actions patients-col-profile">
+        <button type="button" class="btn-secondary btn-sm btn-view-profile" data-patient-id="${patient.id}">Profile</button>
+      </td>` : ""}
+      ${showActionsColumn ? `<td class="table-actions patients-col-actions">
+        <button type="button" class="btn-secondary btn-sm btn-edit-patient" data-patient-id="${patient.id}">Edit</button>
+      </td>` : ""}
     </tr>
   `;
 }
@@ -1324,6 +1832,8 @@ function renderPagination(totalPages) {
 }
 
 function renderTable() {
+  if (!tbodyEl || !countEl || !emptyEl) return;
+
   const filtered = filterPatients();
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -1333,11 +1843,21 @@ function renderTable() {
   const start = (currentPage - 1) * PAGE_SIZE;
   const pageItems = filtered.slice(start, start + PAGE_SIZE);
 
+  if (patientsLoading && patientsBase.length === 0) {
+    setPatientsLoadingState(true);
+    return;
+  }
+
   countEl.textContent = `${total} patient${total === 1 ? "" : "s"}`;
-  emptyEl.textContent = "No patients match your search.";
 
   if (pageItems.length === 0) {
     tbodyEl.innerHTML = "";
+    const hasFilters = Boolean(searchQuery) || statusFilter !== "all";
+    emptyEl.textContent = hasFilters
+      ? "No patients match your search."
+      : patientsBase.length === 0
+        ? "No patient records yet."
+        : "No patients match the current filter.";
     emptyEl.hidden = false;
     paginationEl.innerHTML = "";
     return;
@@ -1356,18 +1876,12 @@ async function handleAddPatientSubmit(event) {
   addPatientErrorEl.hidden = true;
 
   const name = document.getElementById("add-patient-name").value.trim();
-  const email = document.getElementById("add-patient-email").value.trim();
   const birthDate = document.getElementById("add-patient-birthdate").value;
+  const gender = document.getElementById("add-patient-gender")?.value.trim() || "";
   const address = document.getElementById("add-patient-address").value.trim();
 
-  if (!name || !email || !birthDate || !address) {
+  if (!name || !birthDate || !address) {
     addPatientErrorEl.textContent = "Please fill in all fields.";
-    addPatientErrorEl.hidden = false;
-    return;
-  }
-
-  if (!email.includes("@")) {
-    addPatientErrorEl.textContent = "Please enter a valid email address.";
     addPatientErrorEl.hidden = false;
     return;
   }
@@ -1390,8 +1904,13 @@ async function handleAddPatientSubmit(event) {
   addPatientSubmitBtn.textContent = "Saving…";
 
   try {
-    await createPatient({ name, email, birthDate, address });
+    const result = await createPatient({ name, birthDate, address, gender });
     closeAddPatientModal();
+    openPatientPinSuccessModal({
+      userId: result?.userId,
+      onboardingPin: result?.onboardingPin,
+      pin: result?.pin,
+    });
     currentPage = 1;
   } catch (error) {
     const code = error?.code;
@@ -1411,7 +1930,7 @@ async function handleAddPatientSubmit(event) {
         <line x1="12" y1="5" x2="12" y2="19" />
         <line x1="5" y1="12" x2="19" y2="12" />
       </svg>
-      Add Profile`;
+      Add Patient`;
   }
 }
 
@@ -1428,7 +1947,18 @@ filterTabs.forEach((tab) => {
   });
 });
 
+function openPatientProfileForEdit(patientId) {
+  openPatientProfileModal(patientId);
+  handleProfileUpdateClick();
+}
+
 tbodyEl.addEventListener("click", (event) => {
+  const editBtn = event.target.closest(".btn-edit-patient");
+  if (editBtn) {
+    openPatientProfileForEdit(editBtn.dataset.patientId);
+    return;
+  }
+
   const profileBtn = event.target.closest(".btn-profile-menu");
   if (profileBtn) {
     openPatientProfileModal(profileBtn.dataset.patientId);
@@ -1447,21 +1977,21 @@ tbodyEl.addEventListener("click", (event) => {
   }
 });
 
-healthModalCloseBtn.addEventListener("click", closeHealthRecordsModal);
-medicationsCloseBtn.addEventListener("click", closeMedicationsModal);
-medicationsListEl.addEventListener("click", (event) => {
+  healthModalCloseBtn?.addEventListener("click", closeHealthRecordsModal);
+  medicationsCloseBtn?.addEventListener("click", closeMedicationsModal);
+medicationsListEl?.addEventListener("click", (event) => {
   const editBtn = event.target.closest(".btn-medication-edit");
   if (!editBtn?.dataset.medicationId) return;
   openEditMedicationModal(editBtn.dataset.medicationId);
 });
-document.getElementById("btn-add-medication").addEventListener("click", openAddMedicationModal);
-addMedicationCloseBtn.addEventListener("click", closeAddMedicationModal);
-addMedicationCancelMedBtn.addEventListener("click", handleCancelMedicationClick);
-addMedicationFormEl.addEventListener("submit", handleAddMedicationSubmit);
-addMedicationFrequencyEl.addEventListener("change", () => {
+  document.getElementById("btn-add-medication")?.addEventListener("click", openAddMedicationModal);
+addMedicationCloseBtn?.addEventListener("click", closeAddMedicationModal);
+addMedicationCancelMedBtn?.addEventListener("click", handleCancelMedicationClick);
+addMedicationFormEl?.addEventListener("submit", handleAddMedicationSubmit);
+addMedicationFrequencyEl?.addEventListener("change", () => {
   syncAddMedicationReminderTimes();
 });
-addMedicationStartEl.addEventListener("change", () => {
+addMedicationStartEl?.addEventListener("change", () => {
   syncAddMedicationDateConstraints(Boolean(editingMedicationId));
   if (
     addMedicationEndEl.value &&
@@ -1471,31 +2001,48 @@ addMedicationStartEl.addEventListener("change", () => {
     addMedicationEndEl.value = addMedicationEndEl.min;
   }
 });
-addMedicationModalEl.addEventListener("click", (event) => {
+addMedicationModalEl?.addEventListener("click", (event) => {
   if (event.target === addMedicationModalEl) closeAddMedicationModal();
 });
-modalListEl.addEventListener("click", (event) => {
+modalListEl?.addEventListener("click", async (event) => {
+  const viewBtn = event.target.closest(".btn-record-view");
+  if (viewBtn?.dataset.recordId) {
+    try {
+      const url = await getHealthRecordFileUrl(viewBtn.dataset.recordId);
+      if (!url) {
+        throw new Error("No file is attached to this record, or it could not be loaded.");
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      console.error(error);
+      addHealthRecordErrorEl.textContent =
+        error?.message || "Could not open the medical report.";
+      addHealthRecordErrorEl.hidden = false;
+    }
+    return;
+  }
+
   const editBtn = event.target.closest(".btn-record-edit");
   if (!editBtn?.dataset.recordId) return;
   openEditHealthRecordModal(editBtn.dataset.recordId);
 });
-document.getElementById("btn-add-health-record").addEventListener("click", openAddHealthRecordModal);
-addHealthRecordCloseBtn.addEventListener("click", closeAddHealthRecordModal);
-addHealthRecordFormEl.addEventListener("submit", handleHealthRecordFormSubmit);
-addHealthRecordTypeEl.addEventListener("change", () => {
+  document.getElementById("btn-add-health-record")?.addEventListener("click", openAddHealthRecordModal);
+addHealthRecordCloseBtn?.addEventListener("click", closeAddHealthRecordModal);
+addHealthRecordFormEl?.addEventListener("submit", handleHealthRecordFormSubmit);
+addHealthRecordTypeEl?.addEventListener("change", () => {
   syncHealthRecordTypeOtherField();
   if (addHealthRecordTypeEl.value === "Other") {
     addHealthRecordTypeOtherEl.focus();
   }
 });
 
-addHealthRecordTypeOtherEl.addEventListener("input", () => {
+addHealthRecordTypeOtherEl?.addEventListener("input", () => {
   const cleaned = addHealthRecordTypeOtherEl.value.replace(/[^A-Za-z0-9 ]/g, "");
   if (cleaned !== addHealthRecordTypeOtherEl.value) {
     addHealthRecordTypeOtherEl.value = cleaned;
   }
 });
-addHealthRecordFileEl.addEventListener("change", () => {
+addHealthRecordFileEl?.addEventListener("change", () => {
   const file = addHealthRecordFileEl.files[0];
   addHealthRecordErrorEl.hidden = true;
 
@@ -1517,51 +2064,51 @@ addHealthRecordFileEl.addEventListener("change", () => {
   addHealthRecordFileNameEl.textContent = file.name;
   addHealthRecordFileNameEl.classList.add("has-file");
 });
-profileCloseBtn.addEventListener("click", closePatientProfileModal);
+profileCloseBtn?.addEventListener("click", closePatientProfileModal);
 
-healthModalEl.addEventListener("click", (event) => {
-  if (event.target === healthModalEl) closeHealthRecordsModal();
-});
 
-medicationsModalEl.addEventListener("click", (event) => {
-  if (event.target === medicationsModalEl) closeMedicationsModal();
-});
 
-addHealthRecordModalEl.addEventListener("click", (event) => {
+addHealthRecordModalEl?.addEventListener("click", (event) => {
   if (event.target === addHealthRecordModalEl) closeAddHealthRecordModal();
 });
 
-profileModalEl.addEventListener("click", (event) => {
+profileModalEl?.addEventListener("click", (event) => {
   if (event.target === profileModalEl) closePatientProfileModal();
 });
 
-addPatientBtn.addEventListener("click", openAddPatientModal);
-addPatientCloseBtn.addEventListener("click", closeAddPatientModal);
-addPatientFormEl.addEventListener("submit", handleAddPatientSubmit);
+addPatientBtn?.addEventListener("click", openAddPatientModal);
+addPatientCloseBtn?.addEventListener("click", closeAddPatientModal);
+addPatientFormEl?.addEventListener("submit", handleAddPatientSubmit);
+patientPinSuccessCloseBtn?.addEventListener("click", closePatientPinSuccessModal);
+patientPinSuccessDoneBtn?.addEventListener("click", closePatientPinSuccessModal);
+patientPinSuccessModalEl?.addEventListener("click", (event) => {
+  if (event.target === patientPinSuccessModalEl) closePatientPinSuccessModal();
+});
 
-addPatientModalEl.addEventListener("click", (event) => {
+addPatientModalEl?.addEventListener("click", (event) => {
   if (event.target === addPatientModalEl) closeAddPatientModal();
 });
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (!addMedicationModalEl.hidden) closeAddMedicationModal();
+  else if (!addRehabPlanModalEl?.hidden) closeAddRehabPlanModal();
+  else if (!addTherapySessionModalEl?.hidden) closeAddTherapySessionModal();
   else if (!addHealthRecordModalEl.hidden) closeAddHealthRecordModal();
   else if (!profileModalEl.hidden) {
     if (isProfileEditing) handleProfileCancelEdit();
     else closePatientProfileModal();
-  } else if (!healthModalEl.hidden) closeHealthRecordsModal();
-  else if (!medicationsModalEl.hidden) closeMedicationsModal();
+  } else if (!patientPinSuccessModalEl?.hidden) closePatientPinSuccessModal();
   else if (!addPatientModalEl.hidden) closeAddPatientModal();
 });
 
-profileUpdateBtn.addEventListener("click", handleProfileUpdateClick);
-profileSaveBtn.addEventListener("click", handleProfileSaveClick);
-profileCancelBtn.addEventListener("click", handleProfileCancelEdit);
+profileUpdateBtn?.addEventListener("click", handleProfileUpdateClick);
+profileSaveBtn?.addEventListener("click", handleProfileSaveClick);
+profileCancelBtn?.addEventListener("click", handleProfileCancelEdit);
 
 const OPEN_COMMUNICATION_PATIENT_KEY = "auraOpenCommunicationPatientId";
 
-document.getElementById("patient-profile-message").addEventListener("click", () => {
+document.getElementById("patient-profile-message")?.addEventListener("click", () => {
   const patient = getPatientById(activePatientId);
   if (!patient?.patientId || patient.patientId === "—") {
     window.alert("Patient User ID is missing.");
@@ -1571,13 +2118,47 @@ document.getElementById("patient-profile-message").addEventListener("click", () 
   window.location.href = `communication.html?patient=${encodeURIComponent(patient.patientId)}`;
 });
 
-profileDeactivateBtn.addEventListener("click", handleProfileDeactivateClick);
+profileDeactivateBtn?.addEventListener("click", handleProfileDeactivateClick);
 
-document.getElementById("add-patient-birthdate").max = todayDateString();
-
-initStaffAuth((profile) => {
-  if (profile?.name) loggedInStaffName = profile.name;
-  if (profile?.role) loggedInStaffRole = profile.role;
-  if (profile?.staffID) loggedInStaffId = profile.staffID;
-  startPatientsRealtime();
+document.querySelectorAll(".clinical-tab").forEach((button) => {
+  button.addEventListener("click", () => {
+    switchClinicalTab(button.dataset.tab || "health-records");
+  });
 });
+document.getElementById("btn-add-rehab-plan")?.addEventListener("click", openAddRehabPlanModal);
+document.getElementById("btn-add-therapy-session")?.addEventListener("click", openAddTherapySessionModal);
+document.getElementById("btn-add-health-record-tab")?.addEventListener("click", openAddHealthRecordModal);
+document.getElementById("btn-add-medication-tab")?.addEventListener("click", openAddMedicationModal);
+addRehabPlanCloseBtn?.addEventListener("click", closeAddRehabPlanModal);
+addTherapySessionCloseBtn?.addEventListener("click", closeAddTherapySessionModal);
+addRehabPlanFormEl?.addEventListener("submit", handleRehabPlanSubmit);
+addTherapySessionFormEl?.addEventListener("submit", handleTherapySessionSubmit);
+addRehabPlanModalEl?.addEventListener("click", (event) => {
+  if (event.target === addRehabPlanModalEl) closeAddRehabPlanModal();
+});
+addTherapySessionModalEl?.addEventListener("click", (event) => {
+  if (event.target === addTherapySessionModalEl) closeAddTherapySessionModal();
+});
+
+document.getElementById("add-patient-birthdate")?.setAttribute("max", todayDateString());
+
+window.addEventListener("error", (event) => {
+  if (countEl) {
+    countEl.textContent = "Could not load patients";
+  }
+  console.error("Patients page error:", event.message, event.filename, event.lineno);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  if (countEl) {
+    countEl.textContent = "Could not load patients";
+  }
+  console.error("Patients page async error:", event.reason);
+});
+
+initStaffAuth(initializePatientsPage);
+
+const cachedStaffProfile = getStaffSession();
+if (cachedStaffProfile?.role) {
+  initializePatientsPage(cachedStaffProfile);
+}

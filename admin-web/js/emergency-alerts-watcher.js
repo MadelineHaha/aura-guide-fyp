@@ -208,7 +208,12 @@ async function refreshBanner(alerts) {
 
 let unsubscribe = null;
 
+let watcherStarted = false;
+
 export function initEmergencyAlertsWatcher() {
+  if (watcherStarted) return;
+  watcherStarted = true;
+
   sessionStorage.removeItem("emergencyAlertsSeenIds");
 
   releaseFirestoreListener(unsubscribe);
@@ -230,4 +235,5 @@ export function initEmergencyAlertsWatcher() {
 export function stopEmergencyAlertsWatcher() {
   releaseFirestoreListener(unsubscribe);
   unsubscribe = null;
+  watcherStarted = false;
 }

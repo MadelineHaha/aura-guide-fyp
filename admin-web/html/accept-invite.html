@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Accept Invitation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body>
+  <main class="login-page">
+    <header class="header">
+      <div class="header-top">
+        <img class="logo" src="../assets/images/logo.png" alt="" width="52" height="52" />
+        <h1 class="header-title">Accept Invitation</h1>
+      </div>
+      <p class="header-subtitle" id="invite-subtitle">Please set a password for your new account.</p>
+    </header>
+
+    <div id="loading-container" style="text-align: center; padding: 2rem;">
+      <p>Verifying link...</p>
+    </div>
+
+    <form class="login-form" id="accept-form" action="#" method="post" novalidate hidden>
+      <div class="field-group">
+        <label class="field-label" for="password">New Password</label>
+        <div class="input-wrapper">
+          <span class="input-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="5" y="11" width="14" height="10" rx="2" />
+              <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+            </svg>
+          </span>
+          <input
+            class="field-input"
+            type="password"
+            id="password"
+            name="password"
+            placeholder="Enter a strong password"
+            autocomplete="new-password"
+            required
+            minlength="8"
+          />
+        </div>
+      </div>
+
+      <p class="login-error" id="form-error" role="alert" hidden></p>
+      <p class="login-success" id="form-success" role="status" style="color: green;" hidden></p>
+
+      <button type="submit" class="btn-sign-in" id="submit-btn">Set Password & Create Account</button>
+    </form>
+  </main>
+
+  <script type="module" src="../js/accept-invite.js"></script>
+</body>
+</html>

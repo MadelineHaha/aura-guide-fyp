@@ -101,9 +101,13 @@ export function getBusyCaregiverIds(alerts, { excludeAlertId = null } = {}) {
 
 export function mapEmergencyAlertDoc(docSnap) {
   const data = docSnap.data() || {};
-  const alertId =
-    readField(data, "AlertID", "alertId") || String(docSnap.id || "").trim();
-  if (!ALERT_ID_PATTERN.test(alertId)) return null;
+  const docId = String(docSnap.id || "").trim();
+  let alertId = readField(data, "AlertID", "alertId") || docId;
+  if (!alertId) return null;
+
+  if (!ALERT_ID_PATTERN.test(alertId) && ALERT_ID_PATTERN.test(docId)) {
+    alertId = docId;
+  }
 
   const userId =
     readField(data, "UserID", "userId") ||
@@ -360,4 +364,24 @@ export async function resolveEmergencyAlert(
     details: `Resolved alert ${id}: ${notes}`,
     type: "info",
   });
+}
+
+/** Emergency history for a single patient (therapist profile view). */
+export async function fetchEmergencyAlertsByUserId(userId) {
+  const trimmedUserId = String(userId || "").trim();
+  if (!trimmedUserId) return [];
+
+  const snap = await getDocs(
+    query(
+      collection(db, EMERGENCY_ALERTS_COLLECTION),
+      where("userId", "==", trimmedUserId),
+    ),
+  );
+
+  const alerts = snap.docs.map(mapEmergencyAlertDoc).filter(Boolean);
+  return alerts.sort((a, b) =>
+    String(b.dateTimeLabel || b.dateTime || "").localeCompare(
+      String(a.dateTimeLabel || a.dateTime || ""),
+    ),
+  );
 }

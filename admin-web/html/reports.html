@@ -20,13 +20,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
       <nav class="staff-nav-links" aria-label="Main">
-        <a class="staff-nav-link" href="dashboard.html">Dashboard</a>
-        <a class="staff-nav-link" href="appointments.html">Appointments</a>
-        <a class="staff-nav-link" href="patients.html">Patients</a>
-        <a class="staff-nav-link" href="emergencies.html">Emergencies</a>
-        <a class="staff-nav-link is-active" href="reports.html">Reports</a>
-        <a class="staff-nav-link" href="communication.html">Communication</a>
-        <a class="staff-nav-link" href="logs.html">Logs</a>
+        <!-- Dynamically injected by staff-shell.js -->
       </nav>
       <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--next" aria-label="Scroll navigation right">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
@@ -52,68 +46,116 @@
       </div>
       <div class="reports-export-actions">
         <button type="button" class="btn-secondary" id="btn-export-csv">Export CSV</button>
-        <button type="button" class="btn-primary" id="btn-export-pdf">Export PDF</button>
+        <button type="button" class="btn-primary btn-quick-action" id="btn-export-pdf">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          Export PDF
+        </button>
       </div>
     </header>
 
+    <div class="reports-print-header" id="reports-print-header">
+      <p class="reports-print-brand">Aura Guide — Reports &amp; Analytics</p>
+      <p class="reports-print-meta" id="reports-print-meta">—</p>
+    </div>
+
     <div class="reports-filters">
-      <span class="reports-filters-label">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
-        </svg>
-        Filters
-      </span>
-      <div class="filter-tabs" role="tablist" aria-label="Report time range">
-        <button type="button" class="filter-tab is-active" data-range="0">All Time</button>
-        <button type="button" class="filter-tab" data-range="3">Last 3 Months</button>
-        <button type="button" class="filter-tab" data-range="6">Last 6 Months</button>
+      <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap; flex: 1;">
+        <span class="reports-filters-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+          </svg>
+          Range:
+        </span>
+        <div class="filter-tabs" role="tablist" aria-label="Report time range">
+          <button type="button" class="filter-tab is-active" data-range="0">All Time</button>
+          <button type="button" class="filter-tab" data-range="3">Last 3 Months</button>
+          <button type="button" class="filter-tab" data-range="6">Last 6 Months</button>
+        </div>
       </div>
     </div>
 
-    <section class="reports-section table-card" aria-labelledby="user-activity-heading">
-      <div class="reports-section-header">
-        <h2 class="panel-title" id="user-activity-heading">User Activity</h2>
-        <p class="reports-section-meta" id="user-activity-count">—</p>
-      </div>
-      <div class="table-scroll">
-        <table class="data-table reports-activity-table">
-          <thead>
-            <tr>
-              <th scope="col">Patient</th>
-              <th scope="col" id="steps-column-heading" title="Daily step totals synced from each patient's mobile device">Avg. Steps / Day</th>
-              <th scope="col">Med. Adherence</th>
-              <th scope="col">Appointments</th>
-              <th scope="col">Last Active</th>
-            </tr>
-          </thead>
-          <tbody id="user-activity-body">
-            <tr><td colspan="5" class="table-empty">Loading report data…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="reports-section table-card" aria-labelledby="health-trend-heading">
+    <section class="reports-section table-card" aria-labelledby="patient-growth-heading">
       <div class="reports-section-header">
         <div>
-          <h2 class="panel-title" id="health-trend-heading">Health Trend</h2>
-          <p class="reports-chart-note">Steps, Medication &amp; Appointment Rate Over Time</p>
-          <p class="reports-chart-subnote">Upward curves indicate improvement. Steps shown in hundreds.</p>
+          <h2 class="panel-title" id="patient-growth-heading">Patient &amp; Staff Growth Reports</h2>
+          <p class="reports-chart-description">Cumulative registrations by role across the selected time range.</p>
         </div>
       </div>
-      <div class="reports-chart-wrap">
-        <canvas id="health-trend-chart" aria-label="Health trend line chart"></canvas>
+      <div class="stat-cards reports-growth-stats">
+        <article class="stat-card">
+          <p class="stat-card-label">Total Patients</p>
+          <p class="stat-card-value" id="patient-growth-total">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Total Staff</p>
+          <p class="stat-card-value" id="staff-growth-total">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Doctors</p>
+          <p class="stat-card-value" id="doctor-growth-total">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Therapists</p>
+          <p class="stat-card-value" id="therapist-growth-total">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Caregivers</p>
+          <p class="stat-card-value" id="caregiver-growth-total">—</p>
+        </article>
       </div>
+      <div class="reports-chart-wrap">
+        <canvas id="patient-growth-chart" aria-label="Patient growth trend chart"></canvas>
+      </div>
+      <ul class="reports-chart-key" id="patient-growth-chart-key" aria-label="Patient growth chart legend"></ul>
+      <p class="reports-chart-overlap-note" id="patient-growth-overlap-note" hidden>
+        When counts match, each series uses a distinct color and marker shape. End labels are offset from the line for readability.
+      </p>
     </section>
 
-    <section class="reports-section" aria-labelledby="emergency-analytics-heading">
+
+    <section class="reports-section table-card" aria-labelledby="appointment-reports-heading">
+      <div class="reports-section-header">
+        <div>
+          <h2 class="panel-title" id="appointment-reports-heading">Appointment Reports</h2>
+          <p class="reports-chart-description">Monthly attendance and missed appointment rates as percentages.</p>
+        </div>
+      </div>
+      <div class="stat-cards reports-appointment-stats">
+        <article class="stat-card">
+          <p class="stat-card-label">Attendance Rate</p>
+          <p class="stat-card-value" id="appointment-attendance-rate">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Missed Appointment Rate</p>
+          <p class="stat-card-value" id="appointment-missed-rate">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Total Appointments</p>
+          <p class="stat-card-value" id="appointment-total-scheduled">—</p>
+        </article>
+      </div>
+      <div class="reports-chart-wrap">
+        <canvas id="appointment-reports-chart" aria-label="Appointment attendance and missed rate chart"></canvas>
+      </div>
+      <ul class="reports-chart-key" id="appointment-reports-chart-key" aria-label="Appointment chart legend"></ul>
+    </section>
+
+    <section class="reports-section reports-section--emergency" aria-labelledby="emergency-analytics-heading">
       <div class="reports-section-header reports-section-header--standalone">
-        <h2 class="panel-title" id="emergency-analytics-heading">Emergency Case Analytics</h2>
+        <div>
+          <h2 class="panel-title" id="emergency-analytics-heading">Emergency Reports</h2>
+          <p class="reports-section-meta">Frequency, response time, and resolution rate</p>
+          <p class="reports-chart-description">Monthly emergency alert volume, response, and resolution trends.</p>
+        </div>
       </div>
       <div class="reports-emergency-stats">
         <article class="reports-emergency-stat reports-emergency-stat--alerts">
           <p class="reports-emergency-stat-value" id="emergency-total-alerts">—</p>
-          <p class="reports-emergency-stat-label">Total Alerts</p>
+          <p class="reports-emergency-stat-label">Total Alerts (Frequency)</p>
         </article>
         <article class="reports-emergency-stat reports-emergency-stat--responded">
           <p class="reports-emergency-stat-value" id="emergency-responded">—</p>
@@ -122,6 +164,10 @@
         <article class="reports-emergency-stat reports-emergency-stat--resolved">
           <p class="reports-emergency-stat-value" id="emergency-resolved">—</p>
           <p class="reports-emergency-stat-label">Resolved</p>
+        </article>
+        <article class="reports-emergency-stat reports-emergency-stat--rate">
+          <p class="reports-emergency-stat-value" id="emergency-resolution-rate">—</p>
+          <p class="reports-emergency-stat-label">Resolution Rate</p>
         </article>
         <article class="reports-emergency-stat reports-emergency-stat--response">
           <p class="reports-emergency-stat-value" id="emergency-avg-response">—</p>
@@ -133,33 +179,14 @@
           <canvas id="emergency-bar-chart" aria-label="Emergency case monthly bar chart"></canvas>
         </div>
       </div>
+      <ul class="reports-chart-key" id="emergency-bar-chart-key" aria-label="Emergency chart legend"></ul>
     </section>
 
-    <section class="reports-section table-card" aria-labelledby="health-outcomes-heading">
-      <div class="reports-section-header">
-        <h2 class="panel-title" id="health-outcomes-heading">Health Outcomes Summary</h2>
-      </div>
-      <div class="table-scroll">
-        <table class="data-table reports-outcomes-table">
-          <thead>
-            <tr>
-              <th scope="col">Metric</th>
-              <th scope="col" id="outcomes-baseline-col">—</th>
-              <th scope="col" id="outcomes-latest-col">—</th>
-              <th scope="col">Improvement</th>
-            </tr>
-          </thead>
-          <tbody id="health-outcomes-body">
-            <tr><td colspan="4" class="table-empty">Loading outcomes…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
 
     <p class="table-empty" id="reports-error" hidden>Could not load report data.</p>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script type="module" src="../js/reports.js"></script>
+  <script type="module" src="../js/reports.js?v=7"></script>
 </body>
 </html>

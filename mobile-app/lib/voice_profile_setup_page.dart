@@ -5,13 +5,20 @@ import 'l10n/app_localizations.dart';
 import 'auth_session.dart';
 import 'models/voice_capture_result.dart';
 import 'services/voice_passphrase_controller.dart';
+import 'services/patient_onboarding_service.dart';
 import 'services/voice_profile_service.dart';
 import 'widgets/app_back_button.dart';
 import 'widgets/voice_record_button.dart';
 
-/// Lets a signed-in user record and save a voice profile to Firestore.
 class VoiceProfileSetupPage extends StatefulWidget {
-  const VoiceProfileSetupPage({super.key});
+  const VoiceProfileSetupPage({
+    super.key,
+    this.completeOnboarding = false,
+    this.welcomeName = '',
+  });
+
+  final bool completeOnboarding;
+  final String welcomeName;
 
   @override
   State<VoiceProfileSetupPage> createState() => _VoiceProfileSetupPageState();
@@ -19,6 +26,7 @@ class VoiceProfileSetupPage extends StatefulWidget {
 
 class _VoiceProfileSetupPageState extends State<VoiceProfileSetupPage> {
   final _voiceProfiles = VoiceProfileService();
+  final _onboarding = PatientOnboardingService();
   late final VoicePassphraseController _controller;
   bool _saving = false;
   String? _statusMessage;
@@ -55,10 +63,15 @@ class _VoiceProfileSetupPageState extends State<VoiceProfileSetupPage> {
         voiceprintVector: result.voiceprintVector,
         voiceFeatures: result.voiceFeatures,
       );
+      if (widget.completeOnboarding) {
+        await _onboarding.completeOnboarding();
+      }
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _statusMessage = l10n.t('voiceRegistrationSetupCompleted');
+        _statusMessage = widget.completeOnboarding
+            ? l10n.t('patientOnboardingVoiceComplete')
+            : l10n.t('voiceRegistrationSetupCompleted');
       });
     } catch (e) {
       if (!mounted) return;
@@ -94,8 +107,12 @@ class _VoiceProfileSetupPageState extends State<VoiceProfileSetupPage> {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    const instructions =
-        'Double tap the button below and say Sign me in. Your voice profile will be saved to your account.';
+    final instructions = widget.completeOnboarding
+        ? l10n.t('patientOnboardingVoicePrompt')
+        : 'Double tap the button below and say Sign me in. Your voice profile will be saved to your account.';
+    final title = widget.completeOnboarding
+        ? l10n.t('patientOnboardingVoiceTitle')
+        : l10n.t('voiceLogin');
 
     return Scaffold(
       backgroundColor: _bg,
@@ -108,7 +125,7 @@ class _VoiceProfileSetupPageState extends State<VoiceProfileSetupPage> {
         leadingWidth: AppBackButton.appBarLeadingWidth,
         leading: const AppBackButton(),
         title: Text(
-          l10n.t('voiceLogin'),
+          title,
           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
         ),
       ),
@@ -118,12 +135,24 @@ class _VoiceProfileSetupPageState extends State<VoiceProfileSetupPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (widget.completeOnboarding && widget.welcomeName.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  l10n.t('patientOnboardingWelcome', {'name': widget.welcomeName}),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
               const SizedBox(height: 36),
               Semantics(
                 header: true,
-                label: l10n.t('voiceLogin'),
+                label: title,
                 child: Text(
-                  l10n.t('voiceLogin'),
+                  title,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: Colors.white,
@@ -151,6 +180,7 @@ class _VoiceProfileSetupPageState extends State<VoiceProfileSetupPage> {
                     heardPreview: _controller.heardPreview,
                     accessibilityMessage: _controller.accessibilityMessage,
                     onActivate: _startRecording,
+                    onStop: _controller.stopRecording,
                   );
                 },
               ),

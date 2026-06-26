@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
@@ -29,11 +30,64 @@ class MedicationsService {
 
   static const _medications = 'medications';
   static const _reminders = 'medicationreminders';
-  static const _reminderCounterPath = 'system/medicationReminderCounter';
 
   static String? _lastEnsurePatientId;
   static DateTime? _lastEnsureAt;
   static Future<int>? _ensureInFlight;
+
+  static DateTime? _lastDailySyncAt;
+  static const _dailySyncThrottle = Duration(minutes: 5);
+
+  static Future<void> _syncDailyReminderInstances() async {
+    final now = DateTime.now();
+    if (_lastDailySyncAt != null &&
+        now.difference(_lastDailySyncAt!) < _dailySyncThrottle) {
+      return;
+    }
+    _lastDailySyncAt = now;
+    try {
+      await FirebaseFunctions.instance
+          .httpsCallable('syncDailyMedicationReminders')
+          .call();
+    } catch (error, stack) {
+      debugPrint('syncDailyMedicationReminders failed: $error\n$stack');
+    }
+  }
+
+  /// Today's dose cards: daily rows first, then slot templates not yet instanced.
+  List<MedicationReminderEntity> _todayDoseReminders(
+    List<MedicationReminderEntity> reminders,
+    String today,
+    Map<String, MedicationEntity> medsById,
+  ) {
+    final dailyToday = reminders
+        .where((r) => r.isDailyInstance && r.doseDate == today)
+        .toList();
+    final coveredSlots = dailyToday
+        .map((d) => d.slotReminderId)
+        .where((id) => id.isNotEmpty)
+        .toSet();
+
+    final result = <MedicationReminderEntity>[...dailyToday];
+
+    for (final slot in reminders.where((r) => !r.isDailyInstance)) {
+      if (coveredSlots.contains(slot.reminderId)) continue;
+      final medication = medsById[slot.medicationId];
+      if (medication != null &&
+          (medication.isCancelled || !medication.isActiveOnDate(today))) {
+        continue;
+      }
+      if (!_isDueToday(slot, today)) continue;
+      result.add(slot);
+    }
+
+    result.sort((a, b) => a.reminderTime.compareTo(b.reminderTime));
+    return result;
+  }
+
+  static String? _lastStatusSyncPatient;
+  static DateTime? _lastStatusSyncAt;
+  static const _statusSyncThrottle = Duration(seconds: 20);
 
   static int reminderCountForFrequency(String frequency) {
     switch (frequency.trim()) {
@@ -48,79 +102,6 @@ class MedicationsService {
     }
   }
 
-  static String repeatPatternForFrequency(String frequency) {
-    return frequency.trim() == 'Weekly' ? 'Weekly' : 'Daily';
-  }
-
-  static List<String> defaultReminderTimesForFrequency(String frequency) {
-    switch (frequency.trim()) {
-      case 'Twice daily':
-        return const ['08:00', '20:00'];
-      case 'Three times daily':
-        return const ['08:00', '14:00', '20:00'];
-      case 'Once daily':
-      case 'Weekly':
-      default:
-        return const ['08:00'];
-    }
-  }
-
-  static List<String> pickMissingReminderTimes({
-    required List<String> existingTimes,
-    required String frequency,
-    required int countNeeded,
-  }) {
-    if (countNeeded <= 0) return const [];
-
-    final defaults = defaultReminderTimesForFrequency(frequency);
-    final missing = <String>[];
-    for (final time in defaults) {
-      if (missing.length >= countNeeded) break;
-      if (!existingTimes.contains(time)) missing.add(time);
-    }
-
-    var index = 0;
-    while (missing.length < countNeeded && defaults.isNotEmpty) {
-      final time = defaults[index % defaults.length];
-      if (!existingTimes.contains(time) && !missing.contains(time)) {
-        missing.add(time);
-      }
-      index += 1;
-      if (index > defaults.length * 4) break;
-    }
-    return missing;
-  }
-
-  static String _clockFromTimestamp(Timestamp ts) {
-    final clinic = ClinicDateTime.fromFirestore(ts);
-    if (clinic == null) return '08:00';
-    return '${clinic.hour.toString().padLeft(2, '0')}:'
-        '${clinic.minute.toString().padLeft(2, '0')}';
-  }
-
-  static String _reminderTimeLabel(DateTime clinic) {
-    final y = clinic.year;
-    final m = clinic.month.toString().padLeft(2, '0');
-    final d = clinic.day.toString().padLeft(2, '0');
-    final hh = clinic.hour.toString().padLeft(2, '0');
-    final mm = clinic.minute.toString().padLeft(2, '0');
-    final ss = clinic.second.toString().padLeft(2, '0');
-    return '$y-$m-$d $hh:$mm:$ss';
-  }
-
-  static Timestamp _timestampFromDateAndTime(String dateYmd, String timeHm) {
-    final dateParts = dateYmd.split('-');
-    final timeParts = timeHm.split(':');
-    final clinic = DateTime(
-      int.parse(dateParts[0]),
-      int.parse(dateParts[1]),
-      int.parse(dateParts[2]),
-      int.parse(timeParts[0]),
-      int.parse(timeParts[1]),
-    );
-    return ClinicDateTime.toTimestamp(clinic);
-  }
-
   /// Ensures every medication has the required medicationreminders rows.
   Future<int> ensureRemindersForPatient(String patientId) async {
     final trimmedId = patientId.trim();
@@ -130,7 +111,9 @@ class MedicationsService {
     if (_ensureInFlight != null) {
       return _ensureInFlight!;
     }
-    if (_lastEnsurePatientId == trimmedId &&
+    final needsEnsure = await _patientNeedsSlotEnsure(trimmedId);
+    if (!needsEnsure &&
+        _lastEnsurePatientId == trimmedId &&
         _lastEnsureAt != null &&
         now.difference(_lastEnsureAt!) < const Duration(seconds: 20)) {
       return 0;
@@ -147,110 +130,59 @@ class MedicationsService {
   }
 
   Future<int> _ensureRemindersForPatient(String patientId) async {
+    try {
+      final result = await FirebaseFunctions.instance
+          .httpsCallable('ensureMedicationSlotReminders')
+          .call();
+      final data = result.data;
+      if (data is Map) {
+        final created = (data['created'] as num?)?.toInt() ?? 0;
+        if (created > 0) {
+          debugPrint(
+            'MedicationsService ensured $created medication slot(s) for $patientId',
+          );
+          unawaited(MedicationLocalReminderService.instance.syncSchedules());
+        }
+        return created;
+      }
+    } catch (error, stack) {
+      debugPrint('ensureMedicationSlotReminders failed: $error\n$stack');
+    }
+    return 0;
+  }
+
+  Future<bool> _patientNeedsSlotEnsure(String patientId) async {
     final medsSnap = await _firestore
         .collection(_medications)
         .where('userId', isEqualTo: patientId)
         .get();
-    if (medsSnap.docs.isEmpty) return 0;
+    if (medsSnap.docs.isEmpty) return false;
 
     final remindersSnap = await _firestore
         .collection(_reminders)
         .where('userId', isEqualTo: patientId)
         .get();
 
-    final remindersByMed = <String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>{};
+    final slotsByMed = <String, int>{};
     for (final doc in remindersSnap.docs) {
+      final dose = (doc.data()['doseDate'] as String?)?.trim() ?? '';
+      if (dose.isNotEmpty) continue;
       final medId = (doc.data()['medicationId'] as String?)?.trim() ?? '';
       if (medId.isEmpty) continue;
-      remindersByMed.putIfAbsent(medId, () => []).add(doc);
+      slotsByMed[medId] = (slotsByMed[medId] ?? 0) + 1;
     }
 
-    var created = 0;
-    await _firestore.runTransaction((transaction) async {
-      final counterRef = _firestore.doc(_reminderCounterPath);
-      final counterSnap = await transaction.get(counterRef);
-      var remNext = counterSnap.exists
-          ? (counterSnap.data()?['next'] as num?)?.toInt() ?? 1
-          : 1;
-
-      for (final medDoc in medsSnap.docs) {
-        final med = medDoc.data();
-        final medicationId =
-            (med['medicationId'] as String?)?.trim() ?? medDoc.id;
-        if (medicationId.isEmpty) continue;
-
-        final frequency = (med['frequency'] as String?)?.trim() ?? 'Once daily';
-        final status = (med['status'] as String?)?.trim() ?? MedicationEntity.statusActive;
-        if (status == MedicationEntity.statusCancelled) continue;
-
-        final expectedCount = reminderCountForFrequency(frequency);
-        final existingDocs = remindersByMed[medicationId] ?? [];
-        if (existingDocs.length >= expectedCount) continue;
-
-        final existingTimes = existingDocs
-            .map((doc) => _clockFromTimestamp(doc.data()['reminderTime'] as Timestamp))
-            .toList()
-          ..sort();
-        final timesToAdd = pickMissingReminderTimes(
-          existingTimes: existingTimes,
-          frequency: frequency,
-          countNeeded: expectedCount - existingTimes.length,
-        );
-        if (timesToAdd.isEmpty) continue;
-
-        final startDate =
-            (med['startDate'] as String?)?.trim() ?? todayDateString();
-        final repeatPattern = repeatPatternForFrequency(frequency);
-        final name = (med['name'] as String?)?.trim() ?? '';
-        final dosage = (med['dosage'] as String?)?.trim() ?? '';
-        final message = name.isNotEmpty && dosage.isNotEmpty
-            ? 'Take $name — $dosage'
-            : 'Medication reminder for ${name.isNotEmpty ? name : medicationId}';
-        final staffId =
-            (med['staffId'] as String?)?.trim() ??
-            (med['staffID'] as String?)?.trim() ??
-            '';
-        if (staffId.isEmpty) continue;
-
-        for (final reminderTime in timesToAdd) {
-          final reminderId = 'R${remNext.toString().padLeft(5, '0')}';
-          remNext += 1;
-          created += 1;
-
-          final ts = _timestampFromDateAndTime(startDate, reminderTime);
-          final clinic = ClinicDateTime.fromFirestore(ts);
-          final reminderLabel =
-              clinic != null ? _reminderTimeLabel(clinic) : '';
-
-          transaction.set(_firestore.collection(_reminders).doc(reminderId), {
-            'reminderId': reminderId,
-            'reminderTime': ts,
-            'reminderTimeLabel': reminderLabel,
-            'reminderType': MedicationReminderEntity.typeNotification,
-            'reminderMessage': message,
-            'repeatPattern': repeatPattern,
-            'status': MedicationReminderEntity.statusPending,
-            'medicationId': medicationId,
-            'userId': patientId,
-            'staffId': staffId,
-            'completedDate': '',
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-        }
-      }
-
-      if (created > 0) {
-        transaction.set(counterRef, {'next': remNext}, SetOptions(merge: true));
-      }
-    });
-
-    if (created > 0) {
-      debugPrint(
-        'MedicationsService created $created medication reminder(s) for $patientId',
-      );
-      unawaited(MedicationLocalReminderService.instance.syncSchedules());
+    for (final medDoc in medsSnap.docs) {
+      final med = medDoc.data();
+      final status = (med['status'] as String?)?.trim() ?? MedicationEntity.statusActive;
+      if (status == MedicationEntity.statusCancelled) continue;
+      final medicationId =
+          (med['medicationId'] as String?)?.trim() ?? medDoc.id;
+      final frequency = (med['frequency'] as String?)?.trim() ?? 'Once daily';
+      final expected = reminderCountForFrequency(frequency);
+      if ((slotsByMed[medicationId] ?? 0) < expected) return true;
     }
-    return created;
+    return false;
   }
 
   void _clearStreamCache() {
@@ -263,6 +195,112 @@ class MedicationsService {
     final m = d.month.toString().padLeft(2, '0');
     final day = d.day.toString().padLeft(2, '0');
     return '$y-$m-$day';
+  }
+
+  /// Rolls over daily reminders and marks overdue doses as Missed in Firestore.
+  Future<void> syncTodayReminderStatuses(String patientId) async {
+    final trimmedId = patientId.trim();
+    if (trimmedId.isEmpty) return;
+
+    final now = DateTime.now();
+    if (_lastStatusSyncPatient == trimmedId &&
+        _lastStatusSyncAt != null &&
+        now.difference(_lastStatusSyncAt!) < _statusSyncThrottle) {
+      return;
+    }
+    _lastStatusSyncPatient = trimmedId;
+    _lastStatusSyncAt = now;
+
+    final today = todayDateString();
+    final nowClinic = ClinicDateTime.nowClinic();
+    final medsById = await _medicationsById(trimmedId);
+
+    final snap = await _firestore
+        .collection(_reminders)
+        .where('userId', isEqualTo: trimmedId)
+        .get();
+
+    final allReminders = snap.docs
+        .map(
+          (doc) => MedicationReminderEntity.fromFirestore(doc.id, doc.data()),
+        )
+        .whereType<MedicationReminderEntity>()
+        .toList();
+    final reminders = _todayDoseReminders(allReminders, today, medsById);
+
+    for (final reminder in reminders) {
+      final medication = medsById[reminder.medicationId];
+      if (medication == null || medication.isCancelled) continue;
+      if (!medication.isActiveOnDate(today)) continue;
+
+      final docSnap = snap.docs.cast<QueryDocumentSnapshot<Map<String, dynamic>>>().where(
+        (entry) => entry.id == reminder.reminderId,
+      );
+      if (docSnap.isEmpty) continue;
+      final docRef = docSnap.first.reference;
+
+      try {
+        if (!reminder.isDailyInstance) {
+          final isDaily = reminder.repeatPattern.toLowerCase() == 'daily';
+          if (isDaily) {
+            if (reminder.status == MedicationReminderEntity.statusMissed &&
+                reminder.missedDate.isNotEmpty &&
+                reminder.missedDate != today) {
+              await docRef.update({
+                'status': MedicationReminderEntity.statusPending,
+                'missedDate': '',
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+              continue;
+            }
+            if (reminder.status == MedicationReminderEntity.statusCompleted &&
+                reminder.completedDate.isNotEmpty &&
+                reminder.completedDate != today) {
+              await docRef.update({
+                'status': MedicationReminderEntity.statusPending,
+                'completedDate': '',
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+              continue;
+            }
+          }
+        }
+
+        if (!_isDueToday(reminder, today)) continue;
+        if (reminder.isTakenOnDate(today)) continue;
+        if (reminder.isMissedOnDate(today)) continue;
+
+        final schedule = ClinicDateTime.fromFirestore(reminder.reminderTime);
+        if (schedule == null) continue;
+
+        final scheduledToday = DateTime(
+          nowClinic.year,
+          nowClinic.month,
+          nowClinic.day,
+          schedule.hour,
+          schedule.minute,
+        );
+        if (!nowClinic.isAfter(scheduledToday)) continue;
+
+        final lastPushAt = docSnap.first.data()['lastPushAt'];
+        if (lastPushAt is Timestamp) {
+          final elapsed = DateTime.now().difference(lastPushAt.toDate());
+          if (elapsed < const Duration(minutes: 5)) continue;
+        }
+
+        await docRef.update({
+          'status': MedicationReminderEntity.statusMissed,
+          'missedDate': today,
+          'completedDate': '',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      } catch (error, stack) {
+        debugPrint(
+          'syncTodayReminderStatuses update ${reminder.reminderId} failed: '
+          '$error\n$stack',
+        );
+      }
+    }
   }
 
   static String _dateFromTimestamp(Timestamp ts) {
@@ -324,9 +362,9 @@ class MedicationsService {
     if (medication.isCancelled) return null;
     if (!medication.isActiveOnDate(today)) return null;
     if (!_isDueToday(reminder, today)) return null;
-    if (reminder.status == MedicationReminderEntity.statusMissed) return null;
 
     final takenToday = reminder.isTakenOnDate(today);
+    final missedToday = reminder.isMissedOnDate(today);
 
     return MedicationItem(
       reminderId: reminder.reminderId,
@@ -345,12 +383,28 @@ class MedicationsService {
           : medication.instructions,
       status: takenToday
           ? MedicationReminderEntity.statusCompleted
-          : MedicationReminderEntity.statusPending,
+          : missedToday
+              ? MedicationReminderEntity.statusMissed
+              : MedicationReminderEntity.statusPending,
     );
   }
 
   Future<List<MedicationItem>> _buildTodayItems(String patientId) async {
-    await ensureRemindersForPatient(patientId);
+    try {
+      await ensureRemindersForPatient(patientId);
+    } catch (error, stack) {
+      debugPrint('_buildTodayItems ensure failed: $error\n$stack');
+    }
+    try {
+      await _syncDailyReminderInstances();
+    } catch (error, stack) {
+      debugPrint('_buildTodayItems daily sync failed: $error\n$stack');
+    }
+    try {
+      await syncTodayReminderStatuses(patientId);
+    } catch (error, stack) {
+      debugPrint('_buildTodayItems status sync failed: $error\n$stack');
+    }
 
     final today = todayDateString();
     final medsById = await _medicationsById(patientId);
@@ -361,12 +415,15 @@ class MedicationsService {
         .get();
 
     final paired = <({Timestamp time, MedicationItem item})>[];
-    for (final doc in reminderSnap.docs) {
-      final reminder = MedicationReminderEntity.fromFirestore(
-        doc.id,
-        doc.data(),
-      );
-      if (reminder == null) continue;
+    final allReminders = reminderSnap.docs
+        .map(
+          (doc) => MedicationReminderEntity.fromFirestore(doc.id, doc.data()),
+        )
+        .whereType<MedicationReminderEntity>()
+        .toList();
+    final reminders = _todayDoseReminders(allReminders, today, medsById);
+
+    for (final reminder in reminders) {
 
       final medication = medsById[reminder.medicationId];
       if (medication == null || medication.isCancelled) continue;
@@ -406,6 +463,54 @@ class MedicationsService {
 
   Stream<List<MedicationItem>> watchForCurrentPatient() {
     return _streamCache ??= _createWatchStream();
+  }
+
+  Future<List<MedicationItem>> fetchTodayForPatient(String patientId) async {
+    final trimmed = patientId.trim();
+    if (trimmed.isEmpty) return [];
+    return _buildTodayItems(trimmed);
+  }
+
+  Stream<List<MedicationItem>> watchForPatient(String patientId) {
+    final trimmed = patientId.trim();
+    if (trimmed.isEmpty) {
+      return Stream.value(const []);
+    }
+    return Stream.multi((controller) async {
+      Future<void> emit() async {
+        if (controller.isClosed) return;
+        try {
+          controller.add(await _buildTodayItems(trimmed));
+        } catch (e, st) {
+          if (!controller.isClosed) {
+            controller.addError(e, st);
+          }
+        }
+      }
+
+      try {
+        await emit();
+        final subs = <StreamSubscription<dynamic>>[];
+        for (final collection in [_medications, _reminders]) {
+          subs.add(
+            _firestore
+                .collection(collection)
+                .where('userId', isEqualTo: trimmed)
+                .snapshots()
+                .listen((_) => emit(), onError: controller.addError),
+          );
+        }
+        controller.onCancel = () {
+          for (final sub in subs) {
+            sub.cancel();
+          }
+        };
+      } catch (e, st) {
+        if (!controller.isClosed) {
+          controller.addError(e, st);
+        }
+      }
+    });
   }
 
   Stream<List<MedicationItem>> _createWatchStream() {
@@ -478,6 +583,7 @@ class MedicationsService {
           ? MedicationReminderEntity.statusCompleted
           : MedicationReminderEntity.statusPending,
       'completedDate': taken ? today : '',
+      'missedDate': '',
       'updatedAt': FieldValue.serverTimestamp(),
     });
     if (taken) {

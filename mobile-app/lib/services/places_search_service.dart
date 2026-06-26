@@ -7,10 +7,11 @@ import 'package:http/http.dart' as http;
 import '../config/maps_config.dart';
 import '../models/navigation_destination.dart';
 import '../models/place_search_result.dart';
+import '../utils/place_category_label.dart';
 import '../utils/place_search_matching.dart';
 import 'navigation_service.dart';
 
-/// Searches saved places and online geocoders for navigation destinations.
+/// Searches saved places first, then online geocoders when nothing local matches.
 class PlacesSearchService {
   PlacesSearchService({
     http.Client? client,
@@ -70,20 +71,19 @@ class PlacesSearchService {
       );
     }
 
+    // 1) Local saved places (home, work, recents) with partial name/address/category match.
     for (final item in _navigationService.searchLocal(trimmed)) {
       addResult(item, requireKeywordMatch: true);
     }
 
-    final remoteSearches = <Future<List<NavDestination>>>[
-      if (MapsConfig.hasGoogleMapsApiKey)
-        _searchGooglePlaces(trimmed, originLat, originLng),
-      _searchPlatformGeocoder(trimmed),
-      _searchNominatim(trimmed, originLat, originLng),
-    ];
-
-    final remoteResults = await Future.wait(remoteSearches);
-    for (final batch in remoteResults) {
-      for (final item in batch) {
+    // 2) Online search only when nothing local matched.
+    if (results.isEmpty) {
+      final remoteDestinations = await _searchOnline(
+        trimmed,
+        originLat: originLat,
+        originLng: originLng,
+      );
+      for (final item in remoteDestinations) {
         addResult(item, requireKeywordMatch: false);
       }
     }
@@ -120,6 +120,30 @@ class PlacesSearchService {
     return results;
   }
 
+  Future<List<NavDestination>> _searchOnline(
+    String query, {
+    double? originLat,
+    double? originLng,
+  }) async {
+    if (MapsConfig.hasGoogleMapsApiKey) {
+      final googleResults = await _searchGooglePlaces(
+        query,
+        originLat,
+        originLng,
+      );
+      if (googleResults.isNotEmpty) return googleResults;
+    }
+
+    final nominatimResults = await _searchNominatim(
+      query,
+      originLat,
+      originLng,
+    );
+    if (nominatimResults.isNotEmpty) return nominatimResults;
+
+    return _searchPlatformGeocoder(query);
+  }
+
   Future<NavDestination?> _currentLocationDestination(
     double? originLat,
     double? originLng,
@@ -138,6 +162,7 @@ class PlacesSearchService {
         address: address,
         latitude: originLat,
         longitude: originLng,
+        category: 'Current location',
       );
     } catch (_) {
       return NavDestination(
@@ -146,6 +171,7 @@ class PlacesSearchService {
             '${originLat.toStringAsFixed(5)}, ${originLng.toStringAsFixed(5)}',
         latitude: originLat,
         longitude: originLng,
+        category: 'Current location',
       );
     }
   }
@@ -181,7 +207,7 @@ class PlacesSearchService {
               'Content-Type': 'application/json',
               'X-Goog-Api-Key': MapsConfig.googleMapsApiKey,
               'X-Goog-FieldMask':
-                  'places.displayName,places.formattedAddress,places.location',
+                  'places.displayName,places.formattedAddress,places.location,places.types',
             },
             body: jsonEncode(body),
           )
@@ -220,6 +246,7 @@ class PlacesSearchService {
         ? (displayName['text'] as String? ?? '').trim()
         : '';
     final address = (place['formattedAddress'] as String? ?? '').trim();
+    final category = PlaceCategoryLabel.fromGoogleTypes(place['types'] as List?);
 
     if (label.isEmpty && address.isEmpty) return null;
 
@@ -228,6 +255,7 @@ class PlacesSearchService {
       address: address.isNotEmpty ? address : label,
       latitude: lat,
       longitude: lon,
+      category: category,
     );
   }
 
@@ -238,7 +266,7 @@ class PlacesSearchService {
   ) async {
     final params = <String, String>{
       'q': query,
-      'format': 'json',
+      'format': 'jsonv2',
       'addressdetails': '1',
       'limit': '15',
     };
@@ -293,12 +321,17 @@ class PlacesSearchService {
     final label = (rawName != null && rawName.isNotEmpty)
         ? rawName
         : displayName.split(',').first.trim();
+    final category = PlaceCategoryLabel.fromNominatim(
+      type: item['type'] as String?,
+      categoryClass: item['class'] as String?,
+    );
 
     return NavDestination(
       label: label,
       address: displayName,
       latitude: lat,
       longitude: lon,
+      category: category,
     );
   }
 
@@ -320,6 +353,9 @@ class PlacesSearchService {
             address: _addressFromPlacemark(placemark, query),
             latitude: location.latitude,
             longitude: location.longitude,
+            category: placemark?.subLocality?.trim().isNotEmpty == true
+                ? 'Address'
+                : 'Place',
           ),
         );
       }

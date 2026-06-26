@@ -19,7 +19,7 @@ class UserRegistrationService {
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
 
-  /// Creates the Firestore user profile for [uid] with a new sequential [UserEntity.userId].
+  /// Creates the Firestore user profile for [uid] with a new sequential ID.
   Future<void> createUserProfile({
     required String uid,
     required String name,
@@ -32,59 +32,125 @@ class UserRegistrationService {
     String emergencyContact = '',
     Map<String, dynamic>? accessibilityPreferences,
     UserStatus status = UserStatus.active,
+    String role = 'patient',
   }) async {
-    final userRef = _firestore.collection(UserEntity.collection).doc(uid);
-    final counterRef = _firestore.doc(UserEntity.counterDocPath);
+    final bool isPatient = role.trim().toLowerCase() == 'patient';
 
-    await _firestore.runTransaction((transaction) async {
-      final counterSnap = await transaction.get(counterRef);
-      final next = (counterSnap.data()?['next'] as int?) ?? 1;
-      final userId = 'U${next.toString().padLeft(5, '0')}';
+    if (isPatient) {
+      final userRef = _firestore.collection(UserEntity.collection).doc(uid);
+      final counterRef = _firestore.doc(UserEntity.counterDocPath);
 
-      transaction.set(counterRef, {'next': next + 1}, SetOptions(merge: true));
+      await _firestore.runTransaction((transaction) async {
+        final counterSnap = await transaction.get(counterRef);
+        final next = (counterSnap.data()?['next'] as num?)?.toInt() ?? 1;
+        final userId = 'U${next.toString().padLeft(5, '0')}';
 
-      final entity = UserEntity(
-        userId: userId,
-        name: name,
-        birthDate: birthDate,
-        email: email,
-        emergencyContact: emergencyContact,
-        accessibilityPreferences: accessibilityPreferences,
-        status: status,
+        transaction.set(counterRef, {'next': next + 1}, SetOptions(merge: true));
+
+        final entity = UserEntity(
+          userId: userId,
+          name: name,
+          birthDate: birthDate,
+          email: email,
+          emergencyContact: emergencyContact,
+          accessibilityPreferences: accessibilityPreferences,
+          status: status,
+          role: role,
+        );
+
+        final payload = <String, dynamic>{
+          ...entity.toFirestore(),
+          'authUid': uid,
+        };
+
+        final normalizedPhrase = voicePassphrase.trim().toLowerCase();
+        if (normalizedPhrase.isNotEmpty) {
+          payload['voicePassphrase'] = normalizedPhrase;
+          payload['voiceProfile'] = VoiceProfileData(
+            passphrase: normalizedPhrase,
+            voiceprintVector: voiceprintVector ?? const [],
+            voiceFeatures: voiceFeatures ?? const {},
+          ).toMap();
+        }
+
+        final trimmedPhone = phoneNumber.trim();
+        if (trimmedPhone.isNotEmpty) {
+          payload['phoneNumber'] = trimmedPhone;
+          payload['phoneNumberNormalized'] =
+              PhoneNumberService.normalize(trimmedPhone);
+        }
+
+        transaction.set(userRef, payload);
+      });
+
+      unawaited(
+        ActivityLogService.instance.log(
+          action: ActivityLogActions.registerAccount,
+          details: 'New patient account created for $name.',
+          userName: name,
+        ),
       );
+    } else {
+      final staffRef = _firestore.collection('healthcarestaff').doc(uid);
+      final counterRef = _firestore.doc('system/healthcareStaffCounter');
 
-      final payload = <String, dynamic>{
-        ...entity.toFirestore(),
-        'authUid': uid,
-      };
+      await _firestore.runTransaction((transaction) async {
+        final counterSnap = await transaction.get(counterRef);
+        final next = (counterSnap.data()?['next'] as num?)?.toInt() ?? 1;
+        final staffId = 'S${next.toString().padLeft(5, '0')}';
 
-      final normalizedPhrase = voicePassphrase.trim().toLowerCase();
-      if (normalizedPhrase.isNotEmpty) {
-        payload['voicePassphrase'] = normalizedPhrase;
-        payload['voiceProfile'] = VoiceProfileData(
-          passphrase: normalizedPhrase,
-          voiceprintVector: voiceprintVector ?? const [],
-          voiceFeatures: voiceFeatures ?? const {},
-        ).toMap();
-      }
+        transaction.set(counterRef, {'next': next + 1}, SetOptions(merge: true));
 
-      final trimmedPhone = phoneNumber.trim();
-      if (trimmedPhone.isNotEmpty) {
-        payload['phoneNumber'] = trimmedPhone;
-        payload['phoneNumberNormalized'] =
-            PhoneNumberService.normalize(trimmedPhone);
-      }
+        final capitalizedRole = _capitalizeRole(role);
 
-      transaction.set(userRef, payload);
-    });
+        final payload = <String, dynamic>{
+          'staffID': staffId,
+          'staffId': staffId,
+          'name': name,
+          'email': email,
+          'role': capitalizedRole,
+          'status': 'Active',
+          'authUid': uid,
+          'createdAt': FieldValue.serverTimestamp(),
+        };
 
-    unawaited(
-      ActivityLogService.instance.log(
-        action: ActivityLogActions.registerAccount,
-        details: 'New patient account created for $name.',
-        userName: name,
-      ),
-    );
+        final normalizedPhrase = voicePassphrase.trim().toLowerCase();
+        if (normalizedPhrase.isNotEmpty) {
+          payload['voicePassphrase'] = normalizedPhrase;
+          payload['voiceProfile'] = VoiceProfileData(
+            passphrase: normalizedPhrase,
+            voiceprintVector: voiceprintVector ?? const [],
+            voiceFeatures: voiceFeatures ?? const {},
+          ).toMap();
+        }
+
+        final trimmedPhone = phoneNumber.trim();
+        if (trimmedPhone.isNotEmpty) {
+          payload['phoneNumber'] = trimmedPhone;
+          payload['phoneNumberNormalized'] =
+              PhoneNumberService.normalize(trimmedPhone);
+        }
+
+        transaction.set(staffRef, payload);
+      });
+
+      unawaited(
+        ActivityLogService.instance.log(
+          action: ActivityLogActions.registerAccount,
+          details: 'New staff account created for $name ($role).',
+          userName: name,
+        ),
+      );
+    }
+  }
+
+  String _capitalizeRole(String role) {
+    final r = role.trim().toLowerCase();
+    if (r == 'doctor') return 'Doctor';
+    if (r == 'therapist') return 'Therapist';
+    if (r == 'caregiver') return 'Caregiver';
+    if (r.isEmpty) return role;
+    return r[0].toUpperCase() + r.substring(1);
   }
 
   /// Removes the signed-in account if profile creation fails after Auth signup.
