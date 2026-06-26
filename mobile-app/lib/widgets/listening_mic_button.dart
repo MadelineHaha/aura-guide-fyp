@@ -33,12 +33,19 @@ class ListeningMicButton extends StatefulWidget {
 
 class _ListeningMicButtonState extends State<ListeningMicButton>
     with SingleTickerProviderStateMixin {
-  AnimationController? _pulseController;
-  Animation<double>? _pulseAnimation;
+  late final AnimationController _pulseController;
+  late final Animation<double> _pulseAnimation;
 
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    _pulseAnimation = Tween<double>(begin: 0.25, end: 1).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
     _syncPulseAnimation();
   }
 
@@ -52,25 +59,15 @@ class _ListeningMicButtonState extends State<ListeningMicButton>
 
   void _syncPulseAnimation() {
     if (widget.listening) {
-      _pulseController ??= AnimationController(
-        vsync: this,
-        duration: const Duration(milliseconds: 700),
-      )..repeat(reverse: true);
-      _pulseAnimation ??= Tween<double>(begin: 0.25, end: 1).animate(
-        CurvedAnimation(parent: _pulseController!, curve: Curves.easeInOut),
-      );
-      _pulseController!.repeat(reverse: true);
+      _pulseController.repeat(reverse: true);
     } else {
-      _pulseController?.stop();
-      _pulseController?.dispose();
-      _pulseController = null;
-      _pulseAnimation = null;
+      _pulseController.stop();
     }
   }
 
   @override
   void dispose() {
-    _pulseController?.dispose();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -112,12 +109,12 @@ class _ListeningMicButtonState extends State<ListeningMicButton>
       );
     }
 
-    if (!widget.listening || _pulseAnimation == null) {
+    if (!widget.listening) {
       return micBody;
     }
 
     return AnimatedBuilder(
-      animation: _pulseAnimation!,
+      animation: _pulseAnimation,
       builder: (context, child) {
         return Container(
           padding: const EdgeInsets.all(3),
@@ -125,14 +122,14 @@ class _ListeningMicButtonState extends State<ListeningMicButton>
             shape: BoxShape.circle,
             border: Border.all(
               color: widget.activeColor.withValues(
-                alpha: _pulseAnimation!.value,
+                alpha: _pulseAnimation.value,
               ),
               width: 2.4,
             ),
             boxShadow: [
               BoxShadow(
                 color: widget.activeColor.withValues(
-                  alpha: _pulseAnimation!.value * 0.45,
+                  alpha: _pulseAnimation.value * 0.45,
                 ),
                 blurRadius: 10,
                 spreadRadius: 1,

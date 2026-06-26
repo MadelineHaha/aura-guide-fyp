@@ -10,8 +10,9 @@ import { LOG_ACTIONS } from "./activity-log-actions.js";
 import { mapActivityLogDoc, ACTIVITY_LOGS_COLLECTION } from "./activity-logs-service.js";
 import { APPOINTMENTS_COLLECTION } from "./appointments-service.js";
 import { EMERGENCY_ALERTS_COLLECTION, mapEmergencyAlertDoc } from "./emergency-alerts-service.js";
-import { MEDICATION_REMINDERS_COLLECTION } from "./medications-service.js";
+import { MEDICATION_REMINDERS_COLLECTION, MEDICATIONS_COLLECTION } from "./medications-service.js";
 import { mapUserDoc, USERS_COLLECTION } from "./user-patients-service.js";
+import { normalizeStaffRole } from "./staff-rbac.js";
 
 export const PATIENT_ACTIVITY_COLLECTION = "activity";
 /** @deprecated Legacy collection — reports fall back if `activity` is empty. */
@@ -19,9 +20,17 @@ export const PATIENT_DAILY_METRICS_COLLECTION = "patientdailymetrics";
 
 export const REPORT_RANGES = {
   TODAY: "today",
+  MONTH: "month",
   THREE_MONTHS: 3,
   SIX_MONTHS: 6,
   ALL: 0,
+};
+
+/** Medication adherence result statuses for reports UI. */
+export const MED_ADHERENCE_STATUS = {
+  NA: "N/A",
+  PENDING: "Pending",
+  CALCULATED: "Calculated",
 };
 
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -121,9 +130,16 @@ export function resolveReportRange(rangeKey, endDate = new Date()) {
     return { rangeStart: start, rangeEnd: end };
   }
 
+  if (rangeKey === REPORT_RANGES.MONTH || rangeKey === "month") {
+    const start = new Date(end);
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+    return { rangeStart: start, rangeEnd: end };
+  }
+
   const months = Number(rangeKey);
   if (!months || months <= 0) {
-    return { rangeStart: null, rangeEnd: end };
+    return { rangeStart: null, rangeEnd: null };
   }
 
   const start = new Date(end);
@@ -156,19 +172,67 @@ function mapReminderDoc(docSnap) {
   const data = docSnap.data() || {};
   const userId = readUserId(data);
   if (!userId) return null;
+  const reminderTime = timestampToDate(data.reminderTime);
   return {
     userId,
     status: String(data.status || "").trim(),
     completedDate: String(data.completedDate || "").trim(),
+    missedDate: String(data.missedDate || "").trim(),
+    doseDate: String(data.doseDate || "").trim(),
+    slotReminderId: String(data.slotReminderId || "").trim(),
     repeatPattern: String(data.repeatPattern || "Daily").trim(),
     medicationId: String(data.medicationId || "").trim(),
+    reminderTime,
   };
+}
+
+function mapMedicationDoc(docSnap) {
+  const data = docSnap.data() || {};
+  const userId = readUserId(data);
+  const medicationId = String(data.medicationId || docSnap.id).trim();
+  if (!userId || !medicationId) return null;
+  return {
+    medicationId,
+    userId,
+    startDate: String(data.startDate || "").trim(),
+    endDate: String(data.endDate || "").trim(),
+    status: String(data.status || "Active").trim(),
+  };
+}
+
+function isMedicationActiveOnDate(medication, dateKey) {
+  if (!medication) return false;
+  if (medication.status === "Cancelled") return false;
+  if (!medication.startDate || !medication.endDate) return true;
+  return medication.startDate <= dateKey && medication.endDate >= dateKey;
+}
+
+function isDailyDoseReminder(reminder) {
+  return !!reminder.doseDate;
+}
+
+function dateFromDateKey(dateKey) {
+  const parsed = new Date(`${dateKey}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function mapAppointmentRow(docSnap) {
   const data = docSnap.data() || {};
   const userId = readUserId(data);
-  const dateTime = timestampToDate(data.dateTime || data.scheduledAt);
+  let dateTime = timestampToDate(data.dateTime || data.scheduledAt);
+  if (!dateTime && (data.dateTime || data.scheduledAt)) {
+    dateTime = parseErdDateTime(data.dateTime || data.scheduledAt);
+    if (!dateTime && typeof (data.dateTime || data.scheduledAt) === "string") {
+      const parsed = new Date(data.dateTime || data.scheduledAt);
+      if (!Number.isNaN(parsed.getTime())) dateTime = parsed;
+    }
+  }
+  if (!dateTime && data.date) {
+    const timeStr = data.time || "12:00:00";
+    const parsed = new Date(`${data.date}T${timeStr}`);
+    if (!Number.isNaN(parsed.getTime())) dateTime = parsed;
+  }
+  
   const status = String(data.status || "Scheduled").toLowerCase();
   if (!userId || !dateTime) return null;
   return { userId, dateTime, status };
@@ -197,43 +261,250 @@ function buildResponseTimeMap(logs) {
   return map;
 }
 
-function countDailyRemindersForUser(reminders, userId) {
-  return reminders.filter(
-    (reminder) =>
-      reminder.userId === userId &&
-      reminder.repeatPattern.toLowerCase() === "daily",
-  ).length;
+function enumerateDateKeysBetween(rangeStart, rangeEnd) {
+  if (!rangeEnd) return [];
+  const keys = [];
+  const cursor = new Date(rangeStart || rangeEnd);
+  cursor.setHours(0, 0, 0, 0);
+  const end = new Date(rangeEnd);
+  end.setHours(23, 59, 59, 999);
+  while (cursor <= end) {
+    keys.push(dateKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return keys;
 }
 
-function medicationAdherenceForUser(reminders, logs, userId, rangeStart, rangeEnd, todayKey) {
-  const dailyCount = countDailyRemindersForUser(reminders, userId);
-  if (dailyCount <= 0) return null;
+/** Clinic calendar days between two instants (for medication dose scheduling). */
+function enumerateClinicDateKeysBetween(rangeStart, rangeEnd) {
+  if (!rangeEnd) return [];
+  const keys = [];
+  const cursor = new Date(rangeStart || rangeEnd);
+  cursor.setHours(0, 0, 0, 0);
+  const end = new Date(rangeEnd);
+  end.setHours(23, 59, 59, 999);
+  while (cursor <= end) {
+    keys.push(dateKeyClinic(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return keys;
+}
 
-  const end = rangeEnd || new Date();
-  const start = rangeStart || new Date(end.getFullYear(), end.getMonth() - 5, 1);
-  const dayCount = daysBetweenInclusive(start, end);
-  const expected = dailyCount * dayCount;
+function adherenceRangeStartForUser(rangeStart, rangeEnd, reminders, userId) {
+  if (rangeStart) return new Date(rangeStart);
+
+  const userReminders = reminders.filter((reminder) => reminder.userId === userId);
+  let earliest = null;
+  for (const reminder of userReminders) {
+    if (!reminder.reminderTime) continue;
+    const dayKey = dateKeyClinic(reminder.reminderTime);
+    const [year, month, day] = dayKey.split("-").map(Number);
+    const dayStart = new Date(year, month - 1, day);
+    dayStart.setHours(0, 0, 0, 0);
+    if (!earliest || dayStart < earliest) earliest = dayStart;
+  }
+
+  if (earliest) return earliest;
+
+  const today = new Date(rangeEnd);
+  today.setHours(0, 0, 0, 0);
+  return today;
+}
+
+function reminderClockInClinic(reminderTime) {
+  if (!reminderTime) return { hours: 0, minutes: 0 };
+  const shifted = new Date(reminderTime.getTime() + CLINIC_OFFSET_MS);
+  return {
+    hours: shifted.getUTCHours(),
+    minutes: shifted.getUTCMinutes(),
+  };
+}
+
+function doseInstantClinic(dayKey, reminder) {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  const clock = reminderClockInClinic(reminder.reminderTime);
+  return new Date(
+    Date.UTC(year, month - 1, day, clock.hours - 8, clock.minutes, 0, 0),
+  );
+}
+
+function countScheduledDueDoses(reminders, medications, userId, rangeStart, rangeEnd) {
+  const medById = new Map(medications.map((med) => [med.medicationId, med]));
+  const dailyDoses = reminders.filter(
+    (reminder) =>
+      reminder.userId === userId &&
+      isDailyDoseReminder(reminder) &&
+      reminder.reminderTime,
+  );
+
+  const now = new Date();
+  const evaluationEnd =
+    rangeEnd && rangeEnd.getTime() < now.getTime() ? rangeEnd : now;
+
+  if (dailyDoses.length > 0) {
+    let scheduledDue = 0;
+    for (const reminder of dailyDoses) {
+      const doseKey = reminder.doseDate;
+      const doseDate = dateFromDateKey(doseKey);
+      if (!doseDate) continue;
+      if (rangeStart && doseDate < rangeStart) continue;
+      if (rangeEnd && doseDate > rangeEnd) continue;
+      const medication = medById.get(reminder.medicationId);
+      if (!isMedicationActiveOnDate(medication, doseKey)) continue;
+      const doseAt = doseInstantClinic(doseKey, reminder);
+      if (doseAt.getTime() <= evaluationEnd.getTime()) {
+        scheduledDue += 1;
+      }
+    }
+    return scheduledDue;
+  }
+
+  const dailyReminders = reminders.filter(
+    (reminder) =>
+      reminder.userId === userId &&
+      reminder.repeatPattern.toLowerCase() === "daily" &&
+      reminder.reminderTime &&
+      !isDailyDoseReminder(reminder),
+  );
+  if (!dailyReminders.length) return 0;
+
+  const effectiveStart = adherenceRangeStartForUser(
+    rangeStart,
+    rangeEnd,
+    reminders,
+    userId,
+  );
+
+  let scheduledDue = 0;
+  for (const dayKey of enumerateClinicDateKeysBetween(effectiveStart, rangeEnd)) {
+    for (const reminder of dailyReminders) {
+      const medication = medById.get(reminder.medicationId);
+      if (!isMedicationActiveOnDate(medication, dayKey)) continue;
+      const doseAt = doseInstantClinic(dayKey, reminder);
+      if (doseAt.getTime() <= evaluationEnd.getTime()) {
+        scheduledDue += 1;
+      }
+    }
+  }
+  return scheduledDue;
+}
+
+function countTakenDoses(
+  reminders,
+  medications,
+  logs,
+  userId,
+  rangeStart,
+  rangeEnd,
+  todayKey,
+) {
+  const dailyDoses = reminders.filter(
+    (reminder) => reminder.userId === userId && isDailyDoseReminder(reminder),
+  );
+
+  if (dailyDoses.length > 0) {
+    let taken = 0;
+    for (const reminder of dailyDoses) {
+      const doseKey = reminder.doseDate;
+      const doseDate = dateFromDateKey(doseKey);
+      if (!doseDate) continue;
+      if (rangeStart && doseDate < rangeStart) continue;
+      if (rangeEnd && doseDate > rangeEnd) continue;
+      if (reminder.status === "Completed") {
+        taken += 1;
+      }
+    }
+    return taken;
+  }
 
   let taken = logs.filter(
     (log) =>
       log.userId === userId &&
       log.action === LOG_ACTIONS.MARK_MEDICATION &&
-      inRange(new Date(log.timestampMs), start, end),
+      log.timestampMs &&
+      inRange(new Date(log.timestampMs), rangeStart, rangeEnd),
   ).length;
 
-  const todayInRange = inRange(new Date(), start, end);
-  if (todayInRange) {
-    const completedToday = reminders.filter(
-      (reminder) =>
-        reminder.userId === userId &&
-        reminder.status === "Completed" &&
-        reminder.completedDate === todayKey,
-    ).length;
-    taken = Math.max(taken, completedToday);
+  const todayInRange = inRange(new Date(), rangeStart, rangeEnd);
+  if (!todayInRange) return taken;
+
+  const completedToday = reminders.filter(
+    (reminder) =>
+      reminder.userId === userId &&
+      reminder.status === "Completed" &&
+      reminder.completedDate === todayKey,
+  ).length;
+  // Missed doses (status "Missed" / missedDate) are not counted as taken.
+
+  const logsToday = logs.filter((log) => {
+    if (log.userId !== userId || log.action !== LOG_ACTIONS.MARK_MEDICATION) {
+      return false;
+    }
+    if (!log.timestampMs) return false;
+    const logDate = dateKeyClinic(new Date(log.timestampMs));
+    return logDate === todayKey;
+  }).length;
+
+  if (completedToday > logsToday) {
+    taken += completedToday - logsToday;
   }
 
-  if (expected <= 0) return null;
-  return Math.min(100, Math.round((taken / expected) * 100));
+  return taken;
+}
+
+/**
+ * @returns {{ status: string, adherence: number|null, scheduledDoses?: number, takenDoses?: number }}
+ */
+export function medicationAdherenceForUser(
+  reminders,
+  medications,
+  logs,
+  userId,
+  rangeStart,
+  rangeEnd,
+  todayKey,
+) {
+  const assigned = reminders.filter((reminder) => reminder.userId === userId);
+  if (!assigned.length) {
+    return { status: MED_ADHERENCE_STATUS.NA, adherence: null };
+  }
+
+  const scheduledDoses = countScheduledDueDoses(
+    reminders,
+    medications,
+    userId,
+    rangeStart,
+    rangeEnd,
+  );
+  if (scheduledDoses <= 0) {
+    return { status: MED_ADHERENCE_STATUS.PENDING, adherence: null };
+  }
+
+  const takenDoses = countTakenDoses(
+    reminders,
+    medications,
+    logs,
+    userId,
+    rangeStart,
+    rangeEnd,
+    todayKey,
+  );
+  const adherence = Math.min(
+    100,
+    Math.round((takenDoses / scheduledDoses) * 100),
+  );
+
+  return {
+    status: MED_ADHERENCE_STATUS.CALCULATED,
+    adherence,
+    scheduledDoses,
+    takenDoses,
+  };
+}
+
+export function adherencePercentValue(result) {
+  if (!result || result.status !== MED_ADHERENCE_STATUS.CALCULATED) return null;
+  return result.adherence;
 }
 
 function appointmentStatsForUser(appointments, userId, rangeStart, rangeEnd) {
@@ -341,10 +612,47 @@ function metricForMonth(values) {
   return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
 }
 
+/** Average daily steps across patients (from Firestore `activity` / device sync). */
+function cohortAverageSteps(patients, metrics, rangeStart, rangeEnd) {
+  if (!patients.length) return 0;
+  const values = patients.map((patient) =>
+    averageStepsForUser(metrics, patient.patientId, rangeStart, rangeEnd),
+  );
+  return metricForMonth(values);
+}
+
+/** Share of emergency alerts marked Resolved in a period. */
+function emergencyResolutionRate(alerts, rangeStart, rangeEnd) {
+  const scoped = alerts.filter((alert) =>
+    inRange(parseAlertDate(alert), rangeStart, rangeEnd),
+  );
+  if (scoped.length === 0) return 0;
+  const resolved = scoped.filter(
+    (alert) => String(alert.status || "").toLowerCase() === "resolved",
+  ).length;
+  return Math.round((resolved / scoped.length) * 100);
+}
+
+/** Patients with at least one mobile activity log in the period. */
+function mobileEngagementRate(patients, logs, rangeStart, rangeEnd) {
+  if (!patients.length) return 0;
+  const engaged = patients.filter((patient) =>
+    logs.some(
+      (log) =>
+        log.userId === patient.patientId &&
+        log.source === "mobile" &&
+        log.timestampMs &&
+        inRange(new Date(log.timestampMs), rangeStart, rangeEnd),
+    ),
+  ).length;
+  return Math.round((engaged / patients.length) * 100);
+}
+
 function computeMonthlyTrends({
   patients,
   appointments,
   reminders,
+  medications,
   metrics,
   logs,
   rangeStart,
@@ -365,13 +673,16 @@ function computeMonthlyTrends({
     const { start, end } = bucketWindow(bucket, daily);
     const values = patients
       .map((patient) =>
-        medicationAdherenceForUser(
-          reminders,
-          logs,
-          patient.patientId,
-          start,
-          end,
-          todayKey,
+        adherencePercentValue(
+          medicationAdherenceForUser(
+            reminders,
+            medications,
+            logs,
+            patient.patientId,
+            start,
+            end,
+            todayKey,
+          ),
         ),
       )
       .filter((value) => value != null);
@@ -397,7 +708,209 @@ function computeMonthlyTrends({
   return { labels, stepsSeries, medSeries, apptSeries };
 }
 
-function computeEmergencyAnalytics(alerts, logs, rangeStart, rangeEnd) {
+function getResolutionBuckets(rangeStart, rangeEnd, grouping) {
+  const end = rangeEnd || new Date();
+  
+  let start = rangeStart;
+  if (!start) {
+    start = new Date(end.getFullYear(), end.getMonth() - 5, 1);
+  }
+
+  const buckets = [];
+  
+  if (grouping === "daily") {
+    const limitStart = new Date(end.getTime() - 29 * 24 * 60 * 60 * 1000);
+    const effectiveStart = start > limitStart ? start : limitStart;
+    
+    const cursor = new Date(effectiveStart);
+    cursor.setHours(0, 0, 0, 0);
+    while (cursor <= end) {
+      const dayStart = new Date(cursor);
+      const dayEnd = new Date(cursor);
+      dayEnd.setHours(23, 59, 59, 999);
+      
+      const label = dayStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      buckets.push({
+        key: dateKey(dayStart),
+        label,
+        start: dayStart,
+        end: dayEnd
+      });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  } else if (grouping === "weekly") {
+    const limitStart = new Date(end.getTime() - 11 * 7 * 24 * 60 * 60 * 1000);
+    const effectiveStart = start > limitStart ? start : limitStart;
+    
+    const cursor = new Date(effectiveStart);
+    const day = cursor.getDay();
+    cursor.setDate(cursor.getDate() - day);
+    cursor.setHours(0, 0, 0, 0);
+    
+    while (cursor <= end) {
+      const weekStart = new Date(cursor);
+      const weekEnd = new Date(cursor);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      weekEnd.setHours(23, 59, 59, 999);
+      
+      const label = "Week of " + weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      buckets.push({
+        key: dateKey(weekStart),
+        label,
+        start: weekStart,
+        end: weekEnd
+      });
+      cursor.setDate(cursor.getDate() + 7);
+    }
+  } else {
+    // Monthly buckets
+    const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+    const last = new Date(end.getFullYear(), end.getMonth(), 1);
+    while (cursor <= last) {
+      const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1, 0, 0, 0, 0);
+      const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0, 23, 59, 59, 999);
+      
+      const label = cursor.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+      buckets.push({
+        key: monthKey(cursor),
+        label,
+        start: monthStart,
+        end: monthEnd
+      });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    if (buckets.length > 12) {
+      return buckets.slice(-12);
+    }
+  }
+  
+  return buckets;
+}
+
+function computeGrowthData(patients, staffDocs, rangeStart, rangeEnd) {
+  const buckets = monthBuckets(rangeStart, rangeEnd);
+  const parsedPatients = patients.map((p) => {
+    const d = timestampToDate(p.createdAt) || p.createdAt;
+    return {
+      role: "patient",
+      date: d instanceof Date && !Number.isNaN(d.getTime()) ? d : null,
+    };
+  }).filter((p) => p.date !== null);
+
+  const parsedStaff = staffDocs.map((s) => {
+    return {
+      role: s.role,
+      date: s.createdAt instanceof Date && !Number.isNaN(s.createdAt.getTime()) ? s.createdAt : null,
+    };
+  }).filter((s) => s.date !== null);
+
+  let cumPatients = 0;
+  let cumDoctors = 0;
+  let cumTherapists = 0;
+  let cumCaregivers = 0;
+
+  if (buckets.length > 0) {
+    const monthStart = new Date(`${buckets[0]}-01T00:00:00`);
+    cumPatients = parsedPatients.filter((p) => p.date < monthStart).length;
+    cumDoctors = parsedStaff.filter((s) => s.role === "doctor" && s.date < monthStart).length;
+    cumTherapists = parsedStaff.filter((s) => s.role === "therapist" && s.date < monthStart).length;
+    cumCaregivers = parsedStaff.filter((s) => s.role === "caregiver" && s.date < monthStart).length;
+  }
+
+  const patientGrowth = [];
+  const doctorGrowth = [];
+  const therapistGrowth = [];
+  const caregiverGrowth = [];
+  const labels = buckets.map(monthLabelFromKey);
+
+  for (const bucket of buckets) {
+    const monthStart = new Date(`${bucket}-01T00:00:00`);
+    const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    const newPatients = parsedPatients.filter((p) => p.date >= monthStart && p.date <= monthEnd).length;
+    const newDoctors = parsedStaff.filter((s) => s.role === "doctor" && s.date >= monthStart && s.date <= monthEnd).length;
+    const newTherapists = parsedStaff.filter((s) => s.role === "therapist" && s.date >= monthStart && s.date <= monthEnd).length;
+    const newCaregivers = parsedStaff.filter((s) => s.role === "caregiver" && s.date >= monthStart && s.date <= monthEnd).length;
+
+    cumPatients += newPatients;
+    cumDoctors += newDoctors;
+    cumTherapists += newTherapists;
+    cumCaregivers += newCaregivers;
+
+    patientGrowth.push(cumPatients);
+    doctorGrowth.push(cumDoctors);
+    therapistGrowth.push(cumTherapists);
+    caregiverGrowth.push(cumCaregivers);
+  }
+
+  const totalRegisteredPatients = patients.length;
+  const totalDoctors = staffDocs.filter((s) => s.role === "doctor").length;
+  const totalTherapists = staffDocs.filter((s) => s.role === "therapist").length;
+  const totalCaregivers = staffDocs.filter((s) => s.role === "caregiver").length;
+  const totalStaff = totalDoctors + totalTherapists + totalCaregivers;
+
+  return {
+    labels,
+    patientGrowth,
+    doctorGrowth,
+    therapistGrowth,
+    caregiverGrowth,
+    totalRegisteredPatients,
+    totalStaff,
+    totalDoctors,
+    totalTherapists,
+    totalCaregivers,
+  };
+}
+
+function computeAppointmentReports(appointments, rangeStart, rangeEnd, grouping = "monthly") {
+  const now = new Date();
+  const scoped = appointments.filter((row) => inRange(row.dateTime, rangeStart, rangeEnd));
+  const nonCancelled = scoped.filter((row) => row.status !== CANCELLED);
+  const totalNonCancelled = nonCancelled.length;
+
+  const pastNonCancelled = nonCancelled.filter(row => row.dateTime < now);
+  const totalPastNonCancelled = pastNonCancelled.length;
+
+  const doneCount = pastNonCancelled.filter((row) => ATTENDED_STATUSES.has(row.status)).length;
+  const missedCount = pastNonCancelled.filter((row) => !ATTENDED_STATUSES.has(row.status)).length;
+
+  const attendanceRate = totalPastNonCancelled > 0 ? Math.round((doneCount / totalPastNonCancelled) * 100) : 0;
+  const missedRate = totalPastNonCancelled > 0 ? Math.round((missedCount / totalPastNonCancelled) * 100) : 0;
+
+  const buckets = getResolutionBuckets(rangeStart, rangeEnd, grouping);
+  const monthly = buckets.map((bucket) => {
+    const monthScoped = nonCancelled.filter((row) => inRange(row.dateTime, bucket.start, bucket.end));
+    const monthTotal = monthScoped.length;
+    const monthDone = monthScoped.filter((row) => ATTENDED_STATUSES.has(row.status)).length;
+    const monthMissed = monthScoped.filter((row) => {
+      const isPast = row.dateTime < now;
+      const isNotDone = !ATTENDED_STATUSES.has(row.status);
+      return isPast && isNotDone;
+    }).length;
+
+    const monthAttendanceRate = monthTotal > 0 ? Math.round((monthDone / monthTotal) * 100) : 0;
+    const monthMissedRate = monthTotal > 0 ? Math.round((monthMissed / monthTotal) * 100) : 0;
+
+    return {
+      label: bucket.label,
+      total: monthTotal,
+      attendanceRate: monthAttendanceRate,
+      missedRate: monthMissedRate,
+    };
+  });
+
+  return {
+    totalNonCancelled,
+    doneCount,
+    missedCount,
+    attendanceRate,
+    missedRate,
+    monthly,
+  };
+}
+
+function computeEmergencyAnalytics(alerts, logs, rangeStart, rangeEnd, grouping = "monthly") {
   const scoped = alerts.filter((alert) => inRange(parseAlertDate(alert), rangeStart, rangeEnd));
   const responseMap = buildResponseTimeMap(logs);
 
@@ -422,33 +935,53 @@ function computeEmergencyAnalytics(alerts, logs, rangeStart, rangeEnd) {
     }
   }
 
-  const buckets = monthBuckets(rangeStart, rangeEnd);
+  const buckets = getResolutionBuckets(rangeStart, rangeEnd, grouping);
   const monthly = buckets.map((bucket) => {
-    const monthStart = new Date(`${bucket}-01T00:00:00`);
-    const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0, 23, 59, 59, 999);
     const monthAlerts = scoped.filter((alert) =>
-      inRange(parseAlertDate(alert), monthStart, monthEnd),
+      inRange(parseAlertDate(alert), bucket.start, bucket.end),
     );
     let monthResponded = 0;
     let monthResolved = 0;
+    let monthResponseMinutesTotal = 0;
+    let monthResponseCount = 0;
+
     for (const alert of monthAlerts) {
       const status = String(alert.status || "").toLowerCase();
       if (status === "responded" || status === "resolved") monthResponded += 1;
       if (status === "resolved") monthResolved += 1;
+
+      const created = parseAlertDate(alert);
+      const respondedAt = responseMap.get(alert.alertId);
+      if (created && respondedAt) {
+        const minutes = (respondedAt - created.getTime()) / 60000;
+        if (minutes >= 0 && minutes < 24 * 60) {
+          monthResponseMinutesTotal += minutes;
+          monthResponseCount += 1;
+        }
+      }
     }
+
+    const resolutionRate = monthAlerts.length > 0 ? Math.round((monthResolved / monthAlerts.length) * 100) : 0;
+    const avgResponseMin = monthResponseCount > 0 ? Math.round((monthResponseMinutesTotal / monthResponseCount) * 10) / 10 : 0;
+
     return {
-      label: monthLabelFromKey(bucket),
+      label: bucket.label,
       alerts: monthAlerts.length,
       responded: monthResponded,
       resolved: monthResolved,
+      resolutionRate,
+      avgResponseMin,
     };
   });
+
+  const resolutionRate = scoped.length > 0 ? Math.round((resolved / scoped.length) * 100) : 0;
 
   return {
     totals: {
       alerts: scoped.length,
       responded,
       resolved,
+      resolutionRate,
       avgResponseMin:
         responseCount > 0
           ? Math.round((responseMinutesTotal / responseCount) * 10) / 10
@@ -456,6 +989,19 @@ function computeEmergencyAnalytics(alerts, logs, rangeStart, rangeEnd) {
     },
     monthly,
   };
+}
+
+/** Estimated monthly walking distance (km) from average daily steps. */
+function cohortWalkingDistanceKm(patients, metrics, rangeStart, rangeEnd) {
+  const avgStepsPerDay = cohortAverageSteps(patients, metrics, rangeStart, rangeEnd);
+  const days = enumerateDateKeysBetween(rangeStart, rangeEnd).length || 1;
+  const metersPerStep = 0.76;
+  const kilometers = (avgStepsPerDay * days * metersPerStep) / 1000;
+  return Math.round(kilometers * 10) / 10;
+}
+
+function emergencyAlertCount(alerts, rangeStart, rangeEnd) {
+  return alerts.filter((alert) => inRange(parseAlertDate(alert), rangeStart, rangeEnd)).length;
 }
 
 function formatImprovement(baseline, latest, { suffix = "", invert = false } = {}) {
@@ -477,13 +1023,10 @@ function formatImprovement(baseline, latest, { suffix = "", invert = false } = {
 
 function computeHealthOutcomes({
   patients,
-  appointments,
-  reminders,
-  logs,
+  metrics,
   alerts,
   rangeStart,
   rangeEnd,
-  todayKey,
 }) {
   const buckets = monthBuckets(rangeStart, rangeEnd);
   const baselineKey = buckets[0];
@@ -494,29 +1037,6 @@ function computeHealthOutcomes({
   const latestStart = new Date(`${latestKey}-01T00:00:00`);
   const latestEnd = new Date(latestStart.getFullYear(), latestStart.getMonth() + 1, 0, 23, 59, 59, 999);
 
-  const readmissionBaseline = patients.filter((patient) => {
-    const done = appointments.filter(
-      (row) =>
-        row.userId === patient.patientId &&
-        ATTENDED_STATUSES.has(row.status) &&
-        inRange(row.dateTime, baselineStart, baselineEnd),
-    ).length;
-    return done >= 2;
-  }).length;
-  const readmissionLatest = patients.filter((patient) => {
-    const done = appointments.filter(
-      (row) =>
-        row.userId === patient.patientId &&
-        ATTENDED_STATUSES.has(row.status) &&
-        inRange(row.dateTime, latestStart, latestEnd),
-    ).length;
-    return done >= 2;
-  }).length;
-  const readmissionBaselinePct =
-    patients.length > 0 ? Math.round((readmissionBaseline / patients.length) * 100) : 0;
-  const readmissionLatestPct =
-    patients.length > 0 ? Math.round((readmissionLatest / patients.length) * 100) : 0;
-
   const fallBaseline = alerts.filter(
     (alert) => isFallAlert(alert) && inRange(parseAlertDate(alert), baselineStart, baselineEnd),
   ).length;
@@ -524,47 +1044,17 @@ function computeHealthOutcomes({
     (alert) => isFallAlert(alert) && inRange(parseAlertDate(alert), latestStart, latestEnd),
   ).length;
 
-  const medBaselineValues = patients
-    .map((patient) =>
-      medicationAdherenceForUser(
-        reminders,
-        logs,
-        patient.patientId,
-        baselineStart,
-        baselineEnd,
-        todayKey,
-      ),
-    )
-    .filter((value) => value != null);
-  const medLatestValues = patients
-    .map((patient) =>
-      medicationAdherenceForUser(
-        reminders,
-        logs,
-        patient.patientId,
-        latestStart,
-        latestEnd,
-        todayKey,
-      ),
-    )
-    .filter((value) => value != null);
-  const medBaseline = metricForMonth(medBaselineValues);
-  const medLatest = metricForMonth(medLatestValues);
+  const walkingBaseline = cohortWalkingDistanceKm(
+    patients,
+    metrics,
+    baselineStart,
+    baselineEnd,
+  );
+  const walkingLatest = cohortWalkingDistanceKm(patients, metrics, latestStart, latestEnd);
+  const walkingChange = formatImprovement(walkingBaseline, walkingLatest);
 
-  const apptBaselineValues = patients
-    .map((patient) => appointmentStatsForUser(appointments, patient.patientId, baselineStart, baselineEnd).rate)
-    .filter((value) => value != null);
-  const apptLatestValues = patients
-    .map((patient) => appointmentStatsForUser(appointments, patient.patientId, latestStart, latestEnd).rate)
-    .filter((value) => value != null);
-  const apptBaseline = metricForMonth(apptBaselineValues);
-  const apptLatest = metricForMonth(apptLatestValues);
-
-  const emergencyBaseline = computeEmergencyAnalytics(alerts, logs, baselineStart, baselineEnd);
-  const emergencyLatest = computeEmergencyAnalytics(alerts, logs, latestStart, latestEnd);
-
-  const safetyBaseline = Math.round((medBaseline + apptBaseline) / 2);
-  const safetyLatest = Math.round((medLatest + apptLatest) / 2);
+  const alertBaseline = emergencyAlertCount(alerts, baselineStart, baselineEnd);
+  const alertLatest = emergencyAlertCount(alerts, latestStart, latestEnd);
 
   const baselineLabel = monthLabelFromKey(baselineKey).toUpperCase();
   const latestLabel = monthLabelFromKey(latestKey).toUpperCase();
@@ -574,38 +1064,19 @@ function computeHealthOutcomes({
     latestLabel,
     rows: [
       {
-        metric: "Hospital Readmission Rate",
-        ...formatImprovement(readmissionBaselinePct, readmissionLatestPct, { suffix: "%", invert: true }),
-      },
-      {
-        metric: "Patient Fall Incidents",
+        metric: "Fall Incident Count",
         ...formatImprovement(fallBaseline, fallLatest, { invert: true }),
       },
       {
-        metric: "Medication Safety Score",
-        ...formatImprovement(medBaseline, medLatest, { suffix: "%" }),
+        metric: "Walking Distance",
+        baselineText: `${walkingBaseline.toLocaleString("en-US")} km`,
+        latestText: `${walkingLatest.toLocaleString("en-US")} km`,
+        changePct: walkingChange.changePct,
+        positive: walkingChange.positive,
       },
       {
-        metric: "Overall Safety Score",
-        ...formatImprovement(safetyBaseline, safetyLatest),
-      },
-      {
-        metric: "Emergency Avg. Response",
-        baselineText: `${emergencyBaseline.totals.avgResponseMin || 0}m`,
-        latestText: `${emergencyLatest.totals.avgResponseMin || 0}m`,
-        changePct:
-          emergencyBaseline.totals.avgResponseMin > 0
-            ? Math.round(
-                ((emergencyLatest.totals.avgResponseMin - emergencyBaseline.totals.avgResponseMin) /
-                  emergencyBaseline.totals.avgResponseMin) *
-                  100,
-              )
-            : 0,
-        positive: emergencyLatest.totals.avgResponseMin <= emergencyBaseline.totals.avgResponseMin,
-      },
-      {
-        metric: "Appointment Attendance",
-        ...formatImprovement(apptBaseline, apptLatest, { suffix: "%" }),
+        metric: "Emergency Alert Frequency",
+        ...formatImprovement(alertBaseline, alertLatest, { invert: true }),
       },
     ],
   };
@@ -615,10 +1086,13 @@ export function buildReportsAnalytics({
   patients,
   appointments,
   reminders,
+  medications,
   metrics,
   logs,
   alerts,
   rangeKey,
+  grouping = "monthly",
+  staffDocs = [],
 }) {
   const { rangeStart, rangeEnd } = resolveReportRange(rangeKey);
   const todayKey = dateKeyClinic();
@@ -635,8 +1109,9 @@ export function buildReportsAnalytics({
       rangeStart,
       rangeEnd,
     );
-    const medAdherence = medicationAdherenceForUser(
+    const medResult = medicationAdherenceForUser(
       reminders,
+      medications,
       logs,
       patient.patientId,
       rangeStart,
@@ -654,7 +1129,8 @@ export function buildReportsAnalytics({
       patientId: patient.patientId,
       name: patient.name,
       avgSteps,
-      medAdherence: medAdherence ?? 0,
+      medAdherence: medResult.adherence,
+      medAdherenceStatus: medResult.status,
       appointmentsAttended: apptStats.attended,
       appointmentsTotal: apptStats.total,
       appointmentRate: apptStats.rate ?? 0,
@@ -668,6 +1144,7 @@ export function buildReportsAnalytics({
     patients: activePatients,
     appointments,
     reminders,
+    medications,
     metrics,
     logs,
     rangeStart,
@@ -676,19 +1153,17 @@ export function buildReportsAnalytics({
     rangeKey,
   });
 
-  const emergency = computeEmergencyAnalytics(alerts, logs, rangeStart, rangeEnd);
+  const emergency = computeEmergencyAnalytics(alerts, logs, rangeStart, rangeEnd, grouping);
   const outcomes = computeHealthOutcomes({
     patients: activePatients,
-    appointments,
-    reminders,
     metrics,
-    logs,
     alerts,
     rangeStart,
     rangeEnd,
-    todayKey,
-    rangeKey,
   });
+
+  const patientGrowth = computeGrowthData(patients, staffDocs, rangeStart, rangeEnd);
+  const appointmentReports = computeAppointmentReports(appointments, rangeStart, rangeEnd, grouping);
 
   return {
     userActivity,
@@ -696,10 +1171,12 @@ export function buildReportsAnalytics({
     emergency,
     outcomes,
     patientCount: userActivity.length,
+    patientGrowth,
+    appointmentReports,
   };
 }
 
-export async function fetchReportsData(rangeKey = REPORT_RANGES.ALL) {
+export async function fetchReportsData(rangeKey = REPORT_RANGES.ALL, grouping = "monthly") {
   const queries = [
     {
       name: "users",
@@ -709,15 +1186,17 @@ export async function fetchReportsData(rangeKey = REPORT_RANGES.ALL) {
     {
       name: "appointments",
       required: true,
-      run: () =>
-        getDocs(
-          query(collection(db, APPOINTMENTS_COLLECTION), orderBy("dateTime", "asc")),
-        ),
+      run: () => getDocs(collection(db, APPOINTMENTS_COLLECTION)),
     },
     {
       name: "medicationreminders",
       required: true,
       run: () => getDocs(collection(db, MEDICATION_REMINDERS_COLLECTION)),
+    },
+    {
+      name: "medications",
+      required: true,
+      run: () => getDocs(collection(db, MEDICATIONS_COLLECTION)),
     },
     {
       name: "activity",
@@ -745,6 +1224,16 @@ export async function fetchReportsData(rangeKey = REPORT_RANGES.ALL) {
       name: "emergencyalerts",
       required: true,
       run: () => getDocs(collection(db, EMERGENCY_ALERTS_COLLECTION)),
+    },
+    {
+      name: "healthcarestaff",
+      required: true,
+      run: () => getDocs(collection(db, "healthcarestaff")),
+    },
+    {
+      name: "caregiver",
+      required: false,
+      run: () => getDocs(collection(db, "caregiver")),
     },
   ];
 
@@ -777,6 +1266,7 @@ export async function fetchReportsData(rangeKey = REPORT_RANGES.ALL) {
   const patients = byName.users.docs.map(mapUserDoc);
   const appointments = byName.appointments.docs.map(mapAppointmentRow).filter(Boolean);
   const reminders = byName.medicationreminders.docs.map(mapReminderDoc).filter(Boolean);
+  const medications = byName.medications.docs.map(mapMedicationDoc).filter(Boolean);
   const activityMetrics = byName.activity
     ? byName.activity.docs.map(mapMetricDoc).filter(Boolean)
     : [];
@@ -788,6 +1278,26 @@ export async function fetchReportsData(rangeKey = REPORT_RANGES.ALL) {
     ? byName.activityLogs.docs.map(mapActivityLogDoc)
     : [];
   const alerts = byName.emergencyalerts.docs.map(mapEmergencyAlertDoc).filter(Boolean);
+  const staffDocs = [
+    ...byName.healthcarestaff.docs.map((docSnap) => {
+      const data = docSnap.data() || {};
+      return {
+        uid: docSnap.id,
+        role: normalizeStaffRole(data.role),
+        createdAt: timestampToDate(data.createdAt) || data.createdAt,
+      };
+    }),
+    ...(byName.caregiver
+      ? byName.caregiver.docs.map((docSnap) => {
+          const data = docSnap.data() || {};
+          return {
+            uid: docSnap.id,
+            role: "caregiver",
+            createdAt: timestampToDate(data.createdAt) || data.createdAt,
+          };
+        })
+      : []),
+  ];
 
   const warnings = results
     .filter((entry) => !entry.required && entry.error)
@@ -797,10 +1307,13 @@ export async function fetchReportsData(rangeKey = REPORT_RANGES.ALL) {
     patients,
     appointments,
     reminders,
+    medications,
     metrics,
     logs,
     alerts,
     rangeKey,
+    grouping,
+    staffDocs,
   });
 
   return { ...report, warnings };

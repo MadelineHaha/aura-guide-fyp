@@ -15,6 +15,9 @@ class PatientNotificationItem {
     required this.status,
     this.scheduledTime,
     this.medicationName,
+    this.reminderId,
+    this.medicationId,
+    this.isUnreadInFirestore = false,
     required this.sortMillis,
   });
 
@@ -27,5 +30,8 @@ class PatientNotificationItem {
   final PatientNotificationStatus status;
   final Timestamp? scheduledTime;
   final String? medicationName;
+  final String? reminderId;
+  final String? medicationId;
+  final bool isUnreadInFirestore;
   final int sortMillis;
 }

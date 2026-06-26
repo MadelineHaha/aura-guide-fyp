@@ -4,6 +4,7 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../models/navigation_destination.dart';
+import '../utils/place_search_matching.dart';
 import 'activity_log_actions.dart';
 import 'activity_log_service.dart';
 import 'navigation_storage.dart';
@@ -54,22 +55,25 @@ class NavigationService {
     return matches;
   }
 
-  /// Saved and recent places matching [query]. Does not add a free-text fallback.
+  /// Saved and recent places matching [query] (name, address, category).
   List<NavDestination> searchLocal(String query) {
-    final trimmed = query.trim().toLowerCase();
+    final trimmed = query.trim();
     if (trimmed.isEmpty) return const [];
 
     final matches = <NavDestination>[];
     final seen = <String>{};
 
     void addIfMatch(NavDestination item) {
-      final key = '${item.label}|${item.address}'.toLowerCase();
-      if (seen.contains(key)) return;
-      if (item.label.toLowerCase().contains(trimmed) ||
-          item.address.toLowerCase().contains(trimmed)) {
-        seen.add(key);
-        matches.add(item);
+      if (!PlaceSearchMatcher.matches(query: trimmed, destination: item)) {
+        return;
       }
+
+      final key = item.hasCoordinates
+          ? '${item.latitude!.toStringAsFixed(4)}|${item.longitude!.toStringAsFixed(4)}'
+          : '${item.label}|${item.address}'.toLowerCase();
+      if (seen.contains(key)) return;
+      seen.add(key);
+      matches.add(item);
     }
 
     if (_home != null) addIfMatch(_home!);
@@ -78,7 +82,22 @@ class NavigationService {
       addIfMatch(item);
     }
 
+    matches.sort(
+      (a, b) => PlaceSearchMatcher
+          .score(trimmed, b)
+          .compareTo(PlaceSearchMatcher.score(trimmed, a)),
+    );
+
     return matches;
+  }
+
+  /// All saved destinations (home, work, recents) for local search.
+  List<NavDestination> get allSavedDestinations {
+    final items = <NavDestination>[];
+    if (_home != null) items.add(_home!);
+    if (_work != null) items.add(_work!);
+    items.addAll(_recents);
+    return items;
   }
 
   Future<void> rememberRecent(NavDestination destination) async {

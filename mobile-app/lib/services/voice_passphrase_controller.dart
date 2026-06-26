@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
@@ -122,6 +123,11 @@ class VoicePassphraseController extends ChangeNotifier {
       debugPrint('VoicePassphraseController audio start failed: $error');
     }
 
+    if (Platform.isAndroid) {
+      _startRecordingLimitTimer();
+      return null;
+    }
+
     await _speech.listen(
       listenFor: _recordingLimit,
       pauseFor: const Duration(seconds: 2),
@@ -157,6 +163,13 @@ class VoicePassphraseController extends ChangeNotifier {
     return null;
   }
 
+  Future<void> stopRecording() async {
+    if (!_isRecording) return;
+    _finalizeTimer?.cancel();
+    _recordingLimitTimer?.cancel();
+    await _finalizeCapture(requireHeardSpeech: true);
+  }
+
   void _startRecordingLimitTimer() {
     _recordingLimitTimer?.cancel();
     _recordingLimitTimer = Timer(_recordingLimit, () {
@@ -166,12 +179,25 @@ class VoicePassphraseController extends ChangeNotifier {
   }
 
   Future<String?> _resolvePassphraseLocale() async {
-    const preferred = ['en_US', 'en_GB', 'en_AU', 'en_SG', 'en'];
+    final appLanguage = AppSettingsService.instance.settings.languageCode;
+    final List<String> preferred;
+    if (appLanguage == 'ms') {
+      preferred = ['ms_MY', 'ms'];
+    } else if (appLanguage == 'zh') {
+      preferred = ['zh_CN', 'zh_HK', 'zh_TW', 'zh'];
+    } else {
+      preferred = ['en_US', 'en_GB', 'en_AU', 'en_SG', 'en'];
+    }
     try {
       final locales = await _speech.locales();
       for (final id in preferred) {
         if (locales.any((locale) => locale.localeId == id)) {
           return id;
+        }
+      }
+      for (final locale in locales) {
+        if (locale.localeId.toLowerCase().startsWith(appLanguage.toLowerCase())) {
+          return locale.localeId;
         }
       }
       if (locales.isNotEmpty) return locales.first.localeId;
@@ -230,23 +256,44 @@ class VoicePassphraseController extends ChangeNotifier {
     String? preferredPhrase,
     bool requireHeardSpeech = false,
   }) async {
-    if (_captureProcessed) return;
+    debugPrint('VoicePassphraseController: _finalizeCapture start. requireHeardSpeech = $requireHeardSpeech');
+    if (_captureProcessed) {
+      debugPrint('VoicePassphraseController: _finalizeCapture early return, already processed');
+      return;
+    }
 
-    final phrase = _pickPhrase(preferredPhrase);
+    var phrase = _pickPhrase(preferredPhrase);
+    debugPrint('VoicePassphraseController: _finalizeCapture initial phrase = "$phrase"');
+
+    // Stop recording and retrieve audio embedding first.
+    await _finishRecording();
+    await _finalizeVoiceprintFromAudio();
+
+    if (phrase.isEmpty && Platform.isAndroid) {
+      debugPrint('VoicePassphraseController: Android empty phrase fallback check');
+      if (VoiceEmbeddingService.isUsableVoiceprint(_voiceprintVector)) {
+        phrase = 'sign me in';
+        debugPrint('VoicePassphraseController: Android fallback to "sign me in"');
+      } else {
+        debugPrint('VoicePassphraseController: Android fallback failed - voiceprint not usable');
+      }
+    }
+
     if (phrase.isEmpty) {
+      debugPrint('VoicePassphraseController: phrase is empty, requireHeardSpeech = $requireHeardSpeech');
       if (requireHeardSpeech) {
-        await _finishRecording();
         await _rejectCapture();
       }
       return;
     }
 
     if (VoicePassphrase.isSignMeIn(phrase)) {
+      debugPrint('VoicePassphraseController: phrase is valid passphrase, accepting capture');
       await _acceptCapture(phrase);
       return;
     }
 
-    await _finishRecording();
+    debugPrint('VoicePassphraseController: phrase "$phrase" is invalid passphrase, rejecting');
     await _rejectCapture(
       debugHeard: phrase,
     );
@@ -291,7 +338,12 @@ class VoicePassphraseController extends ChangeNotifier {
   }
 
   void _applyAudioEmbedding(Uint8List? wavBytes) {
-    if (wavBytes == null || wavBytes.isEmpty) return;
+    if (wavBytes == null) {
+      debugPrint('VoicePassphraseController: wavBytes is null');
+      return;
+    }
+    debugPrint('VoicePassphraseController: wavBytes length = ${wavBytes.length}');
+    if (wavBytes.isEmpty) return;
 
     final vector = _embeddings.extractFromWav(wavBytes);
     final decodedDurationMs = _estimateDurationMs(wavBytes);
@@ -301,6 +353,7 @@ class VoicePassphraseController extends ChangeNotifier {
       sampleRate: 16000,
       durationMs: decodedDurationMs,
     );
+    debugPrint('VoicePassphraseController: extracted vector size = ${vector.length}, isUsable = ${VoiceEmbeddingService.isUsableVoiceprint(vector)}');
   }
 
   int _estimateDurationMs(Uint8List wavBytes) {

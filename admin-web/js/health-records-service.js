@@ -14,11 +14,9 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 
 import {
-
+  getDownloadURL,
   ref,
-
   uploadBytes,
-
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-storage.js";
 
 import { db, storage } from "./firebase.js";
@@ -81,13 +79,55 @@ const ALLOWED_FILE_TYPES = {
 
 const OTHER_RECORD_TYPE_PATTERN = /^[A-Za-z0-9 ]+$/;
 
+const FILE_TYPE_MIME = {
+  PDF: "application/pdf",
+  JPG: "image/jpeg",
+  JPEG: "image/jpeg",
+  PNG: "image/png",
+  WEBP: "image/webp",
+  DOC: "application/msword",
+  DOCX: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+};
+
+export function mimeTypeForHealthRecordFile(fileType) {
+  const key = String(fileType || "").trim().toUpperCase();
+  return FILE_TYPE_MIME[key] || "application/octet-stream";
+}
+
+function detectMimeFromBase64(base64) {
+  const trimmed = String(base64 || "").trim();
+  if (trimmed.startsWith("data:")) {
+    const match = trimmed.match(/^data:([^;]+);/);
+    return match?.[1] || "";
+  }
+  const head = trimmed.slice(0, 12);
+  if (head.startsWith("UklGR")) return "image/webp";
+  if (head.startsWith("/9j/")) return "image/jpeg";
+  if (head.startsWith("iVBOR")) return "image/png";
+  if (head.startsWith("JVBER")) return "application/pdf";
+  return "";
+}
+
+export function buildHealthRecordDataUrl(base64, fileType) {
+  const raw = String(base64 || "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("data:")) return raw;
+  const mime =
+    detectMimeFromBase64(raw) || mimeTypeForHealthRecordFile(fileType);
+  return `data:${mime};base64,${raw}`;
+}
+
 export const PRESET_RECORD_TYPES = [
+  "Diagnosis",
   "Eye Examination",
   "General Checkup",
   "Lab Results",
   "Imaging",
   "Prescription Update",
 ];
+
+export const REHAB_PLAN_RECORD_TYPE = "Rehabilitation Plan";
+export const THERAPY_SESSION_RECORD_TYPE = "Therapy Session";
 
 /** e.g. "the record is good" → "The record is good." */
 export function capitalizeClinicalSummary(text) {
@@ -597,6 +637,10 @@ export function mapHealthRecordDoc(docSnap, staffByStaffId) {
 
     filePath: data.filePath || "",
 
+    hasInlineFile: Boolean(data.fileData),
+
+    hasFile: Boolean(data.filePath) || Boolean(data.fileData),
+
   };
 
 }
@@ -632,18 +676,84 @@ function mapHealthRecordsSnap(snap, staffByStaffId) {
     .sort((a, b) => String(b.dateCreated).localeCompare(String(a.dateCreated)));
 }
 
+async function resolveStaffLookup() {
+  try {
+    const staffList = await fetchActiveStaff();
+    return new Map(staffList.map((staff) => [staff.staffID, staff]));
+  } catch {
+    return new Map();
+  }
+}
+
+async function queryHealthRecordsForUserId(userId) {
+  const trimmed = String(userId || "").trim();
+  if (!trimmed || trimmed === "—") {
+    return { empty: true, docs: [] };
+  }
+
+  const coll = collection(db, HEALTH_RECORDS_COLLECTION);
+  let snap = await getDocs(query(coll, where("userId", "==", trimmed)));
+  if (snap.empty) {
+    snap = await getDocs(query(coll, where("userID", "==", trimmed)));
+  }
+  return snap;
+}
+
 export async function fetchHealthRecordsByUserId(userId) {
-  const q = query(
-    collection(db, HEALTH_RECORDS_COLLECTION),
-    where("userId", "==", userId),
-  );
-  const snap = await getDocs(q);
+  const snap = await queryHealthRecordsForUserId(userId);
   if (snap.empty) return [];
-  const staffList = await fetchActiveStaff();
-  const staffByStaffId = new Map(
-    staffList.map((staff) => [staff.staffID, staff]),
-  );
+  const staffByStaffId = await resolveStaffLookup();
   return mapHealthRecordsSnap(snap, staffByStaffId);
+}
+
+/** Count health records per patient user id (one collection read for list badges). */
+export async function fetchHealthRecordCountsByUserId() {
+  const snap = await getDocs(collection(db, HEALTH_RECORDS_COLLECTION));
+  const counts = new Map();
+
+  snap.docs.forEach((docSnap) => {
+    const data = docSnap.data();
+    const userId = String(data.userId || data.userID || "").trim();
+    if (!userId) return;
+    counts.set(userId, (counts.get(userId) || 0) + 1);
+  });
+
+  return counts;
+}
+
+/** Resolves a viewable URL for an attached report (inline base64 or Firebase Storage). */
+export async function getHealthRecordFileUrl(recordId) {
+  const trimmedId = String(recordId || "").trim();
+  if (!trimmedId) return null;
+
+  const snap = await getDoc(doc(db, HEALTH_RECORDS_COLLECTION, trimmedId));
+  if (!snap.exists()) return null;
+
+  const data = snap.data();
+  const fileType = data.fileType || "";
+
+  if (data.fileData) {
+    return buildHealthRecordDataUrl(data.fileData, fileType);
+  }
+
+  const filePath = String(data.filePath || "").trim();
+  if (!filePath) return null;
+
+  try {
+    return await getDownloadURL(ref(storage, filePath));
+  } catch {
+    return null;
+  }
+}
+
+export function isHealthRecordImageMime(mimeType) {
+  return String(mimeType || "").startsWith("image/");
+}
+
+export function isHealthRecordPdfMime(mimeType, fileType) {
+  const mime = String(mimeType || "").toLowerCase();
+  if (mime === "application/pdf") return true;
+  return String(fileType || "").trim().toUpperCase() === "PDF";
 }
 
 /** Real-time health records for one patient (modal / detail view). */
@@ -842,6 +952,57 @@ export async function createHealthRecord({
 
   };
 
+}
+
+/** Text-only clinical notes (rehab plans, therapy sessions) without an attachment. */
+export async function createTextHealthRecord({
+  userId,
+  staffId,
+  recordType,
+  title,
+}) {
+  const validationError = validateHealthRecordInput({
+    recordType,
+    title,
+    file: null,
+    userId,
+    staffId,
+    requireFile: false,
+  });
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  const counterRef = doc(db, ...HEALTH_RECORD_COUNTER_PATH);
+  const dateCreated = todayDateString();
+  const trimmedType = recordType.trim();
+  const trimmedTitle = formatTypedSentence(title);
+
+  return runTransaction(db, async (transaction) => {
+    const counterSnap = await transaction.get(counterRef);
+    const next = counterSnap.exists()
+      ? Number(counterSnap.data().next) || 1
+      : 1;
+    const recordId = `H${String(next).padStart(5, "0")}`;
+    const recordRef = doc(db, HEALTH_RECORDS_COLLECTION, recordId);
+
+    transaction.set(counterRef, { next: next + 1 }, { merge: true });
+    transaction.set(
+      recordRef,
+      buildRecordPayload({
+        recordId,
+        dateCreated,
+        recordType: trimmedType,
+        title: trimmedTitle,
+        fileType: "TEXT",
+        filePath: "",
+        userId,
+        staffId,
+      }),
+    );
+
+    return { recordId, dateCreated };
+  });
 }
 
 export async function fetchHealthRecordById(recordId) {

@@ -84,11 +84,18 @@ class ObstacleInferenceWorker {
     }
 
     try {
+      final preprocessStart = DateTime.now();
+
       final inputFlat = await ObstacleFramePacket.toModelInputAsync(
         image,
         inputSize: _inputSize,
         inputLength: _inputLength,
       );
+
+      debugPrint(
+        'PREPROCESS TIME = ${DateTime.now().difference(preprocessStart).inMilliseconds} ms',
+      );
+
       return _runInference(
         isolateInterpreter,
         inputShape,
@@ -158,7 +165,14 @@ class ObstacleInferenceWorker {
           (state) => state == IsolateInterpreterState.idle,
         );
       }
+
+      final start = DateTime.now();
+
       await isolateInterpreter.run(input, output);
+
+      debugPrint(
+        'YOLO TIME = ${DateTime.now().difference(start).inMilliseconds} ms',
+      );
 
       return _parseOutput(
         output,
@@ -433,31 +447,28 @@ ObstacleDetectionResult? _parseOutput(
 }) {
   const numClasses = 31;
 
-  double confidenceThresholdForClass(
-    int classId, {
-    required double centerDistance,
-  }) {
-    double base;
+  double _classThreshold(int classId, double centerDistance) {
     switch (classId) {
       case 3: // Person
-        base = 0.27;
-      case 10: // Dog
-        base = 0.26;
-      case 2: // Car
-      case 15: // Truck
-      case 16: // Bus
-        base = 0.30;
+        return 0.20;
+
+      case 25: // Door
+      case 26: // Elevator
+      case 27: // Escalator
+        return 0.20;
+
       case 23: // Chair
+        return 0.10;
+
       case 17: // Bench
-      case 18: // Traffic Cone
-        base = 0.25;
+        return 0.10;
+
+      case 4: // Stairs
+        return 0.10;
+
       default:
-        base = 0.28;
+        return 0.25;
     }
-    // Lower bar for objects in the center of the frame (directly in front).
-    if (centerDistance < 0.18) return base - 0.07;
-    if (centerDistance < 0.30) return base - 0.04;
-    return base;
   }
 
   if (frameWidth <= 0 || frameHeight <= 0) {
@@ -478,36 +489,47 @@ ObstacleDetectionResult? _parseOutput(
     var bestClass = -1;
     var bestScore = 0.0;
 
-    for (var classIndex = 0; classIndex < numClasses; classIndex++) {
-      final classScore =
-          _readOutput(output, 4 + classIndex, anchor, anchorCount);
-      if (classScore > bestScore) {
-        bestScore = classScore;
-        bestClass = classIndex;
-      }
+  for (var classIndex = 0; classIndex < numClasses; classIndex++) {
+    final classScore =
+        _readOutput(output, 4 + classIndex, anchor, anchorCount);
+    if (classScore > bestScore) {
+      bestScore = classScore;
+      bestClass = classIndex;
     }
+  }
 
-    if (bestScore > debugBestScore) {
-      debugBestScore = bestScore;
-      debugBestClass = bestClass;
-    }
+  if (bestScore > debugBestScore) {
+    debugBestScore = bestScore;
+    debugBestClass = bestClass;
+  }
 
-    if (bestClass < 0 || _excludedClassIds.contains(bestClass)) continue;
+  /*
+  if (bestClass >= 0 && bestScore > 0.15) {
+    debugPrint(
+      'Candidate: ${_yoloClassNames[bestClass]} '
+      'score=${bestScore.toStringAsFixed(3)}',
+    );
+  }
+   */
+
+if (bestClass < 0 || _excludedClassIds.contains(bestClass)) continue;
 
     final cx = _readOutput(output, 0, anchor, anchorCount);
     final cy = _readOutput(output, 1, anchor, anchorCount);
     final centerDistance = math.sqrt(
       math.pow(cx - 0.5, 2) + math.pow(cy - 0.5, 2),
     );
-    if (bestScore < confidenceThresholdForClass(
+    if (bestScore < _classThreshold(
       bestClass,
-      centerDistance: centerDistance,
+      centerDistance,
     )) {
       continue;
     }
     final boxW = _readOutput(output, 2, anchor, anchorCount).abs();
     final boxH = _readOutput(output, 3, anchor, anchorCount).abs();
-    if (boxW <= 0.01 || boxH <= 0.01) continue;
+    if (boxW <= 0.03 || boxH <= 0.03) {
+      continue;
+    }
 
     candidates.add(
       _ParsedBox(
@@ -526,6 +548,15 @@ ObstacleDetectionResult? _parseOutput(
       : '';
 
   final nmsBoxes = _nonMaxSuppression(candidates, iouThreshold: 0.42);
+  /*
+  for (final box in nmsBoxes) {
+    debugPrint(
+        'NMS: ${_yoloClassNames[box.classId]} '
+            'score=${box.score.toStringAsFixed(2)}'
+    );
+  }
+*/
+
   if (nmsBoxes.isEmpty) {
     return ObstacleDetectionResult(
       label: '',
@@ -543,7 +574,7 @@ ObstacleDetectionResult? _parseOutput(
     final centerDistance = math.sqrt(
       math.pow(box.cx - 0.5, 2) + math.pow(box.cy - 0.5, 2),
     );
-    final priorityBoost = box.classId == 3 ? 1.15 : 1.0;
+    final priorityBoost = 1.0;
     final weighted = box.score *
         (1.30 - centerDistance.clamp(0.0, 0.80)) *
         priorityBoost;
@@ -560,6 +591,7 @@ ObstacleDetectionResult? _parseOutput(
     w: winner.w,
     h: winner.h,
   );
+
   if (bounds == null) {
     return ObstacleDetectionResult(
       label: '',
@@ -577,6 +609,13 @@ ObstacleDetectionResult? _parseOutput(
   final distance = letterbox.estimateDistanceMeters(
     classId: winner.classId,
     boxHeightNorm: bounds.height,
+  );
+
+  debugPrint(
+    'YOLO DETECTED: '
+        '$label '
+        'conf=${winner.score.toStringAsFixed(2)} '
+        'distance=${distance.toStringAsFixed(1)}m',
   );
 
   return ObstacleDetectionResult(

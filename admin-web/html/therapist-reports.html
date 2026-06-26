@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reports — Aura Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body class="staff-app">
+  <header class="staff-nav">
+    <a class="staff-nav-brand" href="staff-dashboard.html">
+      <img class="logo" src="../assets/images/logo.png" alt="" width="40" height="40" />
+      <span class="staff-nav-brand-text">Aura Guide</span>
+    </a>
+    <div class="staff-nav-links-wrap">
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--prev" aria-label="Scroll navigation left">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <nav class="staff-nav-links" aria-label="Main">
+        <!-- Dynamically injected by staff-shell.js -->
+      </nav>
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--next" aria-label="Scroll navigation right">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
+    <div class="staff-nav-user">
+      <button type="button" class="staff-avatar" id="btn-user-menu" aria-label="Account menu">
+        <span class="staff-avatar-initials" id="staff-avatar-initials">—</span>
+      </button>
+      <div class="staff-user-menu" id="user-menu" hidden>
+        <p class="staff-user-menu-name" id="menu-staff-name">—</p>
+        <p class="staff-user-menu-role" id="menu-staff-role">—</p>
+        <button type="button" class="staff-user-menu-signout" id="btn-sign-out">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="staff-page reports-page">
+    <header class="page-toolbar">
+      <div class="page-toolbar-heading">
+        <h1 class="page-title">Reports &amp; Analytics</h1>
+        <p class="page-subtitle">Insights into therapy activity and patient rehabilitation progress.</p>
+      </div>
+      <div class="reports-export-actions">
+        <button type="button" class="btn-primary btn-quick-action" id="btn-export-pdf">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          Export PDF
+        </button>
+      </div>
+    </header>
+
+    <section class="reports-section table-card">
+      <div class="reports-section-header">
+        <h2 class="panel-title">Therapy Activity Report</h2>
+      </div>
+      <div class="stat-cards" style="padding: 18px 18px 0; margin-bottom: 0; grid-template-columns: repeat(4, 1fr);">
+        <article class="stat-card">
+          <p class="stat-card-label">Sessions Conducted</p>
+          <p class="stat-card-value" id="activity-conducted">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Completed</p>
+          <p class="stat-card-value" id="activity-completed">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Cancelled</p>
+          <p class="stat-card-value" id="activity-cancelled">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">No-show</p>
+          <p class="stat-card-value" id="activity-noshow">—</p>
+        </article>
+      </div>
+      <div class="reports-chart-wrap" style="height: 300px; padding: 24px;">
+        <canvas id="therapy-activity-chart" aria-label="Therapy activity chart"></canvas>
+      </div>
+    </section>
+
+    <section class="reports-section table-card">
+      <div class="reports-section-header">
+        <h2 class="panel-title">Rehabilitation Progress Report</h2>
+      </div>
+      <div class="stat-cards" style="padding: 18px 18px 0; margin-bottom: 0; grid-template-columns: repeat(3, 1fr);">
+        <article class="stat-card">
+          <p class="stat-card-label">Patients Improved</p>
+          <p class="stat-card-value text-success" id="progress-improved">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Patients Stable</p>
+          <p class="stat-card-value text-warning" id="progress-stable">—</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-card-label">Requiring Additional Training</p>
+          <p class="stat-card-value text-danger" id="progress-training">—</p>
+        </article>
+      </div>
+      <div class="reports-chart-wrap" style="height: 300px; padding: 24px;">
+        <canvas id="rehab-progress-chart" aria-label="Rehabilitation progress chart"></canvas>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script type="module" src="../js/therapist-reports.js"></script>
+</body>
+</html>

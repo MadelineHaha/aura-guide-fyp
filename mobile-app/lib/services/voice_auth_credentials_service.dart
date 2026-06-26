@@ -44,6 +44,45 @@ class VoiceAuthCredentialsService {
     return chars.join();
   }
 
+  Future<({String uid, VoiceAuthCredentials credentials})>
+      createAccountWithEmail(String email) async {
+    final random = Random.secure();
+    final password = _generatePassword(random);
+    final normalizedEmail = email.trim().toLowerCase();
+
+    final credential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+      email: normalizedEmail,
+      password: password,
+    );
+
+    final uid = credential.user?.uid;
+    if (uid == null) {
+      throw StateError('No uid returned from Firebase Auth.');
+    }
+
+    final credentials = VoiceAuthCredentials(
+      email: normalizedEmail,
+      password: password,
+    );
+    await save(uid, credentials);
+
+    return (uid: uid, credentials: credentials);
+  }
+
+  Future<VoiceAuthCredentials?> loadByEmail(String email) async {
+    final prefs = await SharedPreferences.getInstance();
+    final normalizedEmail = email.trim().toLowerCase();
+    final keys = prefs.getKeys();
+    for (final key in keys) {
+      if (!key.startsWith('voice_auth_email_')) continue;
+      final storedEmail = prefs.getString(key);
+      if (storedEmail?.toLowerCase() != normalizedEmail) continue;
+      final authUid = key.substring('voice_auth_email_'.length);
+      return load(authUid);
+    }
+    return null;
+  }
+
   Future<({String uid, VoiceAuthCredentials credentials, String profileEmail})>
       createVoiceOnlyAccount() async {
     final random = Random.secure();

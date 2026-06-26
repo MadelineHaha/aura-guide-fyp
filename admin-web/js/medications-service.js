@@ -16,10 +16,11 @@ import {
   combineDateAndTime,
   timeToInputValue,
   todayDateString,
-} from "./appointments-service.js";
+} from "./clinic-date-utils.js";
 import { formatTypedSentence } from "./text-format.js";
 import { formatStaffDisplayName } from "./staff-name-format.js";
 import { HEALTHCARE_STAFF_COLLECTION } from "./staff-auth.js";
+import { fetchActiveStaff } from "./staff-list-service.js";
 
 export const MEDICATIONS_COLLECTION = "medications";
 export const MEDICATION_REMINDERS_COLLECTION = "medicationreminders";
@@ -46,6 +47,27 @@ export function reminderCountForFrequency(frequency) {
 
 export function repeatPatternForFrequency(frequency) {
   return String(frequency || "").trim() === "Weekly" ? "Weekly" : "Daily";
+}
+
+export function defaultReminderTimesForFrequency(frequency) {
+  switch (String(frequency || "").trim()) {
+    case "Twice daily":
+      return ["08:00", "20:00"];
+    case "Three times daily":
+      return ["08:00", "14:00", "20:00"];
+    case "Once daily":
+    case "Weekly":
+    default:
+      return ["08:00"];
+  }
+}
+
+function isReminderSlotTemplate(data) {
+  return !String(data?.doseDate || "").trim();
+}
+
+function filterSlotReminderDocs(docs) {
+  return docs.filter((docSnap) => isReminderSlotTemplate(docSnap.data()));
 }
 
 function formatReminderLabel(date) {
@@ -185,7 +207,8 @@ export async function fetchMedicationWithReminders(medicationId) {
     where("medicationId", "==", trimmedId),
   );
   const remindersSnap = await getDocs(remindersQuery);
-  const reminderTimes = sortReminderDocsByTime(remindersSnap.docs).map((docSnap) =>
+  const slotDocs = filterSlotReminderDocs(remindersSnap.docs);
+  const reminderTimes = sortReminderDocsByTime(slotDocs).map((docSnap) =>
     reminderTimeInputFromTimestamp(docSnap.data().reminderTime),
   );
 
@@ -202,19 +225,6 @@ export async function fetchMedicationWithReminders(medicationId) {
     status: String(data.status || MEDICATION_STATUS_ACTIVE).trim(),
     reminderTimes,
   };
-}
-
-export function defaultReminderTimesForFrequency(frequency) {
-  switch (String(frequency || "").trim()) {
-    case "Twice daily":
-      return ["08:00", "20:00"];
-    case "Three times daily":
-      return ["08:00", "14:00", "20:00"];
-    case "Once daily":
-    case "Weekly":
-    default:
-      return ["08:00"];
-  }
 }
 
 function pickMissingReminderTimes(existingTimes, frequency, countNeeded) {
@@ -234,6 +244,153 @@ function pickMissingReminderTimes(existingTimes, frequency, countNeeded) {
     if (index > defaults.length * 4) break;
   }
   return missing;
+}
+
+function isMedicationDocActiveOnDate(medication, doseDate) {
+  if (!medication) return false;
+  if (String(medication.status || MEDICATION_STATUS_ACTIVE).trim() === MEDICATION_STATUS_CANCELLED) {
+    return false;
+  }
+  const startDate = String(medication.startDate || "").trim();
+  const endDate = String(medication.endDate || "").trim();
+  if (!startDate || !endDate) return true;
+  return startDate <= doseDate && endDate >= doseDate;
+}
+
+function dayOfWeekForDate(dateStr) {
+  const parsed = new Date(`${dateStr}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.getDay();
+}
+
+function isWeeklySlotDueOnDate(slotData, doseDate) {
+  const repeat = String(slotData.repeatPattern || "Daily").trim().toLowerCase();
+  if (repeat !== "weekly") return true;
+  const reminderTime = slotData.reminderTime;
+  if (!reminderTime || typeof reminderTime.toDate !== "function") return false;
+  const slotDay = dayOfWeekForDate(reminderTime.toDate().toISOString().slice(0, 10));
+  const doseDay = dayOfWeekForDate(doseDate);
+  return slotDay != null && slotDay === doseDay;
+}
+
+/**
+ * Creates dose-specific medicationreminders rows for one calendar day.
+ * Slot templates (no doseDate) stay unchanged; one row per slot per day is added.
+ */
+export async function createDailyReminderInstancesForMedication({
+  medicationId,
+  doseDate = todayDateString(),
+}) {
+  const trimmedMedId = String(medicationId || "").trim();
+  const trimmedDate = String(doseDate || "").trim();
+  if (!trimmedMedId || !trimmedDate) return { created: 0 };
+
+  const medicationRef = doc(db, MEDICATIONS_COLLECTION, trimmedMedId);
+  const medicationSnap = await getDoc(medicationRef);
+  if (!medicationSnap.exists()) return { created: 0 };
+
+  const medication = medicationSnap.data();
+  if (!isMedicationDocActiveOnDate(medication, trimmedDate)) return { created: 0 };
+
+  const remindersQuery = query(
+    collection(db, MEDICATION_REMINDERS_COLLECTION),
+    where("medicationId", "==", trimmedMedId),
+  );
+  const remindersSnap = await getDocs(remindersQuery);
+
+  const slots = [];
+  const existingDaily = new Set();
+  for (const docSnap of remindersSnap.docs) {
+    const data = docSnap.data();
+    const dose = String(data.doseDate || "").trim();
+    if (dose) {
+      const slotId = String(data.slotReminderId || "").trim();
+      existingDaily.add(`${dose}|${slotId}`);
+      continue;
+    }
+    slots.push({ id: docSnap.id, data });
+  }
+
+  if (slots.length === 0) return { created: 0 };
+
+  const userId = String(medication.userId || medication.userID || "").trim();
+  const staffId = String(medication.staffId || medication.staffID || "").trim();
+  const reminderCounterRef = doc(db, ...REMINDER_COUNTER_PATH);
+  const remindersRef = collection(db, MEDICATION_REMINDERS_COLLECTION);
+
+  let created = 0;
+  await runTransaction(db, async (transaction) => {
+    const remCounterSnap = await transaction.get(reminderCounterRef);
+    let remNext = remCounterSnap.exists()
+      ? Number(remCounterSnap.data().next) || 1
+      : 1;
+
+    for (const slot of slots) {
+      const slotData = slot.data;
+      const slotReminderId = String(slotData.reminderId || slot.id).trim();
+      if (existingDaily.has(`${trimmedDate}|${slotReminderId}`)) continue;
+      if (!isWeeklySlotDueOnDate(slotData, trimmedDate)) continue;
+
+      const clock = reminderTimeInputFromTimestamp(slotData.reminderTime);
+      const reminderDateTime = combineDateAndTime(trimmedDate, clock);
+      const reminderTs = Timestamp.fromDate(reminderDateTime);
+      const reminderLabel = formatReminderLabel(reminderDateTime);
+      const reminderId = `R${String(remNext).padStart(5, "0")}`;
+      remNext += 1;
+      created += 1;
+
+      transaction.set(doc(remindersRef, reminderId), {
+        reminderId,
+        reminderTime: reminderTs,
+        reminderTimeLabel: reminderLabel,
+        reminderType: slotData.reminderType || "Notification",
+        reminderMessage: slotData.reminderMessage || "",
+        repeatPattern: slotData.repeatPattern || "Daily",
+        status: "Pending",
+        medicationId: trimmedMedId,
+        userId,
+        staffId,
+        doseDate: trimmedDate,
+        slotReminderId,
+        completedDate: "",
+        missedDate: "",
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    if (created > 0) {
+      transaction.set(reminderCounterRef, { next: remNext }, { merge: true });
+    }
+  });
+
+  return { created };
+}
+
+/**
+ * Creates today's dose rows for every active medication belonging to a patient.
+ */
+export async function createDailyReminderInstancesForPatient(
+  userId,
+  doseDate = todayDateString(),
+) {
+  const trimmedUserId = String(userId || "").trim();
+  if (!USER_ID_PATTERN.test(trimmedUserId)) return { created: 0 };
+
+  const medsSnap = await getDocs(
+    query(collection(db, MEDICATIONS_COLLECTION), where("userId", "==", trimmedUserId)),
+  );
+
+  let created = 0;
+  for (const medDoc of medsSnap.docs) {
+    const medicationId = String(medDoc.data().medicationId || medDoc.id).trim();
+    if (!medicationId) continue;
+    const result = await createDailyReminderInstancesForMedication({
+      medicationId,
+      doseDate,
+    });
+    created += result.created;
+  }
+  return { created };
 }
 
 /**
@@ -292,7 +449,7 @@ export async function ensureRemindersForMedications(userId) {
 
       const frequency = String(med.frequency || "").trim();
       const expectedCount = reminderCountForFrequency(frequency);
-      const existingDocs = remindersByMed.get(medicationId) || [];
+      const existingDocs = filterSlotReminderDocs(remindersByMed.get(medicationId) || []);
       if (existingDocs.length >= expectedCount) continue;
 
       const existingTimes = sortReminderDocsByTime(existingDocs).map((docSnap) =>
@@ -336,6 +493,7 @@ export async function ensureRemindersForMedications(userId) {
           medicationId,
           userId: trimmedUserId,
           staffId,
+          doseDate: "",
           completedDate: "",
           createdAt: serverTimestamp(),
         });
@@ -394,7 +552,7 @@ export async function createMedicationWithReminder({
   const medicationsRef = collection(db, MEDICATIONS_COLLECTION);
   const remindersRef = collection(db, MEDICATION_REMINDERS_COLLECTION);
 
-  return runTransaction(db, async (transaction) => {
+  const result = await runTransaction(db, async (transaction) => {
     const medCounterSnap = await transaction.get(medicationCounterRef);
     const medNext = medCounterSnap.exists()
       ? Number(medCounterSnap.data().next) || 1
@@ -443,6 +601,7 @@ export async function createMedicationWithReminder({
         medicationId,
         userId,
         staffId,
+        doseDate: "",
         completedDate: "",
         createdAt: serverTimestamp(),
       });
@@ -452,6 +611,10 @@ export async function createMedicationWithReminder({
 
     return { medicationId, reminderIds };
   });
+
+  const doseDate = startDate > todayDateString() ? startDate : todayDateString();
+  await createDailyReminderInstancesForMedication({ medicationId: result.medicationId, doseDate });
+  return result;
 }
 
 /**
@@ -513,7 +676,9 @@ export async function updateMedicationWithReminder({
     where("medicationId", "==", trimmedId),
   );
   const remindersSnap = await getDocs(remindersQuery);
-  const existingReminders = sortReminderDocsByTime(remindersSnap.docs);
+  const existingSlotDocs = sortReminderDocsByTime(
+    filterSlotReminderDocs(remindersSnap.docs),
+  );
 
   const reminderCounterRef = doc(db, ...REMINDER_COUNTER_PATH);
   const remindersRef = collection(db, MEDICATION_REMINDERS_COLLECTION);
@@ -524,7 +689,7 @@ export async function updateMedicationWithReminder({
       throw new Error("Medication not found.");
     }
 
-    const needNewReminders = times.length > existingReminders.length;
+    const needNewReminders = times.length > existingSlotDocs.length;
     let remNext = 1;
     if (needNewReminders) {
       const remCounterSnap = await transaction.get(reminderCounterRef);
@@ -549,7 +714,7 @@ export async function updateMedicationWithReminder({
       const reminderDateTime = combineDateAndTime(reminderDate, reminderTime);
       const reminderTs = Timestamp.fromDate(reminderDateTime);
       const reminderLabel = formatReminderLabel(reminderDateTime);
-      const existing = existingReminders[i];
+      const existing = existingSlotDocs[i];
 
       if (existing) {
         transaction.update(existing.ref, {
@@ -575,6 +740,7 @@ export async function updateMedicationWithReminder({
           medicationId: trimmedId,
           userId,
           staffId,
+          doseDate: "",
           completedDate: "",
           createdAt: serverTimestamp(),
         });
@@ -585,9 +751,15 @@ export async function updateMedicationWithReminder({
       transaction.set(reminderCounterRef, { next: remNext }, { merge: true });
     }
 
-    for (let i = times.length; i < existingReminders.length; i += 1) {
-      transaction.delete(existingReminders[i].ref);
+    for (let i = times.length; i < existingSlotDocs.length; i += 1) {
+      transaction.delete(existingSlotDocs[i].ref);
     }
+  });
+
+  await ensureRemindersForMedications(userId);
+  await createDailyReminderInstancesForMedication({
+    medicationId: trimmedId,
+    doseDate: todayDateString(),
   });
 
   return { medicationId: trimmedId };
@@ -707,6 +879,39 @@ export function isMedicationsAccessError(error) {
   );
 }
 
+export async function fetchMedicationsByUserId(userId) {
+  const trimmedUserId = String(userId || "").trim();
+  const medicationsQuery = query(
+    collection(db, MEDICATIONS_COLLECTION),
+    where("userId", "==", trimmedUserId),
+  );
+  const snap = await getDocs(medicationsQuery);
+  if (snap.empty) return [];
+
+  const staffList = await fetchActiveStaff();
+  const staffByStaffId = new Map(staffList.map((staff) => [staff.staffID, staff]));
+  return mapMedicationsSnap(snap, staffByStaffId).map((medication) => ({
+    ...medication,
+    userId: trimmedUserId,
+    id: medication.medicationId,
+  }));
+}
+
+/** Count medications per patient user id (one collection read for list badges). */
+export async function fetchMedicationCountsByUserId() {
+  const snap = await getDocs(collection(db, MEDICATIONS_COLLECTION));
+  const counts = new Map();
+
+  snap.docs.forEach((docSnap) => {
+    const data = docSnap.data();
+    const userId = String(data.userId || data.userID || "").trim();
+    if (!userId) return;
+    counts.set(userId, (counts.get(userId) || 0) + 1);
+  });
+
+  return counts;
+}
+
 /** Real-time medications for one patient (patients page modal). */
 export function subscribeMedicationsByUserId(userId, onData, onError) {
   const trimmedUserId = String(userId || "").trim();
@@ -724,6 +929,7 @@ export function subscribeMedicationsByUserId(userId, onData, onError) {
     ensureTimer = setTimeout(async () => {
       try {
         await ensureRemindersForMedications(trimmedUserId);
+        await createDailyReminderInstancesForPatient(trimmedUserId);
       } catch (error) {
         console.warn("ensureRemindersForMedications failed:", error);
       }
@@ -784,4 +990,40 @@ export function defaultMedicationEndDate(startDate = todayDateString()) {
   const em = String(end.getMonth() + 1).padStart(2, "0");
   const ed = String(end.getDate()).padStart(2, "0");
   return `${ey}-${em}-${ed}`;
+}
+export async function fetchMedicationAdherence(medicationId) {
+  try {
+    const q = query(
+      collection(db, MEDICATION_REMINDERS_COLLECTION),
+      where("medicationId", "==", medicationId)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) return null;
+
+    let totalPast = 0;
+    let completed = 0;
+    
+    // We only count reminders that are in the past (or due) and either Missed or Completed.
+    // Assuming status is "Pending", "Delivered", "Missed", "Completed".
+    // For adherence, we only care about reminders that are no longer Pending/Delivered,
+    // OR we just use Completed vs (Completed + Missed).
+    
+    snap.forEach(doc => {
+      const data = doc.data();
+      const status = String(data.status || "").trim();
+      
+      if (status === "Completed") {
+        totalPast++;
+        completed++;
+      } else if (status === "Missed") {
+        totalPast++;
+      }
+    });
+
+    if (totalPast === 0) return null; // No history to calculate adherence yet
+    return (completed / totalPast) * 100;
+  } catch (error) {
+    console.error("Failed to fetch medication adherence:", error);
+    return null;
+  }
 }

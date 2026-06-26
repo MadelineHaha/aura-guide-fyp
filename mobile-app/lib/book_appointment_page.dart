@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
 
 import 'l10n/app_localizations.dart';
+import 'models/book_appointment_session.dart';
 import 'models/bookable_slot.dart';
 import 'models/staff_option.dart';
-import 'services/appointments_service.dart';
 import 'utils/appointment_time_slots.dart';
-import 'utils/clinic_datetime.dart';
 import 'widgets/calendar_date_picker_dialog.dart';
 import 'widgets/centered_back_title_bar.dart';
 import 'widgets/date_select_field.dart';
 
 class BookAppointmentPage extends StatefulWidget {
-  const BookAppointmentPage({super.key});
+  const BookAppointmentPage({super.key, this.session});
+
+  final BookAppointmentSession? session;
 
   @override
   State<BookAppointmentPage> createState() => _BookAppointmentPageState();
@@ -22,44 +23,42 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
   static const Color _accent = Color(0xFF63C3C4);
   static const Color _subtext = Color(0xFFB0B0B0);
 
-  final _service = AppointmentsService();
-  int _step = 0;
-  String? _sessionKey;
-  String? _roleKey;
-  StaffOption? _selectedStaff;
-  DateTime? _selectedDate;
-  BookableSlot? _selectedSlot;
-  List<StaffOption> _staff = [];
-  List<BookableSlot> _availableSlots = [];
-  bool _loadingStaff = false;
-  bool _loadingSlots = false;
-  String? _slotsErrorMessage;
-  bool _submitting = false;
+  late final BookAppointmentSession _session;
+  late final bool _ownsSession;
 
-  static const _sessions = <_Option>[
-    _Option('general', 'sessionGeneral', 'sessionGeneralDesc'),
-    _Option('therapist_session', 'sessionTherapist', 'sessionTherapistDesc'),
-    _Option('urgent', 'sessionUrgent', 'sessionUrgentDesc'),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _ownsSession = widget.session == null;
+    _session = widget.session ?? BookAppointmentSession();
+    _session.addListener(_onSessionChanged);
+  }
 
-  static const _roles = <_Option>[
-    _Option('doctor', 'roleDoctor', ''),
-    _Option('therapist', 'roleTherapist', ''),
-    _Option('caregiver', 'roleCaregiver', ''),
-  ];
+  @override
+  void dispose() {
+    _session.removeListener(_onSessionChanged);
+    if (_ownsSession) {
+      _session.dispose();
+    }
+    super.dispose();
+  }
+
+  void _onSessionChanged() {
+    if (mounted) setState(() {});
+  }
 
   String _l10n(BuildContext context, String key) => context.l10n.t(key);
 
   String _stepTitle(BuildContext context) {
-    switch (_step) {
+    switch (_session.step) {
       case 0:
         return _l10n(context, 'chooseSessionType');
       case 1:
         return _l10n(context, 'chooseSpecialistRole');
       case 2:
-        return _roleKey == 'doctor'
+        return _session.roleKey == 'doctor'
             ? _l10n(context, 'selectDoctor')
-            : _roleKey == 'therapist'
+            : _session.roleKey == 'therapist'
                 ? _l10n(context, 'selectTherapist')
                 : _l10n(context, 'selectCaregiver');
       default:
@@ -80,141 +79,12 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
     }
   }
 
-  Future<void> _loadStaffForRole(String roleKey) async {
-    setState(() {
-      _loadingStaff = true;
-      _staff = [];
-    });
-    try {
-      final staff = await _service.fetchBookableStaff(category: roleKey);
-      if (!mounted) return;
-      setState(() {
-        _staff = staff;
-        _loadingStaff = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _loadingStaff = false);
-      final l10n = context.l10n;
-      final msg = e.toString().contains('permission-denied')
-          ? l10n.t('firestorePermissionStaff')
-          : l10n.t('couldNotLoadStaff', {'error': e});
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(msg)),
-      );
-    }
-  }
-
   void _goBack() {
-    if (_step == 0) {
+    if (_session.step == 0) {
       Navigator.of(context).pop();
       return;
     }
-    setState(() {
-      if (_step == 3) {
-        _selectedDate = null;
-        _selectedSlot = null;
-        _availableSlots = [];
-        _loadingSlots = false;
-      } else if (_step == 2) {
-        _selectedStaff = null;
-        _staff = [];
-        _loadingStaff = false;
-      } else if (_step == 1) {
-        _roleKey = null;
-      }
-      _step -= 1;
-    });
-  }
-
-  void _onSessionSelected(String key) {
-    setState(() {
-      _sessionKey = key;
-      _step = 1;
-    });
-  }
-
-  void _onRoleSelected(String key) {
-    setState(() {
-      _roleKey = key;
-      _step = 2;
-      _selectedStaff = null;
-    });
-    _loadStaffForRole(key);
-  }
-
-  void _onStaffSelected(StaffOption staff) {
-    setState(() {
-      _selectedStaff = staff;
-      _step = 3;
-      _selectedDate = null;
-      _selectedSlot = null;
-      _availableSlots = [];
-      _slotsErrorMessage = null;
-      _loadingSlots = false;
-    });
-  }
-
-  Future<void> _loadAvailableSlots() async {
-    final staff = _selectedStaff;
-    final date = _selectedDate;
-    if (staff == null || date == null) {
-      setState(() {
-        _availableSlots = [];
-        _loadingSlots = false;
-      });
-      return;
-    }
-
-    setState(() => _loadingSlots = true);
-    try {
-      final slots = await _service.fetchBookableSlotsForStaffOnDate(
-        staffId: staff.staffId,
-        date: date,
-      );
-      if (!mounted) return;
-      setState(() {
-        _availableSlots = slots;
-        _loadingSlots = false;
-        _slotsErrorMessage = null;
-        if (_selectedSlot != null &&
-            !slots.any(
-              (s) =>
-                  AppointmentTimeSlots.sameMinute(
-                    s.dateTime,
-                    _selectedSlot!.dateTime,
-                  ) &&
-                  s.firestoreDocId == _selectedSlot!.firestoreDocId,
-            )) {
-          _selectedSlot = null;
-        }
-      });
-    } catch (e) {
-      if (!mounted) return;
-      final text = e.toString();
-      final l10n = context.l10n;
-      final String msg;
-      if (text.contains('failed-precondition')) {
-        msg = l10n.t('firestoreIndexAppointments');
-      } else if (text.contains('permission-denied')) {
-        msg = l10n.t('firestorePermissionAppointments');
-      } else {
-        msg = l10n.t('couldNotLoadAvailableTimes', {'error': e});
-      }
-      setState(() {
-        _loadingSlots = false;
-        _availableSlots = [];
-        _slotsErrorMessage = msg;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(msg)),
-      );
-    }
-  }
-
-  DateTime _todayDateOnly() {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day);
+    _session.goBack();
   }
 
   Future<void> _pickAppointmentDate() async {
@@ -223,7 +93,7 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
     final first = today;
     final last = DateTime(today.year + 1, today.month, today.day);
     final initial = clampCalendarDate(
-      _selectedDate ?? today,
+      _session.selectedDate ?? today,
       first,
       last,
     );
@@ -237,79 +107,46 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
       accent: _accent,
     );
     if (picked == null || !mounted) return;
-
-    final dateOnly = DateTime(picked.year, picked.month, picked.day);
-    setState(() {
-      _selectedDate = dateOnly;
-      _selectedSlot = null;
-      _slotsErrorMessage = null;
-    });
-    await _loadAvailableSlots();
+    await _session.selectDate(picked);
   }
 
   void _onSlotSelected(BookableSlot slot) {
-    if (_selectedDate == null) {
+    if (_session.selectedDate == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(context.l10n.t('pleaseSelectAppointmentDateFirst'))),
       );
       return;
     }
-    final isListed = _availableSlots.any(
-      (s) =>
-          s.firestoreDocId == slot.firestoreDocId &&
-          AppointmentTimeSlots.sameMinute(s.dateTime, slot.dateTime),
-    );
-    if (!isListed || !ClinicDateTime.isAfterNow(slot.dateTime)) {
+    final before = _session.selectedSlot;
+    _session.selectSlot(slot);
+    if (_session.selectedSlot == before) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(context.l10n.t('slotNoLongerAvailable'))),
       );
-      return;
     }
-    setState(() => _selectedSlot = slot);
   }
 
-  /// Firestore `appointmentType` = session label from step 1 (e.g. General Check-up).
   String _sessionAppointmentType(BuildContext context) {
-    for (final session in _sessions) {
-      if (session.key == _sessionKey) return _l10n(context, session.titleKey);
-    }
-    return _l10n(context, _sessions.first.titleKey);
+    return _session.sessionTitleForKey(
+      _session.sessionKey ?? BookAppointmentSession.sessionOptions.first.key,
+      (key) => _l10n(context, key),
+    );
   }
 
   Future<void> _book() async {
-    final staff = _selectedStaff;
-    final slot = _selectedSlot;
-    if (staff == null || slot == null) return;
-
-    setState(() => _submitting = true);
     try {
-      await _loadAvailableSlots();
-      if (_selectedSlot == null ||
-          !_availableSlots.any(
-            (s) =>
-                s.firestoreDocId == slot.firestoreDocId &&
-                AppointmentTimeSlots.sameMinute(s.dateTime, slot.dateTime),
-          )) {
-        if (!mounted) return;
+      final success = await _session.submitBooking(_sessionAppointmentType(context));
+      if (!mounted) return;
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.t('appointmentRequestSubmitted'))),
+        );
+        Navigator.of(context).pop(true);
+      } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(context.l10n.t('slotJustTaken'))),
         );
-        return;
       }
-
-      await _service.bookAppointment(
-        staffId: staff.staffId,
-        appointmentType: _sessionAppointmentType(context),
-        dateTime: slot.dateTime,
-        notes: 'Booked via mobile app',
-        existingFirestoreDocId: slot.firestoreDocId,
-        existingAppointmentId: slot.appointmentId,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.l10n.t('appointmentRequestSubmitted'))),
-      );
-      Navigator.of(context).pop(true);
     } catch (e) {
       if (!mounted) return;
       final l10n = context.l10n;
@@ -319,9 +156,12 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(text)),
       );
-    } finally {
-      if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  DateTime _todayDateOnly() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
   }
 
   @override
@@ -345,7 +185,7 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const SizedBox(height: 8),
-            _BookStepProgress(current: _step, total: 4),
+            _BookStepProgress(current: _session.step, total: 4),
             const SizedBox(height: 12),
             Text(
               l10n.t('setupYourVisit'),
@@ -359,11 +199,13 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
             ),
             const SizedBox(height: 16),
             Expanded(child: _buildStepBody(context)),
-            if (_step == 3)
+            if (_session.step == 3)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
                 child: FilledButton(
-                  onPressed: _selectedSlot != null && !_submitting ? _book : null,
+                  onPressed: _session.selectedSlot != null && !_session.submitting
+                      ? _book
+                      : null,
                   style: FilledButton.styleFrom(
                     backgroundColor: _accent,
                     foregroundColor: Colors.black,
@@ -374,7 +216,7 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                  child: _submitting
+                  child: _session.submitting
                       ? const SizedBox(
                           width: 22,
                           height: 22,
@@ -397,18 +239,18 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
 
   Widget _buildStepBody(BuildContext context) {
     final l10n = context.l10n;
-    switch (_step) {
+    switch (_session.step) {
       case 0:
         return ListView(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           children: [
-            for (final s in _sessions)
+            for (final s in BookAppointmentSession.sessionOptions)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: _OptionCard(
                   title: l10n.t(s.titleKey),
                   subtitle: s.subtitleKey.isEmpty ? '' : l10n.t(s.subtitleKey),
-                  onTap: () => _onSessionSelected(s.key),
+                  onTap: () => _session.selectSession(s.key),
                 ),
               ),
           ],
@@ -417,27 +259,27 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
         return ListView(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           children: [
-            for (final r in _roles)
+            for (final r in BookAppointmentSession.roleOptions)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: _OptionCard(
                   title: l10n.t(r.titleKey),
-                  subtitle: r.subtitleKey.isEmpty ? '' : l10n.t(r.subtitleKey),
-                  onTap: () => _onRoleSelected(r.key),
+                  subtitle: '',
+                  onTap: () => _session.selectRole(r.key),
                 ),
               ),
           ],
         );
       case 2:
-        if (_loadingStaff) {
+        if (_session.loadingStaff) {
           return const Center(child: CircularProgressIndicator(color: _accent));
         }
-        if (_staff.isEmpty) {
+        if (_session.staff.isEmpty) {
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: Text(
-                '${l10n.t('noStaffForRole', {'role': _roleLabel(context, _roleKey)})}\n'
+                '${l10n.t('noStaffForRole', {'role': _roleLabel(context, _session.roleKey)})}\n'
                 '${l10n.t('tryAnotherRole')}',
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: _subtext, fontSize: 15, height: 1.4),
@@ -447,13 +289,13 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
         }
         return ListView.separated(
           padding: const EdgeInsets.symmetric(horizontal: 20),
-          itemCount: _staff.length,
+          itemCount: _session.staff.length,
           separatorBuilder: (_, __) => const SizedBox(height: 12),
           itemBuilder: (context, index) {
-            final staff = _staff[index];
+            final staff = _session.staff[index];
             return _StaffCard(
               staff: staff,
-              onTap: () => _onStaffSelected(staff),
+              onTap: () => _session.selectStaff(staff),
             );
           },
         );
@@ -468,7 +310,7 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
             ),
             const SizedBox(height: 16),
             DateSelectField(
-              selectedDate: _selectedDate,
+              selectedDate: _session.selectedDate,
               onTap: _pickAppointmentDate,
               placeholder: l10n.t('selectDate'),
             ),
@@ -482,40 +324,40 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
               ),
             ),
             const SizedBox(height: 12),
-            if (_selectedDate == null)
+            if (_session.selectedDate == null)
               Text(
                 l10n.t('selectDateForTimes'),
                 style: const TextStyle(color: _subtext, fontSize: 14),
               )
-            else if (_loadingSlots)
+            else if (_session.loadingSlots)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
                 child: Center(
                   child: CircularProgressIndicator(color: _accent),
                 ),
               )
-            else if (_slotsErrorMessage != null)
+            else if (_session.slotsErrorMessage != null)
               Text(
-                _slotsErrorMessage!,
+                _session.slotsErrorMessage!,
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: _subtext, fontSize: 14, height: 1.4),
               )
-            else if (_availableSlots.isEmpty)
+            else if (_session.availableSlots.isEmpty)
               Text(
                 l10n.t('noTimesForDateDetail'),
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: _subtext, fontSize: 14, height: 1.4),
               )
             else
-              for (final slot in _availableSlots)
+              for (final slot in _session.availableSlots)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: _TimeSlotButton(
                     dateTime: slot.dateTime,
-                    selected: _selectedSlot != null &&
-                        _selectedSlot!.firestoreDocId == slot.firestoreDocId &&
+                    selected: _session.selectedSlot != null &&
+                        _session.selectedSlot!.firestoreDocId == slot.firestoreDocId &&
                         AppointmentTimeSlots.sameMinute(
-                          _selectedSlot!.dateTime,
+                          _session.selectedSlot!.dateTime,
                           slot.dateTime,
                         ),
                     onTap: () => _onSlotSelected(slot),
@@ -525,13 +367,6 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
         );
     }
   }
-}
-
-class _Option {
-  const _Option(this.key, this.titleKey, this.subtitleKey);
-  final String key;
-  final String titleKey;
-  final String subtitleKey;
 }
 
 class _BookStepProgress extends StatelessWidget {

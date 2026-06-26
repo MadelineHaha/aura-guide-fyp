@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/voice_profile_data.dart';
 import 'phone_number_service.dart';
@@ -80,7 +81,10 @@ class VoiceProfileService {
       voiceFeatures: voiceFeatures ?? const {},
     ).toMap();
 
-    await _firestore.collection('users').doc(uid).set({
+    final isStaff = !(await _firestore.collection('users').doc(uid).get()).exists;
+    final collection = isStaff ? 'healthcarestaff' : 'users';
+
+    await _firestore.collection(collection).doc(uid).set({
       'authUid': uid,
       'voiceProfile': profile,
       'voicePassphrase': normalized,
@@ -120,6 +124,10 @@ class VoiceProfileService {
       }
     }
 
+    debugPrint(
+      'VoiceProfileService: verifyVoiceLogin bestScore = $bestScore, matchThreshold = ${VoiceEmbeddingService.matchThreshold}',
+    );
+
     if (bestProfile != null &&
         bestScore >= VoiceEmbeddingService.matchThreshold) {
       return VoiceVerificationResult.success(bestProfile, bestScore);
@@ -145,8 +153,25 @@ class VoiceProfileService {
       return _withAuthUid(exact.docs.first);
     }
 
+    final exactStaff = await _firestore
+        .collection('healthcarestaff')
+        .where('phoneNumberNormalized', isEqualTo: normalized)
+        .limit(1)
+        .get();
+    if (exactStaff.docs.isNotEmpty) {
+      return _withAuthUid(exactStaff.docs.first);
+    }
+
     final all = await _firestore.collection('users').limit(200).get();
     for (final doc in all.docs) {
+      final stored = doc.data()['phoneNumber']?.toString();
+      if (PhoneNumberService.numbersMatch(stored, phone)) {
+        return _withAuthUid(doc);
+      }
+    }
+
+    final allStaff = await _firestore.collection('healthcarestaff').limit(200).get();
+    for (final doc in allStaff.docs) {
       final stored = doc.data()['phoneNumber']?.toString();
       if (PhoneNumberService.numbersMatch(stored, phone)) {
         return _withAuthUid(doc);
@@ -170,28 +195,54 @@ class VoiceProfileService {
     final results = <_VoiceCandidate>[];
     final seen = <String>{};
 
-    void addDoc(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
-      if (!seen.add(doc.id)) return;
-      results.add(_VoiceCandidate(profile: _withAuthUid(doc)));
+    void addProfile(String docId, Map<String, dynamic> data) {
+      if (!seen.add(docId)) return;
+      results.add(
+        _VoiceCandidate(profile: _mapVoiceProfileDoc(docId, data)),
+      );
     }
 
-    final legacy = await _firestore
-        .collection('users')
-        .where('voiceProfile', isEqualTo: normalized)
-        .get();
-    for (final doc in legacy.docs) {
-      addDoc(doc);
+    try {
+      final users = await _firestore
+          .collection('users')
+          .where('voicePassphrase', isEqualTo: normalized)
+          .limit(50)
+          .get();
+      for (final doc in users.docs) {
+        addProfile(doc.id, doc.data());
+      }
+    } catch (error, stack) {
+      debugPrint(
+        'VoiceProfileService users voice lookup failed: $error\n$stack',
+      );
     }
 
-    final modern = await _firestore
-        .collection('users')
-        .where('voicePassphrase', isEqualTo: normalized)
-        .get();
-    for (final doc in modern.docs) {
-      addDoc(doc);
+    try {
+      final staff = await _firestore
+          .collection('healthcarestaff')
+          .where('voicePassphrase', isEqualTo: normalized)
+          .limit(50)
+          .get();
+      for (final doc in staff.docs) {
+        addProfile(doc.id, doc.data());
+      }
+    } catch (error) {
+      debugPrint('VoiceProfileService healthcarestaff voice lookup failed: $error');
     }
 
     return results;
+  }
+
+  Map<String, dynamic> _mapVoiceProfileDoc(
+    String docId,
+    Map<String, dynamic> data,
+  ) {
+    final authUid = (data['authUid'] as String?)?.trim() ?? '';
+    return {
+      ...data,
+      'authUid': authUid.isEmpty ? docId : authUid,
+      'voiceProfile': data['voiceProfile'],
+    };
   }
 
   Map<String, dynamic> _withAuthUid(

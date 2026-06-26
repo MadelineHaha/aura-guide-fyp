@@ -11,12 +11,16 @@ class WalkStep {
     required this.latitude,
     required this.longitude,
     required this.distanceMeters,
+    this.maneuverType = '',
+    this.maneuverModifier = '',
   });
 
   final String instruction;
   final double latitude;
   final double longitude;
   final double distanceMeters;
+  final String maneuverType;
+  final String maneuverModifier;
 }
 
 /// Pedestrian route along streets and footpaths.

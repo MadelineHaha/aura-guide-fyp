@@ -16,6 +16,9 @@ class MedicationReminderEntity {
     required this.staffId,
     this.reminderTimeLabel,
     this.completedDate = '',
+    this.missedDate = '',
+    this.doseDate = '',
+    this.slotReminderId = '',
   });
 
   static final RegExp reminderIdPattern = RegExp(r'^R\d{5}$');
@@ -42,9 +45,27 @@ class MedicationReminderEntity {
   final String? reminderTimeLabel;
   /// Clinic date `YYYY-MM-DD` when patient marked Completed (app field).
   final String completedDate;
+  /// Clinic date `YYYY-MM-DD` when the dose was marked Missed (app field).
+  final String missedDate;
+  /// Calendar day for this dose row (`YYYY-MM-DD`). Empty on recurring slot templates.
+  final String doseDate;
+  /// Links a daily dose row to its recurring slot reminder (`R00001`).
+  final String slotReminderId;
+
+  bool get isDailyInstance => doseDate.isNotEmpty;
 
   bool isTakenOnDate(String yyyyMmDd) {
+    if (isDailyInstance) {
+      return doseDate == yyyyMmDd && status == statusCompleted;
+    }
     return status == statusCompleted && completedDate == yyyyMmDd;
+  }
+
+  bool isMissedOnDate(String yyyyMmDd) {
+    if (isDailyInstance) {
+      return doseDate == yyyyMmDd && status == statusMissed;
+    }
+    return status == statusMissed && missedDate == yyyyMmDd;
   }
 
   static String formatClockLabel(Timestamp ts) {
@@ -100,6 +121,9 @@ class MedicationReminderEntity {
           '',
       reminderTimeLabel: (data['reminderTimeLabel'] as String?)?.trim(),
       completedDate: (data['completedDate'] as String?)?.trim() ?? '',
+      missedDate: (data['missedDate'] as String?)?.trim() ?? '',
+      doseDate: (data['doseDate'] as String?)?.trim() ?? '',
+      slotReminderId: (data['slotReminderId'] as String?)?.trim() ?? '',
     );
   }
 }

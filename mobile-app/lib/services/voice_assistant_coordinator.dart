@@ -6,36 +6,37 @@ import 'package:speech_to_text/speech_to_text.dart';
 
 import '../auth_session.dart';
 import '../appointments_page.dart';
-import '../book_appointment_page.dart';
-import '../communication_page.dart';
 import '../app_navigator.dart';
+import '../communication_page.dart';
+import '../login_page.dart';
+import '../manual_register_page.dart';
 import '../medications_page.dart';
 import '../navigation_page.dart';
 import '../settings_page.dart';
+import '../voice_register_page.dart';
 import 'app_settings_service.dart';
+import 'app_experience_service.dart';
 import 'device_permissions_service.dart';
+import 'voice_flow_coordinator.dart';
 import 'fall_detection_coordinator.dart';
 import 'patient_call_session.dart';
 import 'silent_mic_monitor_service.dart';
 import 'voice_call_service.dart';
 
-enum VoiceAssistantPhase {
-  idle,
-  greeting,
-  awaitingCommand,
-  processing,
-}
+enum VoiceAssistantPhase { idle, greeting, awaitingCommand, processing }
 
 /// Foreground wake-word assistant: listens for "Hey AuraGuide", greets back,
 /// then captures a short voice command.
 class VoiceAssistantCoordinator extends ChangeNotifier {
   VoiceAssistantCoordinator._();
 
-  static final VoiceAssistantCoordinator instance = VoiceAssistantCoordinator._();
+  static final VoiceAssistantCoordinator instance =
+      VoiceAssistantCoordinator._();
 
   static const _voiceSttSeconds = 25;
-  static const _commandListenSeconds = 12;
-  static const _sttHandoffDelayMs = 200;
+  static const _commandListenSeconds = 10;
+  static const _sttHandoffDelayMs = 450;
+  static const _postTtsListenDelayMs = 400;
   static const _resumeSilentDelayMs = 400;
 
   final _speech = SpeechToText();
@@ -55,6 +56,7 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
   bool _voiceSttActive = false;
   bool _wakeHandledInSession = false;
   Completer<void>? _listenSessionCompleter;
+  Completer<void>? _speechInitCompleter;
   String _lastCommandPartial = '';
   bool _finalizingCommand = false;
 
@@ -63,6 +65,7 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
   String? get lastUserCommand => _lastUserCommand;
   String get assistantMessage => _assistantMessage;
   bool get isActive => _phase != VoiceAssistantPhase.idle;
+  bool get isWelcomeSessionActive => _welcomeSessionActive;
 
   void ensureStarted() {
     if (_started) {
@@ -72,6 +75,7 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
     _started = true;
     FirebaseAuth.instance.authStateChanges().listen((_) => _ensureListening());
     AppSettingsService.instance.addListener(_onSettingsChanged);
+    AppExperienceService.instance.addListener(_onExperienceChanged);
     FallDetectionCoordinator.instance.addListener(_onFallDetectionChanged);
     PatientCallSession.instance.ensureStarted();
     PatientCallSession.instance.voiceCall.stateStream.listen((_) {
@@ -101,11 +105,58 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
   void setTopRouteLabel(String? label) {
     if (_topRouteLabel == label) return;
     _topRouteLabel = label;
+    if (_phase != VoiceAssistantPhase.awaitingCommand && !_voiceDialogActive) {
+      _sessionGeneration++; // Cancel pending auto-prompts or idle wake sessions
+    }
     if (!_canRun) {
       unawaited(_stopListening());
-      return;
+    } else {
+      _ensureListening();
     }
-    _ensureListening();
+    _autoPromptForCurrentRoute();
+  }
+
+  void _autoPromptForCurrentRoute() async {
+    final generation = _sessionGeneration;
+
+    // Small delay to allow page transition to finish
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    if (_topRouteLabel == null || !_isGenerationCurrent(generation)) return;
+
+    final promptKey = _getPromptKeyForCurrentRoute();
+
+    if (promptKey == null) return;
+
+    if (!_voiceDialogActive && !VoiceFlowCoordinator.instance.isActive) {
+      unawaited(_onWakeDetected(generation, customGreetingKey: promptKey));
+    }
+  }
+
+  String? _getPromptKeyForCurrentRoute() {
+    if (_topRouteLabel == null) return null;
+    final routes = <String, String>{
+      'MainMenuPage': 'pagePromptMainMenu',
+      'AppointmentsPage': 'pagePromptAppointments',
+      'MedicationsPage': 'pagePromptMedications',
+      'CommunicationPage': 'pagePromptCommunication',
+      'NavigationPage': 'pagePromptNavigation',
+      'SettingsPage': 'pagePromptSettings',
+      'RegisterPage': 'pagePromptRegister',
+      'ManualRegisterPage': 'pagePromptManualRegister',
+      'LoginPage': 'pagePromptLogin',
+      'HealthRecordsPage': 'pagePromptHealthRecords',
+      'ProfilePage': 'pagePromptProfile',
+      'MyProfilePage': 'pagePromptProfile',
+      'EmergencySosPage': 'pagePromptEmergency',
+      'CaregiverHomePage': 'pagePromptCaregiverHome',
+      'DoctorHomePage': 'pagePromptDoctorHome',
+    };
+
+    return routes.entries
+            .where((e) => _topRouteLabel!.contains(e.key))
+            .map((e) => e.value)
+            .firstOrNull ??
+        'voiceFlowMenuPrompt';
   }
 
   void acquireMicLock() {
@@ -122,6 +173,11 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
   }
 
   void _onSettingsChanged() {
+    _speechLocaleId = null;
+    if (!AppExperienceService.instance.isPatientExperience) {
+      unawaited(_stopListening());
+      return;
+    }
     if (!AppSettingsService.instance.settings.voiceAssistantEnabled) {
       unawaited(_stopListening());
     } else {
@@ -129,13 +185,31 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
     }
   }
 
+  void _onExperienceChanged() {
+    if (!AppExperienceService.instance.isPatientExperience) {
+      unawaited(stopForNonPatientApp());
+    } else {
+      _ensureListening();
+    }
+  }
+
+  /// Stops wake-word listening and TTS when staff/caregiver apps are active.
+  Future<void> stopForNonPatientApp() async {
+    await _stopListening();
+    await AppSettingsService.instance.stopSpeaking();
+    await _resetToIdle();
+  }
+
   bool get _canRun {
     if (!_started || !_appResumed) return false;
+    if (!AppExperienceService.instance.isPatientExperience) return false;
     if (FirebaseAuth.instance.currentUser == null &&
         AuthSession.resolveUser() == null) {
       return false;
     }
-    if (!AppSettingsService.instance.settings.voiceAssistantEnabled) return false;
+    if (!AppSettingsService.instance.settings.voiceAssistantEnabled) {
+      return false;
+    }
     if (_micLockCount > 0) return false;
     if (_routeBlocksAssistant(_topRouteLabel)) return false;
     if (FallDetectionCoordinator.instance.isResponding) return false;
@@ -177,21 +251,24 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
 
   Future<void> _startSilentMonitoring() async {
     if (!_canRun || _phase != VoiceAssistantPhase.idle) return;
-    if (_voiceSttActive ||
-        _speech.isListening ||
-        _silentMonitor.isRunning) {
+    if (_voiceSttActive || _speech.isListening || _silentMonitor.isRunning) {
       return;
     }
 
-    final micGranted =
-        await DevicePermissionsService.instance.ensureMicrophone();
-    if (!micGranted || !_canRun || _phase != VoiceAssistantPhase.idle) return;
+    final micGranted = await DevicePermissionsService.instance
+        .ensureMicrophone();
+    final speechGranted = await DevicePermissionsService.instance
+        .ensureSpeechRecognition();
+    if (!micGranted ||
+        !speechGranted ||
+        !_canRun ||
+        _phase != VoiceAssistantPhase.idle) {
+      return;
+    }
 
     try {
       await _silentMonitor.start(() {
-        if (!_canRun ||
-            _phase != VoiceAssistantPhase.idle ||
-            _voiceSttActive) {
+        if (!_canRun || _phase != VoiceAssistantPhase.idle || _voiceSttActive) {
           return;
         }
         unawaited(_startWakeWordSttSession());
@@ -263,8 +340,9 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
           unawaited(
             _onWakeDetected(
               generation,
-              prefilledCommand:
-                  trailingCommand.isNotEmpty ? trailingCommand : null,
+              prefilledCommand: trailingCommand.isNotEmpty
+                  ? trailingCommand
+                  : null,
             ),
           );
         },
@@ -278,7 +356,8 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
       debugPrint('VoiceAssistantCoordinator wake STT failed: $error');
     } finally {
       await _endVoiceSttSession(
-        resumeSilent: _phase == VoiceAssistantPhase.idle &&
+        resumeSilent:
+            _phase == VoiceAssistantPhase.idle &&
             _canRun &&
             !_wakeHandledInSession,
       );
@@ -306,13 +385,27 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
   Future<void> _ensureSpeechReady() async {
     if (_speechReady) return;
 
-    final available = await _speech.initialize(
-      onStatus: _onSpeechStatus,
-      onError: (error) {
-        debugPrint('VoiceAssistantCoordinator STT error: $error');
-      },
-    );
-    _speechReady = available;
+    if (_speechInitCompleter != null) {
+      await _speechInitCompleter!.future;
+      return;
+    }
+    _speechInitCompleter = Completer<void>();
+
+    try {
+      final available = await _speech.initialize(
+        onStatus: _onSpeechStatus,
+        onError: (error) {
+          debugPrint('VoiceAssistantCoordinator STT error: $error');
+        },
+      );
+      _speechReady = available;
+    } finally {
+      final completer = _speechInitCompleter;
+      _speechInitCompleter = null;
+      if (completer != null && !completer.isCompleted) {
+        completer.complete();
+      }
+    }
   }
 
   void _onSpeechStatus(String status) {
@@ -320,17 +413,6 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
       final sessionCompleter = _listenSessionCompleter;
       if (sessionCompleter != null && !sessionCompleter.isCompleted) {
         sessionCompleter.complete();
-      }
-
-      if (_phase == VoiceAssistantPhase.awaitingCommand &&
-          _lastCommandPartial.trim().isNotEmpty &&
-          !_finalizingCommand) {
-        unawaited(
-          _finalizeCommand(
-            _sessionGeneration,
-            _lastCommandPartial.trim(),
-          ),
-        );
       }
 
       if (_phase == VoiceAssistantPhase.idle &&
@@ -350,11 +432,13 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
 
     _voiceSttActive = true;
     _lastCommandPartial = '';
-    _listenSessionCompleter = Completer<void>();
+    await _silentMonitor.stop();
 
-    final micGranted =
-        await DevicePermissionsService.instance.ensureMicrophone();
-    if (!micGranted || !_isGenerationCurrent(generation)) {
+    final micGranted = await DevicePermissionsService.instance
+        .ensureMicrophone();
+    final speechGranted = await DevicePermissionsService.instance
+        .ensureSpeechRecognition();
+    if (!micGranted || !speechGranted || !_isGenerationCurrent(generation)) {
       await _endVoiceSttSession(resumeSilent: false);
       await _resetToIdle();
       _ensureListening();
@@ -371,6 +455,14 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
       return;
     }
 
+    await _ensureSpeechReady();
+    if (!_speechReady || !_isGenerationCurrent(generation)) {
+      await _endVoiceSttSession(resumeSilent: false);
+      await _resetToIdle();
+      _ensureListening();
+      return;
+    }
+
     try {
       await _speech.listen(
         listenFor: const Duration(seconds: _commandListenSeconds),
@@ -379,34 +471,33 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
         listenOptions: SpeechListenOptions(
           partialResults: true,
           cancelOnError: false,
-          listenMode: ListenMode.confirmation,
+          listenMode: ListenMode.dictation,
         ),
         onResult: (result) {
-          if (!_isGenerationCurrent(generation)) return;
+          if (!_isGenerationCurrent(generation)) {
+            unawaited(_speech.stop());
+            return;
+          }
           if (_phase != VoiceAssistantPhase.awaitingCommand) return;
 
-          final text = stripWakePhrase(result.recognizedWords);
-          if (text.isNotEmpty) {
-            _lastCommandPartial = text;
-            _lastUserCommand = text;
-            notifyListeners();
-          }
+          final text = stripWakePhrase(result.recognizedWords).trim();
+          if (text.isEmpty) return;
 
-          if (!result.finalResult || _finalizingCommand) return;
-
-          unawaited(
-            _finalizeCommand(
-              generation,
-              text.trim().isEmpty ? null : text.trim(),
-            ),
+          debugPrint(
+            'VoiceAssistantCoordinator command heard: "$text" '
+            'final=${result.finalResult}',
           );
+          _lastCommandPartial = text;
+          _lastUserCommand = text;
+          notifyListeners();
         },
       );
 
-      await _listenSessionCompleter!.future.timeout(
-        Duration(seconds: _commandListenSeconds + 2),
-        onTimeout: () {},
-      );
+      while (_speech.isListening && _isGenerationCurrent(generation)) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 200));
     } catch (error) {
       debugPrint('VoiceAssistantCoordinator command listen failed: $error');
     }
@@ -436,12 +527,23 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
       await _endVoiceSttSession(resumeSilent: false);
       if (!_isGenerationCurrent(generation)) return;
 
-      await _handleCommand(
+      final handled = await _handleCommand(
         resolved.isEmpty ? null : resolved,
         generation,
       );
-      await _resetToIdle();
-      _ensureListening();
+
+      if (!_isGenerationCurrent(generation)) return;
+
+      if (handled) {
+        await _resetToIdle();
+        _ensureListening();
+      } else {
+        _phase = VoiceAssistantPhase.awaitingCommand;
+        _lastCommandPartial = '';
+        _setAssistantMessageKey('voiceAssistantListening');
+        notifyListeners();
+        unawaited(_listenForCommand(generation));
+      }
     } finally {
       _finalizingCommand = false;
     }
@@ -450,21 +552,31 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
   Future<void> _onWakeDetected(
     int generation, {
     String? prefilledCommand,
+    String customGreetingKey = 'voiceAssistantGreeting',
   }) async {
     if (!_isGenerationCurrent(generation)) return;
 
     _lastUserCommand = null;
     _phase = VoiceAssistantPhase.greeting;
-    _setAssistantMessageKey('voiceAssistantGreeting');
+    _setAssistantMessageKey(customGreetingKey);
     notifyListeners();
 
+    await _silentMonitor.stop();
     await _speech.stop();
     await Future<void>.delayed(
       const Duration(milliseconds: _sttHandoffDelayMs),
     );
     await AppSettingsService.instance.stopSpeaking();
-    await _speak('voiceAssistantGreeting');
+    await _speak(customGreetingKey);
 
+    if (!_isGenerationCurrent(generation)) {
+      await _resetToIdle();
+      return;
+    }
+
+    await Future<void>.delayed(
+      const Duration(milliseconds: _postTtsListenDelayMs),
+    );
     if (!_isGenerationCurrent(generation)) {
       await _resetToIdle();
       return;
@@ -487,8 +599,13 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
   }
 
   Future<String?> _resolveListenLocale() async {
-    if (_speechLocaleId != null) return _speechLocaleId;
-    const preferred = ['en_US', 'en_GB', 'en_AU', 'en_SG', 'en'];
+    final lang = AppSettingsService.instance.settings.languageCode;
+    final preferred = switch (lang) {
+      'zh' => const ['zh_CN', 'zh_TW', 'zh_HK', 'zh_SG', 'zh'],
+      'ms' => const ['ms_MY', 'ms'],
+      _ => const ['en_MY', 'en_US', 'en_GB', 'en_SG', 'en_AU', 'en'],
+    };
+
     try {
       final locales = await _speech.locales();
       for (final id in preferred) {
@@ -504,7 +621,7 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
     } catch (error) {
       debugPrint('VoiceAssistantCoordinator locale lookup failed: $error');
     }
-    _speechLocaleId = 'en_US';
+    _speechLocaleId = preferred.last;
     return _speechLocaleId;
   }
 
@@ -540,8 +657,8 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
     }
   }
 
-  Future<void> _handleCommand(String? command, int generation) async {
-    if (!_isGenerationCurrent(generation)) return;
+  Future<bool> _handleCommand(String? command, int generation) async {
+    if (!_isGenerationCurrent(generation)) return true;
 
     _phase = VoiceAssistantPhase.processing;
     _setAssistantMessageKey('voiceAssistantProcessing');
@@ -549,53 +666,93 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
 
     if (command == null || command.trim().isEmpty) {
       await _speak('voiceAssistantNoCommand');
-      return;
+      final promptKey = _getPromptKeyForCurrentRoute();
+      if (promptKey != null) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await _speak(promptKey);
+      }
+      return false;
     }
 
     _lastUserCommand = command.trim();
     notifyListeners();
 
     final normalized = _normalizeSpeech(command);
+    if (_matchesDisableVoiceOnlyCommand(normalized)) {
+      await AppSettingsService.instance.setVoiceOnlyModeEnabled(false);
+      return true;
+    }
+    if (_matchesBookAppointmentCommand(normalized)) {
+      await _speak('voiceAssistantOpeningBookAppointment');
+      unawaited(VoiceFlowCoordinator.instance.startBookAppointmentFlow());
+      return true;
+    }
+    if (_matchesGoBackCommand(normalized)) {
+      await _speak('voiceAssistantOpeningGoBack');
+      _goBack();
+      return true;
+    }
     if (_matchesNavigationCommand(normalized)) {
       await _speak('voiceAssistantOpeningNavigation');
       _openPage(const NavigationPage());
-      return;
+      return true;
     }
     if (_matchesSettingsCommand(normalized)) {
       await _speak('voiceAssistantOpeningSettings');
       _openPage(const SettingsPage());
-      return;
+      return true;
     }
     if (_matchesAppointmentsCommand(normalized)) {
       await _speak('voiceAssistantOpeningAppointments');
       _openPage(const AppointmentsPage());
-      return;
-    }
-    if (_matchesBookAppointmentCommand(normalized)) {
-      await _speak('voiceAssistantOpeningBookAppointment');
-      _openPage(const BookAppointmentPage());
-      return;
+      return true;
     }
     if (_matchesMedicationsCommand(normalized)) {
       await _speak('voiceAssistantOpeningMedications');
       _openPage(const MedicationsPage());
-      return;
+      return true;
     }
     if (_matchesCommunicationCommand(normalized)) {
       await _speak('voiceAssistantOpeningCommunication');
       _openPage(const CommunicationPage());
-      return;
+      return true;
     }
     if (_matchesHomeCommand(normalized)) {
       await _speak('voiceAssistantOpeningHome');
       _openMainMenu();
-      return;
+      return true;
+    }
+    if (_matchesSignOutCommand(normalized)) {
+      _openPage(const LoginPage());
+      return true;
+    }
+    if (_matchesCancelCommand(normalized)) {
+      await _speak('sosEmergencyVoiceCancelled');
+      return true; // Handled by standard cancellation logic actually
+    }
+    if (_matchesVoiceRegisterCommand(normalized)) {
+      _openPage(const VoiceRegisterPage());
+      return true;
+    }
+    if (_matchesManualRegisterCommand(normalized)) {
+      _openPage(const ManualRegisterPage());
+      return true;
+    }
+    if (_matchesLoginCommand(normalized)) {
+      _openPage(const LoginPage());
+      return true;
     }
 
     await _speak(
       'voiceAssistantCommandNotUnderstood',
       params: {'command': command},
     );
+    final promptKey = _getPromptKeyForCurrentRoute();
+    if (promptKey != null) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await _speak(promptKey);
+    }
+    return false;
   }
 
   bool _matchesAny(String normalized, List<String> phrases) {
@@ -604,12 +761,32 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
     );
   }
 
-  bool _matchesAppointmentsCommand(String normalized) {
+  bool _matchesDisableVoiceOnlyCommand(String normalized) {
     return _matchesAny(normalized, const [
-      'appointments',
-      'my appointments',
-      'show appointments',
-      'open appointments',
+      'enable touch',
+      'touch mode',
+      'disable voice only',
+      'turn off voice only',
+      'turn off voice only mode',
+    ]);
+  }
+
+  bool _matchesGoBackCommand(String normalized) {
+    return _matchesAny(normalized, const [
+      'go back',
+      'back',
+      'previous page',
+      'return',
+    ]);
+  }
+
+  bool _matchesAppointmentsCommand(String normalized) {
+    if (_matchesBookAppointmentCommand(normalized)) return false;
+    return _matchesAny(normalized, const [
+      'appointment',
+      'my appointment',
+      'show appointment',
+      'open appointment',
     ]);
   }
 
@@ -622,13 +799,48 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
     ]);
   }
 
+  bool _matchesSignOutCommand(String normalized) {
+    return _matchesAny(normalized, const [
+      'sign out',
+      'log out',
+      'logout',
+      'signout',
+    ]);
+  }
+
+  bool _matchesCancelCommand(String normalized) {
+    return _matchesAny(normalized, const ['cancel', 'stop', 'abort']);
+  }
+
+  bool _matchesVoiceRegisterCommand(String normalized) {
+    return _matchesAny(normalized, const [
+      'voice register',
+      'register with voice',
+      'use voice',
+    ]);
+  }
+
+  bool _matchesManualRegisterCommand(String normalized) {
+    return _matchesAny(normalized, const [
+      'manual register',
+      'register manually',
+      'use keyboard',
+      'type it',
+    ]);
+  }
+
+  bool _matchesLoginCommand(String normalized) {
+    return _matchesAny(normalized, const ['sign in', 'login', 'log in']);
+  }
+
   bool _matchesMedicationsCommand(String normalized) {
     return _matchesAny(normalized, const [
       'medication',
-      'medications',
+      'my medication',
+      'show medication',
+      'open medication',
+      'pill',
       'medicine',
-      'my medicine',
-      'open medications',
     ]);
   }
 
@@ -665,11 +877,7 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
   }
 
   bool _matchesSettingsCommand(String normalized) {
-    const phrases = <String>[
-      'settings',
-      'open settings',
-      'app settings',
-    ];
+    const phrases = <String>['setting', 'open setting', 'app setting'];
     return phrases.any(
       (phrase) => normalized == phrase || normalized.contains(phrase),
     );
@@ -680,9 +888,20 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
     if (navigator == null) return;
     unawaited(
       navigator.push<void>(
-        MaterialPageRoute<void>(builder: (context) => page),
+        MaterialPageRoute<void>(
+          settings: RouteSettings(name: page.runtimeType.toString()),
+          builder: (context) => page,
+        ),
       ),
     );
+  }
+
+  void _goBack() {
+    final navigator = rootNavigatorKey.currentState;
+    if (navigator == null) return;
+    if (navigator.canPop()) {
+      navigator.pop();
+    }
   }
 
   void _openMainMenu() {
@@ -709,6 +928,9 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
     final text = AppSettingsService.instance.localized(key, params);
     await AppSettingsService.instance.stopSpeaking();
     await AppSettingsService.instance.speakAndAwaitCompletion(text);
+    await Future<void>.delayed(
+      const Duration(milliseconds: _postTtsListenDelayMs),
+    );
   }
 
   static bool containsWakePhrase(String text) {
@@ -785,6 +1007,159 @@ class VoiceAssistantCoordinator extends ChangeNotifier {
         .trim();
     return normalized;
   }
+  // --- VOICE FLOW SUPPORT ---
+
+  int _dialogGeneration = 0;
+  bool _voiceDialogActive = false;
+  bool _welcomeSessionActive = false;
+
+  bool _isDialogGenerationCurrent(int generation) {
+    return _dialogGeneration == generation && _voiceDialogActive;
+  }
+
+  void beginWelcomeSession() {
+    _welcomeSessionActive = true;
+    notifyListeners();
+  }
+
+  void endWelcomeSession() {
+    _welcomeSessionActive = false;
+    notifyListeners();
+  }
+
+  Future<void> speakPrompt(
+    String key, {
+    Map<String, Object?> params = const {},
+  }) async {
+    await _speak(key, params: params);
+  }
+
+  Future<bool> confirmPrompt(
+    String promptKey, {
+    Map<String, Object?> params = const {},
+  }) async {
+    final answer = await promptAndListen(promptKey, params: params);
+    if (answer == null) return false;
+    final normalized = normalizeSpeech(answer);
+    if (normalized == 'yes' ||
+        normalized == 'yeah' ||
+        normalized == 'yep' ||
+        normalized == 'ok') {
+      return true;
+    }
+    return false;
+  }
+
+  Future<String?> promptAndListen(
+    String promptKey, {
+    Map<String, Object?> params = const {},
+    Duration listenFor = const Duration(seconds: 16),
+  }) async {
+    _voiceDialogActive = true;
+    final generation = ++_dialogGeneration;
+    _sessionGeneration++;
+    _phase = VoiceAssistantPhase.processing;
+    _setAssistantMessageKey(promptKey, params: params);
+    notifyListeners();
+
+    try {
+      await _endVoiceSttSession(resumeSilent: false);
+      await AppSettingsService.instance.stopSpeaking();
+      await _speak(promptKey, params: params);
+      if (!_isDialogGenerationCurrent(generation)) return null;
+
+      return await _captureUtterance(generation, listenFor: listenFor);
+    } finally {
+      _voiceDialogActive = false;
+      _lastCommandPartial = '';
+      notifyListeners();
+    }
+  }
+
+  Future<String?> _captureUtterance(
+    int generation, {
+    Duration listenFor = const Duration(seconds: 16),
+  }) async {
+    await _silentMonitor.stop();
+    final micGranted = await DevicePermissionsService.instance
+        .ensureMicrophone();
+    final speechGranted = await DevicePermissionsService.instance
+        .ensureSpeechRecognition();
+    if (!micGranted ||
+        !speechGranted ||
+        !_isDialogGenerationCurrent(generation)) {
+      return null;
+    }
+
+    await _ensureSpeechReady();
+    if (!_speechReady || !_isDialogGenerationCurrent(generation)) return null;
+
+    var heard = '';
+    String? finalHeard;
+
+    try {
+      await _speech.listen(
+        listenFor: listenFor,
+        pauseFor: const Duration(seconds: 4),
+        localeId: await _resolveListenLocale(),
+        listenOptions: SpeechListenOptions(
+          partialResults: true,
+          cancelOnError: false,
+          listenMode: ListenMode.dictation,
+        ),
+        onResult: (result) {
+          if (!_isDialogGenerationCurrent(generation)) {
+            unawaited(_speech.stop());
+            return;
+          }
+
+          final text = stripWakePhrase(result.recognizedWords).trim();
+          if (text.isEmpty) return;
+
+          heard = text;
+          if (result.finalResult) {
+            finalHeard = text;
+          }
+        },
+      );
+
+      while (_speech.isListening && _isDialogGenerationCurrent(generation)) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    } catch (error) {
+      debugPrint('VoiceAssistantCoordinator capture failed: $error');
+    }
+
+    if (!_isDialogGenerationCurrent(generation)) return null;
+
+    final resolved = (finalHeard ?? heard).trim();
+    return resolved.isEmpty ? null : resolved;
+  }
+
+  void resumeAfterVoiceFlow() {
+    _ensureListening();
+  }
+
+  Future<void> cancelActiveDialog() async {
+    _dialogGeneration++;
+    _sessionGeneration++;
+    _voiceDialogActive = false;
+    _finalizingCommand = false;
+    _lastCommandPartial = '';
+    await _stopListening();
+    await AppSettingsService.instance.stopSpeaking();
+    notifyListeners();
+  }
+
+  static String normalizeSpeech(String speech) {
+    return _normalizeSpeech(speech);
+  }
+}
+
+class VoiceFlowCancelledException implements Exception {
+  const VoiceFlowCancelledException();
 }
 
 class _VoiceAssistantNavigatorObserver extends NavigatorObserver {

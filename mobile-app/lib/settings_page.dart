@@ -8,6 +8,7 @@ import 'l10n/app_localizations.dart';
 import 'password_recovery_page.dart';
 import 'models/voice_profile_data.dart';
 import 'services/app_settings_service.dart';
+import 'services/app_experience_service.dart';
 import 'services/fall_detection_coordinator.dart';
 import 'services/medication_push_service.dart';
 import 'services/medication_local_reminder_service.dart';
@@ -38,12 +39,14 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     _settings.addListener(_onSettingsChanged);
+    AppExperienceService.instance.addListener(_onSettingsChanged);
     _loadVoiceLoginStatus();
   }
 
   @override
   void dispose() {
     _settings.removeListener(_onSettingsChanged);
+    AppExperienceService.instance.removeListener(_onSettingsChanged);
     super.dispose();
   }
 
@@ -248,9 +251,10 @@ class _SettingsPageState extends State<SettingsPage> {
               onChanged: _onNotificationsChanged,
             ),
           ),
+          if (AppExperienceService.instance.isPatientExperience) ...[
           _SettingsCard(
             icon: Icons.accessibility_new_outlined,
-            title: context.l10n.t('fallDetectionSettingTitle').toUpperCase(),
+            title: context.l10n.t('fallDetectionSettingTitle'),
             subtitle: context.l10n.t('fallDetectionSettingSubtitle'),
             trailing: Switch(
               value: settings.fallDetectionEnabled,
@@ -262,7 +266,7 @@ class _SettingsPageState extends State<SettingsPage> {
           if (settings.fallDetectionEnabled)
             _SettingsCard(
               icon: Icons.science_outlined,
-              title: context.l10n.t('fallDetectionTestTitle').toUpperCase(),
+              title: context.l10n.t('fallDetectionTestTitle'),
               subtitle: context.l10n.t('fallDetectionTestSubtitle'),
               onTap: () => unawaited(
                 FallDetectionCoordinator.instance.triggerDemoCheckIn(),
@@ -271,13 +275,26 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           _SettingsCard(
             icon: Icons.mic_none_outlined,
-            title: context.l10n.t('voiceAssistantSettingTitle').toUpperCase(),
+            title: context.l10n.t('voiceAssistantSettingTitle'),
             subtitle: context.l10n.t('voiceAssistantSettingSubtitle'),
             trailing: Switch(
               value: settings.voiceAssistantEnabled,
               activeColor: Colors.white,
               activeTrackColor: _accent,
               onChanged: _settings.setVoiceAssistantEnabled,
+            ),
+          ),
+          _SettingsCard(
+            icon: Icons.record_voice_over_outlined,
+            title: context.l10n.t('voiceOnlyModeTitle'),
+            subtitle: context.l10n.t('voiceOnlyModeSubtitle'),
+            trailing: Switch(
+              value: settings.voiceOnlyModeEnabled,
+              activeColor: Colors.white,
+              activeTrackColor: _accent,
+              onChanged: settings.voiceAssistantEnabled
+                  ? _settings.setVoiceOnlyModeEnabled
+                  : null,
             ),
           ),
           _VoiceLoginCard(
@@ -288,11 +305,15 @@ class _SettingsPageState extends State<SettingsPage> {
                   ? const VoiceLoginPage()
                   : const VoiceProfileSetupPage();
               await Navigator.of(context).push<void>(
-                MaterialPageRoute<void>(builder: (context) => page),
+                MaterialPageRoute<void>(
+                  settings: RouteSettings(name: page.runtimeType.toString()),
+                  builder: (context) => page,
+                ),
               );
               await _loadVoiceLoginStatus();
             },
           ),
+          ],
           _SettingsCard(
             icon: Icons.vpn_key_outlined,
             title: context.l10n.t('resetPasswordTitle'),
@@ -300,6 +321,7 @@ class _SettingsPageState extends State<SettingsPage> {
             onTap: () {
               Navigator.of(context).push<void>(
                 MaterialPageRoute<void>(
+                  settings: const RouteSettings(name: 'PasswordRecoveryPage'),
                   builder: (context) => const PasswordRecoveryPage(),
                 ),
               );

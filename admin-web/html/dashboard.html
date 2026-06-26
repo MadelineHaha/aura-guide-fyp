@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Staff Dashboard — Aura Guide</title>
+  <title>Admin Dashboard — Aura Guide</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -20,13 +20,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
       <nav class="staff-nav-links" aria-label="Main">
-        <a class="staff-nav-link is-active" href="dashboard.html">Dashboard</a>
-        <a class="staff-nav-link" href="appointments.html">Appointments</a>
-        <a class="staff-nav-link" href="patients.html">Patients</a>
-        <a class="staff-nav-link" href="emergencies.html">Emergencies</a>
-        <a class="staff-nav-link" href="reports.html">Reports</a>
-        <a class="staff-nav-link" href="communication.html">Communication</a>
-        <a class="staff-nav-link" href="logs.html">Logs</a>
+        <!-- Dynamically injected by staff-shell.js -->
       </nav>
       <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--next" aria-label="Scroll navigation right">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
@@ -46,58 +40,142 @@
 
   <div class="emergency-banners" id="emergency-banners" hidden aria-live="polite"></div>
 
-  <main class="staff-dashboard">
+  <main class="staff-dashboard admin-dashboard">
     <header class="staff-dashboard-header">
-      <h1 class="staff-dashboard-title">Staff Dashboard</h1>
+      <h1 class="staff-dashboard-title">Admin Dashboard</h1>
       <p class="staff-dashboard-greeting" id="dashboard-greeting">—</p>
     </header>
 
-    <section class="stat-cards" aria-label="Summary">
-      <article class="stat-card">
-        <p class="stat-card-label">Total Patients</p>
-        <p class="stat-card-value" id="stat-total-patients">—</p>
-        <p class="stat-card-meta stat-card-meta--positive" id="stat-patients-meta">Loading…</p>
-      </article>
-      <article class="stat-card">
-        <p class="stat-card-label">Today&apos;s Appointment</p>
-        <p class="stat-card-value" id="stat-today-appointments">—</p>
-        <p class="stat-card-meta" id="stat-appointments-meta">Loading…</p>
-      </article>
-      <article class="stat-card">
-        <p class="stat-card-label">Active Emergencies</p>
-        <p class="stat-card-value" id="stat-active-emergencies">0</p>
-        <p class="stat-card-meta stat-card-meta--positive" id="stat-emergencies-meta">Live from Firestore</p>
-      </article>
-    </section>
+    <div id="admin-dashboard-sections">
+      <!-- Overview stat cards -->
+      <section class="stat-cards stat-cards--admin" aria-label="System overview">
+        <article class="stat-card stat-card--accent stat-card--patients">
+          <div class="stat-card-top">
+            <span class="stat-card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </span>
+            <a class="stat-card-link" href="patients.html">View all</a>
+          </div>
+          <p class="stat-card-label">Total Patients</p>
+          <p class="stat-card-value" id="stat-total-patients">—</p>
+          <p class="stat-card-meta" id="stat-patients-admin-meta">Loading…</p>
+        </article>
+        <article class="stat-card stat-card--accent stat-card--doctors">
+          <div class="stat-card-top">
+            <span class="stat-card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            </span>
+            <a class="stat-card-link" href="doctors.html">View all</a>
+          </div>
+          <p class="stat-card-label">Total Doctors</p>
+          <p class="stat-card-value" id="stat-total-doctors">—</p>
+          <p class="stat-card-meta" id="stat-doctors-admin-meta">Active staff</p>
+        </article>
+        <article class="stat-card stat-card--accent stat-card--therapists">
+          <div class="stat-card-top">
+            <span class="stat-card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            </span>
+            <a class="stat-card-link" href="therapists.html">View all</a>
+          </div>
+          <p class="stat-card-label">Total Therapists</p>
+          <p class="stat-card-value" id="stat-total-therapists">—</p>
+          <p class="stat-card-meta" id="stat-therapists-admin-meta">Active staff</p>
+        </article>
+        <article class="stat-card stat-card--accent stat-card--caregivers">
+          <div class="stat-card-top">
+            <span class="stat-card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            </span>
+            <a class="stat-card-link" href="caregivers.html">View all</a>
+          </div>
+          <p class="stat-card-label">Total Caregivers</p>
+          <p class="stat-card-value" id="stat-total-caregivers">—</p>
+          <p class="stat-card-meta" id="stat-caregivers-admin-meta">Active accounts</p>
+        </article>
+        <article class="stat-card stat-card--accent stat-card--emergency">
+          <div class="stat-card-top">
+            <span class="stat-card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </span>
+            <a class="stat-card-link" href="emergencies.html">Monitor</a>
+          </div>
+          <p class="stat-card-label">Active Emergencies</p>
+          <p class="stat-card-value" id="stat-active-emergencies">0</p>
+          <p class="stat-card-meta" id="stat-emergencies-admin-meta">Live alerts</p>
+        </article>
+      </section>
 
-    <section class="dashboard-grid">
-      <article class="panel panel--chart">
-        <h2 class="panel-title">Weekly Activity</h2>
-        <div class="bar-chart" id="weekly-activity-chart" role="img" aria-label="Weekly activity bar chart"></div>
-      </article>
-
-      <article class="panel">
-        <h2 class="panel-title">Today&apos;s Appointments</h2>
-        <ul class="appointment-list" id="today-appointments-list"></ul>
-        <p class="dashboard-empty" id="today-appointments-empty" hidden>No appointments today.</p>
-      </article>
-
-      <article class="panel panel--chart">
-        <h2 class="panel-title">Patient Status</h2>
-        <div class="donut-wrap">
-          <div class="donut-chart" id="patient-status-donut" role="img" aria-label="Patient status distribution"></div>
-          <ul class="donut-legend" id="patient-status-legend"></ul>
+      <!-- Today's highlights -->
+      <section class="admin-insights-row" aria-labelledby="admin-insights-heading">
+        <h2 class="visually-hidden" id="admin-insights-heading">Today's highlights</h2>
+        <p class="dashboard-section-meta" id="dashboard-activity-meta">Today</p>
+        <div class="admin-insights-grid">
+          <article class="admin-insight-card admin-insight-card--new">
+            <span class="admin-insight-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+            </span>
+            <div>
+              <p class="admin-insight-label">New Patients</p>
+              <p class="admin-insight-value" id="summary-new-patients">—</p>
+            </div>
+          </article>
+          <article class="admin-insight-card admin-insight-card--missed">
+            <span class="admin-insight-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </span>
+            <div>
+              <p class="admin-insight-label">Missed Appointments</p>
+              <p class="admin-insight-value" id="summary-missed-appointments">—</p>
+            </div>
+          </article>
+          <article class="admin-insight-card admin-insight-card--alert">
+            <span class="admin-insight-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            </span>
+            <div>
+              <p class="admin-insight-label">Emergency Alerts Today</p>
+              <p class="admin-insight-value" id="summary-emergency-alerts">—</p>
+            </div>
+          </article>
         </div>
-      </article>
+      </section>
 
-      <article class="panel">
-        <h2 class="panel-title">Patients Needing Attention</h2>
-        <ul class="attention-list" id="attention-patients-list"></ul>
-        <p class="dashboard-empty" id="attention-patients-empty" hidden>No patients need attention.</p>
-      </article>
-    </section>
+      <!-- Main dashboard grid -->
+      <section class="dashboard-grid dashboard-grid--admin" aria-label="Dashboard details">
+        <article class="panel panel--chart" id="panel-admin-appt-status">
+          <header class="panel-header">
+            <h2 class="panel-title">Today's Appointments</h2>
+            <p class="panel-subtitle" id="dashboard-appt-stats-meta">Status breakdown</p>
+          </header>
+          <div class="donut-wrap admin-appt-donut-wrap">
+            <div class="donut-chart admin-appt-donut" id="admin-appointment-donut" role="img" aria-label="Today's appointment status breakdown"></div>
+            <ul class="donut-legend admin-appt-legend" id="admin-appointment-legend"></ul>
+          </div>
+          <div class="admin-appt-mini-stats" id="admin-appt-mini-stats"></div>
+        </article>
+
+        <article class="panel" id="panel-admin-today-appts">
+          <header class="panel-header">
+            <h2 class="panel-title">Today's Schedule</h2>
+            <a class="panel-link" href="appointments.html">View all</a>
+          </header>
+          <ul class="appointment-list admin-appointment-list" id="admin-today-appointments-list"></ul>
+          <p class="dashboard-empty" id="admin-today-appointments-empty" hidden>No appointments scheduled for today.</p>
+        </article>
+
+        <article class="panel panel--wide" id="panel-admin-activity">
+          <header class="panel-header">
+            <h2 class="panel-title">Recent System Activity</h2>
+            <a class="panel-link" href="logs.html">Audit log</a>
+          </header>
+          <ul class="activity-feed" id="admin-activity-feed"></ul>
+          <p class="dashboard-empty" id="admin-activity-empty" hidden>No recent activity logged.</p>
+        </article>
+      </section>
+    </div>
   </main>
 
-  <script type="module" src="../js/dashboard.js"></script>
+  <script type="module" src="../js/dashboard.js?v=6"></script>
 </body>
 </html>

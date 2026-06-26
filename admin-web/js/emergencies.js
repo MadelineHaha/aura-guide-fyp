@@ -1,4 +1,6 @@
 import { initStaffAuth } from "./staff-shell.js";
+import { formatFirestoreError } from "./staff-data-status.js";
+import { isTherapist as isTherapistRole } from "./staff-rbac.js";
 import { getStaffSession } from "./staff-auth.js";
 import { releaseFirestoreListener } from "./firestore-realtime.js";
 import {
@@ -19,6 +21,7 @@ import {
 import { fetchActiveCaregivers } from "./staff-list-service.js";
 import { formatStaffDisplayName } from "./staff-name-format.js";
 import { formatTypedSentence } from "./text-format.js";
+import { fetchPatients } from "./user-patients-service.js";
 
 const listEl = document.getElementById("emergencies-list");
 const emptyEl = document.getElementById("emergencies-empty");
@@ -113,13 +116,13 @@ function activeAlertLabel(count) {
 
 function filterAlertsByCategory(alerts, filter) {
   if (filter === "active") {
-    return alerts.filter((alert) => alert.status === ALERT_STATUS_ACTIVE);
+    return alerts.filter((alert) => statusKey(alert.status) === "active");
   }
   if (filter === "responded") {
-    return alerts.filter((alert) => alert.status === ALERT_STATUS_RESPONDED);
+    return alerts.filter((alert) => statusKey(alert.status) === "responded");
   }
   if (filter === "resolved") {
-    return alerts.filter((alert) => alert.status === ALERT_STATUS_RESOLVED);
+    return alerts.filter((alert) => statusKey(alert.status) === "resolved");
   }
   return alerts;
 }
@@ -156,10 +159,15 @@ async function ensurePatientNames(alerts) {
   const missing = alerts.filter((alert) => !patientNamesCache.has(alert.userId));
   await Promise.all(
     missing.map(async (alert) => {
-      patientNamesCache.set(
-        alert.userId,
-        await resolvePatientName(alert.userId),
-      );
+      try {
+        patientNamesCache.set(
+          alert.userId,
+          await resolvePatientName(alert.userId),
+        );
+      } catch (error) {
+        console.warn("Could not resolve patient name:", alert.userId, error);
+        patientNamesCache.set(alert.userId, alert.userId);
+      }
     }),
   );
 }
@@ -179,6 +187,7 @@ function ensureEmergencyMap() {
   }).addTo(emergencyMap);
 
   markerLayer = window.L.layerGroup().addTo(emergencyMap);
+  requestAnimationFrame(() => emergencyMap?.invalidateSize());
   return emergencyMap;
 }
 
@@ -286,6 +295,7 @@ function renderMap(alerts, patientNames, filter = currentFilter) {
   requestAnimationFrame(() => emergencyMap?.invalidateSize());
 
   updateMapLabel(alerts, points.length, filter);
+  requestAnimationFrame(() => emergencyMap?.invalidateSize());
 }
 
 function focusMapMarker(alertId) {
@@ -299,12 +309,16 @@ function focusMapMarker(alertId) {
 }
 
 async function ensureCaregiverNames(alerts) {
-  const caregivers = await fetchActiveCaregivers();
-  for (const caregiver of caregivers) {
-    caregiverNamesCache.set(
-      caregiver.staffID,
-      formatStaffDisplayName(caregiver),
-    );
+  try {
+    const caregivers = await fetchActiveCaregivers();
+    for (const caregiver of caregivers) {
+      caregiverNamesCache.set(
+        caregiver.staffID,
+        formatStaffDisplayName(caregiver),
+      );
+    }
+  } catch (error) {
+    console.warn("Could not load caregiver names for emergencies:", error);
   }
 
   for (const alert of alerts) {
@@ -334,8 +348,9 @@ function renderAlertCard(alert, patientName, highlightId, number) {
   const status = statusKey(alert.status);
   const isHighlight = highlightId && highlightId === alert.alertId;
   const location = alert.location || "Location pending";
-  const showRespond = alert.status === ALERT_STATUS_ACTIVE;
-  const showResolve = alert.status !== ALERT_STATUS_RESOLVED;
+  const therapistReadOnly = isTherapistRole(loggedInRole);
+  const showRespond = !therapistReadOnly && alert.status === ALERT_STATUS_ACTIVE;
+  const showResolve = !therapistReadOnly && alert.status !== ALERT_STATUS_RESOLVED;
   const hasCoords = Boolean(parseCoords(alert.location));
   const caregiverLine = caregiverLabel(alert);
   const mapLinkAttrs = hasCoords
@@ -798,25 +813,8 @@ function bindAlertActions() {
   });
 }
 
-async function renderAlerts(alerts) {
+function renderAlertList(filtered) {
   if (!listEl || !emptyEl) return;
-
-  allAlertsCache = alerts;
-  updateActiveBadge(alerts);
-  updateFilterTabs(alerts);
-
-  await ensurePatientNames(alerts);
-  await ensureCaregiverNames(alerts);
-
-  const filtered = filterAlertsByCategory(alerts, currentFilter);
-  renderMap(filtered, patientNamesCache, currentFilter);
-
-  if (alerts.length === 0) {
-    listEl.innerHTML = "";
-    emptyEl.textContent = emptyMessageForFilter("all");
-    emptyEl.hidden = false;
-    return;
-  }
 
   if (filtered.length === 0) {
     listEl.innerHTML = "";
@@ -850,6 +848,54 @@ async function renderAlerts(alerts) {
   }
 }
 
+async function renderAlerts(alerts) {
+  if (!listEl || !emptyEl) return;
+
+  try {
+    let roleFilteredAlerts = alerts;
+    if (loggedInRole.toLowerCase() === "therapist") {
+      roleFilteredAlerts = alerts.filter((alert) =>
+        assignedPatientIds.has(alert.userId),
+      );
+    }
+
+    allAlertsCache = roleFilteredAlerts;
+    updateActiveBadge(roleFilteredAlerts);
+    updateFilterTabs(roleFilteredAlerts);
+
+    const filtered = filterAlertsByCategory(roleFilteredAlerts, currentFilter);
+
+    if (roleFilteredAlerts.length === 0) {
+      listEl.innerHTML = "";
+      emptyEl.textContent = emptyMessageForFilter("all");
+      emptyEl.hidden = false;
+      clearEmergencyMapMarkers();
+      return;
+    }
+
+    renderAlertList(filtered);
+    renderMap(filtered, patientNamesCache, currentFilter);
+
+    await ensurePatientNames(roleFilteredAlerts);
+    await ensureCaregiverNames(roleFilteredAlerts);
+
+    renderAlertList(filtered);
+    renderMap(filtered, patientNamesCache, currentFilter);
+    requestAnimationFrame(() => emergencyMap?.invalidateSize());
+  } catch (error) {
+    console.error("Could not render emergency alerts:", error);
+    if (listEl) listEl.innerHTML = "";
+    if (emptyEl) {
+      emptyEl.textContent = formatFirestoreError(error, "emergency alerts");
+      emptyEl.hidden = false;
+    }
+  }
+}
+
+let loggedInRole = "";
+let loggedInUid = "";
+let assignedPatientIds = new Set();
+
 let unsubscribeAlerts = null;
 
 function startEmergenciesRealtime() {
@@ -861,15 +907,27 @@ function startEmergenciesRealtime() {
     if (listEl) listEl.innerHTML = "";
     clearEmergencyMapMarkers();
     if (emptyEl) {
-      emptyEl.textContent =
-        error?.message || "Failed to load emergency alerts from Firestore.";
+      emptyEl.textContent = formatFirestoreError(error, "emergency alerts");
       emptyEl.hidden = false;
     }
     if (activeBadgeEl) activeBadgeEl.hidden = true;
   });
 }
 
-initStaffAuth(() => {
+initStaffAuth(async (profile) => {
+  loggedInRole = profile.role || "";
+  loggedInUid = profile.uid || "";
+
+  if (loggedInRole.toLowerCase() === "therapist") {
+    try {
+      const allPatients = await fetchPatients();
+      const assigned = allPatients.filter(p => p.assignedTherapistId === loggedInUid);
+      assignedPatientIds = new Set(assigned.map(p => p.patientId));
+    } catch (e) {
+      console.error("Failed to load assigned patients for therapist:", e);
+    }
+  }
+
   ensureEmergencyMap();
   bindFilterTabs();
   bindRespondModal();

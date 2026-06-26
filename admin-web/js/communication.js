@@ -1,5 +1,6 @@
 import { initStaffAuth, getInitials } from "./staff-shell.js";
 import { getStaffSession } from "./staff-auth.js";
+import { isAdmin } from "./staff-rbac.js";
 import {
   buildMessageCopyText,
   buildOptimisticOutgoingItem,
@@ -166,11 +167,25 @@ let unsubscribeIncomingCalls = null;
 function syncConversationPanelVisibility(thread) {
   const hasActiveThread = Boolean(thread);
   const inSelection = selectionMode && hasActiveThread;
+  const isVirtual = thread && thread.id === "sys_ag_virtual";
+  
   panelHeaderEl.hidden = !hasActiveThread;
-  composeFormEl.hidden = !hasActiveThread || inSelection;
+  composeFormEl.hidden = !hasActiveThread || inSelection || isVirtual;
   selectionToolbarEl.hidden = !inSelection;
   replyStripEl.hidden = !replyTarget || inSelection;
   updateScrollToBottomButton();
+  
+  // Hide call buttons for virtual broadcast thread
+  const callBtn = document.getElementById("btn-chat-call");
+  const videoBtn = document.getElementById("btn-chat-video");
+  if (callBtn) callBtn.hidden = isVirtual;
+  if (videoBtn) videoBtn.hidden = isVirtual;
+  
+  // Search and calendar icons should always be visible, even for virtual threads
+  const searchBtn = document.getElementById("btn-chat-search");
+  const calendarBtn = document.getElementById("btn-chat-calendar");
+  if (searchBtn) searchBtn.hidden = false;
+  if (calendarBtn) calendarBtn.hidden = false;
 }
 
 function isNearMessagesBottom(element, threshold = 64) {
@@ -539,6 +554,7 @@ async function handleMessageAction(action, messageId) {
 }
 
 function renderMessageMenu(messageId) {
+  if (activeThreadId === "sys_ag_virtual") return "";
   return `
     <div class="chat-bubble-menu-wrap">
       <button
@@ -598,7 +614,10 @@ async function openAddContactModal() {
   syncBodyModalLock();
 
   try {
-    const patients = await fetchAvailablePatientsForNewConversation(loggedInStaffId);
+    const patients = await fetchAvailablePatientsForNewConversation(
+      loggedInStaffId,
+      loggedInStaffProfile,
+    );
     if (patients.length === 0) {
       addContactErrorEl.textContent = "No available patient to add right now.";
       addContactErrorEl.hidden = false;
@@ -1944,6 +1963,10 @@ function applyChatThreads(threads) {
     ? chatThreads.find((thread) => thread.id === forcedActiveThreadId)
     : null;
 
+  if (isAdmin(loggedInStaffProfile?.role)) {
+    threads = threads.filter(t => t.id !== "sys_ag_virtual");
+  }
+
   chatThreads = threads;
 
   if (
@@ -2430,9 +2453,12 @@ document.getElementById("btn-chat-video")?.addEventListener("click", () => {
   }
 });
 
+let loggedInStaffProfile = null;
+
 initStaffAuth(async (profile) => {
+  loggedInStaffProfile = profile;
   loggedInStaffId =
-    profile?.staffID?.trim() || getStaffSession()?.staffID?.trim() || "";
+    profile?.staffID?.trim() || profile?.staffId?.trim() || getStaffSession()?.staffID?.trim() || getStaffSession()?.staffId?.trim() || "";
   startConversationsRealtime();
   startIncomingCallWatcher();
   if (pendingOpenPatientId) {

@@ -11,31 +11,40 @@ class VoiceRecordButton extends StatelessWidget {
     required this.isRecording,
     required this.hasValidSample,
     required this.onActivate,
+    this.isAnalyzing = false,
+    this.onStop,
     this.onRetake,
     this.accessibilityMessage,
     this.heardPreview,
+    this.prompt,
     this.accent = const Color(0xFF63C3C4),
     this.subtext = const Color(0xFFB0B0B0),
   });
 
   final bool isRecording;
   final bool hasValidSample;
+  final bool isAnalyzing;
   final VoidCallback onActivate;
+  final VoidCallback? onStop;
   final VoidCallback? onRetake;
   final String? accessibilityMessage;
   final String? heardPreview;
+  final String? prompt;
   final Color accent;
   final Color subtext;
 
   @override
   Widget build(BuildContext context) {
-    final title = isRecording
-        ? context.l10n.t('voiceRecordRecording')
+    final title = isAnalyzing
+        ? context.l10n.t('patientOnboardingPinVerifying')
+        : isRecording
+        ? (onStop != null ? 'Recording... Tap to stop' : context.l10n.t('voiceRecordRecording'))
         : hasValidSample
             ? context.l10n.t('voiceRecordCaptured')
             : context.l10n.t('voiceRecordTapToRecord');
 
-    final canRecord = !hasValidSample && !isRecording;
+    final canRecord = !hasValidSample && !isRecording && !isAnalyzing;
+    final canTap = canRecord || (isRecording && onStop != null);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -44,11 +53,27 @@ class VoiceRecordButton extends StatelessWidget {
           label: hasValidSample
               ? context.l10n.t('voiceRecordCapturedA11y')
               : context.l10n.t('voiceRecordTapA11y'),
-          onActivate: canRecord ? onActivate : null,
+          onActivate: canTap
+              ? () {
+                  if (isRecording) {
+                    onStop?.call();
+                  } else {
+                    onActivate();
+                  }
+                }
+              : null,
           child: Material(
             color: Colors.transparent,
             child: InkWell(
-              onTap: canRecord ? onActivate : null,
+              onTap: canTap
+                  ? () {
+                      if (isRecording) {
+                        onStop?.call();
+                      } else {
+                        onActivate();
+                      }
+                    }
+                  : null,
               borderRadius: BorderRadius.circular(14),
               child: Ink(
                 width: double.infinity,
@@ -56,14 +81,16 @@ class VoiceRecordButton extends StatelessWidget {
                   borderRadius: BorderRadius.circular(14),
                   color: isRecording
                       ? const Color(0xFF1A2A2B)
-                      : const Color(0xFF141414),
+                      : isAnalyzing
+                          ? const Color(0xFF1A2A2B)
+                          : const Color(0xFF141414),
                   border: Border.all(
                     color: hasValidSample
                         ? const Color(0xFF4CAF6A)
-                        : isRecording
+                        : isRecording || isAnalyzing
                             ? accent
                             : const Color(0xFF3A3A3A),
-                    width: hasValidSample || isRecording ? 1.6 : 1.2,
+                    width: hasValidSample || isRecording || isAnalyzing ? 1.6 : 1.2,
                   ),
                 ),
                 child: Padding(
@@ -72,7 +99,11 @@ class VoiceRecordButton extends StatelessWidget {
                   child: Column(
                     children: [
                       Icon(
-                        isRecording ? Icons.graphic_eq : Icons.mic_none_outlined,
+                        isAnalyzing
+                            ? Icons.hourglass_top
+                            : isRecording
+                                ? Icons.graphic_eq
+                                : Icons.mic_none_outlined,
                         color: hasValidSample
                             ? const Color(0xFF4CAF6A)
                             : accent,
@@ -90,7 +121,7 @@ class VoiceRecordButton extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        context.l10n.t('voiceRecordPrompt'),
+                        prompt ?? context.l10n.t('voiceRecordPrompt'),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: subtext,
@@ -99,6 +130,7 @@ class VoiceRecordButton extends StatelessWidget {
                         ),
                       ),
                       if (!hasValidSample &&
+                          !isAnalyzing &&
                           heardPreview != null &&
                           heardPreview!.isNotEmpty) ...[
                         const SizedBox(height: 10),

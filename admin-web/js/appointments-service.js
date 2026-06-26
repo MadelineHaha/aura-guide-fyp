@@ -3,6 +3,7 @@ import {
   deleteField,
   doc,
   getDocs,
+  addDoc,
   onSnapshot,
   orderBy,
   query,
@@ -17,6 +18,13 @@ import { logStaffActivity } from "./activity-logs-service.js";
 import { LOG_ACTIONS } from "./activity-log-actions.js";
 import { formatTypedSentence } from "./text-format.js";
 import { trackFirestoreListener } from "./firestore-realtime.js";
+import {
+  combineDateAndTime,
+  dateToInputValue,
+  formatErdDatetime,
+  timeToInputValue,
+  todayDateString,
+} from "./clinic-date-utils.js";
 import {
   fetchPatients,
   mapUserDoc,
@@ -47,6 +55,7 @@ export const APPOINTMENT_STATUSES = [
   "Rescheduled",
   "Done",
   "Cancelled",
+  "Missed",
 ];
 
 function timestampToDate(value) {
@@ -56,56 +65,119 @@ function timestampToDate(value) {
   return null;
 }
 
-export function todayDateString() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-export function combineDateAndTime(dateStr, timeStr) {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const [hh, mm] = timeStr.split(":").map(Number);
-  return new Date(y, m - 1, d, hh, mm, 0, 0);
-}
-
-/** ERD format: YYYY-MM-DD HH:mm:SS */
-export function formatErdDatetime(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  const hh = String(date.getHours()).padStart(2, "0");
-  const mm = String(date.getMinutes()).padStart(2, "0");
-  const ss = String(date.getSeconds()).padStart(2, "0");
-  return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
-}
+export {
+  combineDateAndTime,
+  dateToInputValue,
+  formatErdDatetime,
+  timeToInputValue,
+  todayDateString,
+};
 
 export function normalizeStatus(status) {
   const value = (status || "Scheduled").toLowerCase();
   if (value === "cancelled") return "cancelled";
   if (value === "done" || value === "completed") return "done";
+  if (value === "missed") return "missed";
   if (value === "rescheduled") return "rescheduled";
   if (value === "pending") return "pending";
   return "scheduled";
 }
 
-export function isDateTimeChanged(previousDate, date, time) {
-  if (!previousDate) return false;
-  return previousDate.getTime() !== combineDateAndTime(date, time).getTime();
+const MISSED_ELIGIBLE_STATUSES = new Set(["scheduled", "pending", "rescheduled"]);
+const pendingMissedUpdates = new Set();
+
+export function isAppointmentMissEligible(status) {
+  return MISSED_ELIGIBLE_STATUSES.has(normalizeStatus(status));
 }
 
-export function dateToInputValue(date) {
+export function isAppointmentPastDue(dateTime, now = new Date()) {
+  return dateTime instanceof Date && !Number.isNaN(dateTime.getTime()) && dateTime < now;
+}
+
+/** Marks overdue appointments that were never completed as Missed in Firestore. */
+export async function markOverdueAppointmentsAsMissed(docSnaps, { now = new Date() } = {}) {
+  if (!docSnaps?.length) return 0;
+
+  const updates = [];
+  for (const docSnap of docSnaps) {
+    const docId = docSnap.id;
+    if (pendingMissedUpdates.has(docId)) continue;
+
+    const data = docSnap.data();
+    if (!isAppointmentMissEligible(data.status)) continue;
+
+    const apptTime = timestampToDate(data.dateTime || data.scheduledAt);
+    if (!isAppointmentPastDue(apptTime, now)) continue;
+
+    pendingMissedUpdates.add(docId);
+    updates.push(
+      updateDoc(docSnap.ref, {
+        status: "Missed",
+        updatedAt: serverTimestamp(),
+      })
+        .catch((err) => {
+          console.error(`Failed to auto-mark appointment ${docId} as missed:`, err);
+        })
+        .finally(() => {
+          pendingMissedUpdates.delete(docId);
+        }),
+    );
+  }
+
+  if (updates.length) {
+    await Promise.all(updates);
+  }
+  return updates.length;
+}
+
+/** YYYY-MM-DD for patient last-visit display. */
+export function formatVisitDate(date) {
+  if (!date) return "—";
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
 
-export function timeToInputValue(date) {
-  const hh = String(date.getHours()).padStart(2, "0");
-  const mm = String(date.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
+/** Latest Done appointment date per patient userId. */
+export function buildLatestDoneVisitMapFromDocs(docSnaps) {
+  const map = new Map();
+  for (const docSnap of docSnaps) {
+    const data = docSnap.data();
+    if (normalizeStatus(data.status) !== "done") continue;
+    const userId = data.userId || data.patientUserId || "";
+    if (!userId) continue;
+    const dateTime = timestampToDate(data.dateTime || data.scheduledAt);
+    if (!dateTime) continue;
+    const existing = map.get(userId);
+    if (!existing || dateTime > existing) {
+      map.set(userId, dateTime);
+    }
+  }
+  return map;
+}
+
+/** Real-time map of patient userId → latest Done appointment date. */
+export function subscribeLatestDoneVisits(onData, onError) {
+  const appointmentsQuery = query(
+    collection(db, APPOINTMENTS_COLLECTION),
+    orderBy("dateTime", "asc"),
+  );
+
+  const unsub = onSnapshot(
+    appointmentsQuery,
+    (snap) => {
+      onData(buildLatestDoneVisitMapFromDocs(snap.docs));
+    },
+    onError,
+  );
+  trackFirestoreListener(unsub);
+  return unsub;
+}
+
+export function isDateTimeChanged(previousDate, date, time) {
+  if (!previousDate) return false;
+  return previousDate.getTime() !== combineDateAndTime(date, time).getTime();
 }
 
 function staffDisplayName(staff) {
@@ -158,6 +230,11 @@ export function mapAppointmentDoc(docSnap, lookups) {
     recommendation: (data.recommendation || "").trim(),
     followUpDate: (data.followUpDate || "").trim(),
     status: normalizeStatus(data.status),
+    sessionName: data.sessionName || "",
+    sessionDuration: data.sessionDuration || "",
+    sessionRemarks: data.sessionRemarks || "",
+    sessionStatus: data.sessionStatus || "",
+    sessionOutcome: data.sessionOutcome || "",
   };
 }
 
@@ -168,7 +245,29 @@ export async function fetchAppointments() {
     orderBy("dateTime", "asc"),
   );
   const snap = await getDocs(q);
+  await markOverdueAppointmentsAsMissed(snap.docs);
   return snap.docs.map((docSnap) => mapAppointmentDoc(docSnap, lookups));
+}
+
+export async function fetchTherapySessionsByUserId(userId) {
+  const lookups = await buildLookups();
+  // Fetch all appointments for user and filter by Therapy Session
+  // Firestore might not have composite index for userId + type + dateTime
+  // so we fetch by userId and filter in memory if needed.
+  // Wait, userId is usually "userId" or "patientUserId".
+  // We can just fetch all and filter since we have fetchAppointments that does exactly this, or do a query on userId.
+  const q = query(
+    collection(db, APPOINTMENTS_COLLECTION),
+    orderBy("dateTime", "desc"),
+  );
+  const snap = await getDocs(q);
+  return snap.docs
+    .map((docSnap) => mapAppointmentDoc(docSnap, lookups))
+    .filter(
+      (appt) =>
+        appt.patientId === userId &&
+        (appt.appointmentType === "Therapy Session" || appt.appointmentType === "Therapist Session")
+    );
 }
 
 /**
@@ -188,6 +287,49 @@ function mapActiveStaffFromSnap(snap) {
       };
     })
     .filter((staff) => staff.status === "Active" && staff.staffID);
+}
+
+export async function saveTherapySession(appointmentId, sessionData) {
+  if (!appointmentId) throw new Error("Missing appointment ID.");
+  const docRef = doc(db, APPOINTMENTS_COLLECTION, appointmentId);
+  await updateDoc(docRef, {
+    sessionName: sessionData.sessionName || "",
+    sessionDuration: sessionData.sessionDuration || "",
+    sessionRemarks: sessionData.sessionRemarks || "",
+    sessionStatus: sessionData.sessionStatus || "",
+    sessionOutcome: sessionData.sessionOutcome || "",
+    updatedAt: serverTimestamp()
+  });
+  
+  logStaffActivity(LOG_ACTIONS.APPOINTMENT_UPDATED, {
+    targetId: appointmentId,
+    details: `Recorded therapy session details: ${sessionData.sessionName}`,
+  });
+}
+
+export async function createRehabAppointment(data) {
+  const docRef = await addDoc(collection(db, APPOINTMENTS_COLLECTION), {
+    userId: data.patientId,
+    patientUserId: data.patientId,
+    staffId: data.staffId,
+    staffID: data.staffId,
+    type: "Therapy Session",
+    appointmentType: "Therapy Session",
+    dateTime: Timestamp.fromDate(data.dateTime),
+    scheduledAt: Timestamp.fromDate(data.dateTime),
+    status: "Scheduled",
+    sessionName: data.sessionName,
+    notes: data.notes || "",
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  });
+  
+  logStaffActivity(LOG_ACTIONS.APPOINTMENT_UPDATED, {
+    targetId: docRef.id,
+    details: `Created rehab plan appointment: ${data.sessionName}`,
+  });
+  
+  return docRef.id;
 }
 
 export function subscribeAppointments(onData, onError) {
@@ -226,13 +368,19 @@ export function subscribeAppointments(onData, onError) {
       appointmentsQuery,
       (snap) => {
         appointmentDocs = snap.docs;
+        void markOverdueAppointmentsAsMissed(snap.docs);
         emit();
       },
       onError,
     ),
   ];
 
+  const missedIntervalId = setInterval(() => {
+    void markOverdueAppointmentsAsMissed(appointmentDocs);
+  }, 60000);
+
   const stopAll = () => {
+    clearInterval(missedIntervalId);
     for (const unsub of unsubs) {
       if (typeof unsub === "function") unsub();
     }

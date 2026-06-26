@@ -24,6 +24,7 @@ class RegisterPage extends StatelessWidget {
     void openVoiceRegister() {
       Navigator.of(context).push(
         MaterialPageRoute<void>(
+          settings: const RouteSettings(name: 'VoiceRegisterPage'),
           builder: (context) => const VoiceRegisterPage(),
         ),
       );
@@ -32,6 +33,7 @@ class RegisterPage extends StatelessWidget {
     void openManualRegister() {
       Navigator.of(context).push(
         MaterialPageRoute<void>(
+          settings: const RouteSettings(name: 'ManualRegisterPage'),
           builder: (context) => const ManualRegisterPage(),
         ),
       );

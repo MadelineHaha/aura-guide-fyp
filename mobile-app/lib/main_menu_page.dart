@@ -7,9 +7,12 @@ import 'appointments_page.dart';
 import 'emergency_sos_page.dart';
 import 'medications_page.dart';
 import 'auth_session.dart';
+import 'start_page.dart';
 import 'communication_page.dart';
 import 'navigation_page.dart';
 import 'settings_page.dart';
+import 'app_route_observer.dart';
+import 'services/voice_assistant_coordinator.dart';
 import 'health_records_page.dart';
 import 'l10n/app_localizations.dart';
 import 'my_profile_page.dart';
@@ -20,10 +23,15 @@ import 'services/health_records_service.dart';
 import 'services/medications_service.dart';
 import 'services/medication_push_service.dart';
 import 'notifications_page.dart';
+import 'services/notifications_service.dart';
 import 'services/patient_call_session.dart';
 import 'services/step_tracking_service.dart';
-import 'widgets/daily_step_card.dart';
 import 'services/user_profile_service.dart';
+import 'theme/app_colors.dart';
+import 'doctor/widgets/doctor_module_tile.dart';
+import 'doctor/widgets/doctor_section_header.dart';
+import 'doctor/widgets/doctor_theme.dart';
+import 'widgets/portal_notification_bell.dart';
 import 'utils/clinic_datetime.dart';
 import 'utils/localized_date_format.dart';
 import 'widgets/accessible_focus_region.dart';
@@ -38,10 +46,15 @@ class MainMenuPage extends StatefulWidget {
   State<MainMenuPage> createState() => _MainMenuPageState();
 }
 
-class _MainMenuPageState extends State<MainMenuPage> {
-  static const Color _bg = Color(0xFF000000);
-  static const Color _subtext = Color(0xFFB0B0B0);
-  static const Color _text = Color(0xFFEFEFEF);
+class _MainMenuPageState extends State<MainMenuPage> with RouteAware {
+
+  final PageController _pageController = PageController();
+  int _currentTab = 0;
+
+  // Two-finger swipe gesture tracking variables
+  final Map<int, Offset> _pointerStarts = {};
+  final Map<int, Offset> _pointerPositions = {};
+  bool _gestureTriggered = false;
 
   @override
   void initState() {
@@ -49,72 +62,414 @@ class _MainMenuPageState extends State<MainMenuPage> {
     PatientCallSession.instance.ensureStarted();
     unawaited(StepTrackingService.instance.start());
     unawaited(MedicationPushService.instance.registerForReminders());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      VoiceAssistantCoordinator.instance.setTopRouteLabel('MainMenuPage');
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPopNext() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      VoiceAssistantCoordinator.instance.setTopRouteLabel('MainMenuPage');
+    });
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _switchToCategory(int index) {
+    if (index < 0 || index > 1) return;
+    if (_currentTab == index) return;
+
+    setState(() {
+      _currentTab = index;
+    });
+
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
+  }
+
+  void _handlePointerDown(PointerDownEvent event) {
+    _pointerStarts[event.pointer] = event.position;
+    _pointerPositions[event.pointer] = event.position;
+    if (_pointerStarts.length == 2) {
+      // Reset start positions of both pointers to align tracking from this moment
+      for (final id in _pointerStarts.keys) {
+        _pointerStarts[id] = _pointerPositions[id] ?? _pointerStarts[id]!;
+      }
+      _gestureTriggered = false;
+      setState(() {});
+    }
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (_pointerStarts.containsKey(event.pointer)) {
+      _pointerPositions[event.pointer] = event.position;
+      _evaluateGesture();
+    }
+  }
+
+  void _handlePointerUp(PointerUpEvent event) {
+    final wasMulti = _pointerStarts.length >= 2;
+    _pointerStarts.remove(event.pointer);
+    _pointerPositions.remove(event.pointer);
+    if (_pointerStarts.isEmpty) {
+      _gestureTriggered = false;
+    }
+    if (wasMulti && _pointerStarts.length < 2) {
+      setState(() {});
+    }
+  }
+
+  void _handlePointerCancel(PointerCancelEvent event) {
+    final wasMulti = _pointerStarts.length >= 2;
+    _pointerStarts.remove(event.pointer);
+    _pointerPositions.remove(event.pointer);
+    if (_pointerStarts.isEmpty) {
+      _gestureTriggered = false;
+    }
+    if (wasMulti && _pointerStarts.length < 2) {
+      setState(() {});
+    }
+  }
+
+  void _evaluateGesture() {
+    if (_gestureTriggered) return;
+
+    if (_pointerStarts.length == 2) {
+      final keys = _pointerStarts.keys.toList();
+      final start1 = _pointerStarts[keys[0]];
+      final current1 = _pointerPositions[keys[0]];
+      final start2 = _pointerStarts[keys[1]];
+      final current2 = _pointerPositions[keys[1]];
+
+      if (start1 != null && current1 != null && start2 != null && current2 != null) {
+        final delta1 = current1.dx - start1.dx;
+        final delta2 = current2.dx - start2.dx;
+
+        // Ensure both fingers are swiping in the same direction
+        final sameDirection = (delta1 > 0 && delta2 > 0) || (delta1 < 0 && delta2 < 0);
+        if (sameDirection) {
+          final averageDelta = (delta1 + delta2) / 2;
+          const double swipeThreshold = 70.0;
+
+          if (averageDelta.abs() > swipeThreshold) {
+            if (averageDelta > 0) {
+              // Swipe right -> Switch to Health (tab 0)
+              if (_currentTab != 0) {
+                _switchToCategory(0);
+                _gestureTriggered = true;
+              }
+            } else {
+              // Swipe left -> Switch to Assistance (tab 1)
+              if (_currentTab != 1) {
+                _switchToCategory(1);
+                _gestureTriggered = true;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  Widget _buildCategorySelector() {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: DoctorTheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: DoctorTheme.borderSoft),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildCategoryTab(
+              index: 0,
+              title: 'Health',
+              icon: Icons.medical_services_outlined,
+            ),
+          ),
+          Expanded(
+            child: _buildCategoryTab(
+              index: 1,
+              title: 'Assistance',
+              icon: Icons.handshake_outlined,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategoryTab({
+    required int index,
+    required String title,
+    required IconData icon,
+  }) {
+    final isActive = _currentTab == index;
+    final activeColor = DoctorTheme.portalGlow;
+
+    return Semantics(
+      selected: isActive,
+      label: '$title category',
+      hint: isActive ? null : 'Double tap to select $title category',
+      child: InkWell(
+        onTap: () => _switchToCategory(index),
+        borderRadius: BorderRadius.circular(8),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: isActive ? activeColor : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                color: isActive ? Colors.white : const Color(0xFF8E8E8E),
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: TextStyle(
+                  color: isActive ? Colors.white : const Color(0xFF8E8E8E),
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHealthPage() {
+    final physics = _pointerStarts.length >= 2
+        ? const NeverScrollableScrollPhysics()
+        : const BouncingScrollPhysics();
+    return SingleChildScrollView(
+      physics: physics,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _ReminderCard(),
+          const SizedBox(height: 20),
+          const DoctorSectionHeader(
+            title: 'Health',
+            subtitle: 'Medications, records, and appointments',
+          ),
+          const SizedBox(height: 14),
+          GridView.count(
+            physics: const NeverScrollableScrollPhysics(),
+            shrinkWrap: true,
+            crossAxisCount: 2,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 1.05,
+            children: const [
+              _MedicationsMenuTile(),
+              _AppointmentsMenuTile(),
+              _HealthRecordsMenuTile(),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAssistancePage() {
+    final physics = _pointerStarts.length >= 2
+        ? const NeverScrollableScrollPhysics()
+        : const BouncingScrollPhysics();
+    return SingleChildScrollView(
+      physics: physics,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const DoctorSectionHeader(
+            title: 'Assistance',
+            subtitle: 'Navigation and communication',
+          ),
+          const SizedBox(height: 14),
+          GridView.count(
+            physics: physics,
+            shrinkWrap: true,
+            crossAxisCount: 2,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 1.05,
+            children: [
+              _MenuTile(
+                title: context.l10n.t('navigation'),
+                subtitle: context.l10n.t('navigationSubtitle'),
+                icon: Icons.near_me_outlined,
+                accent: const Color(0xFFC88423),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      settings: const RouteSettings(name: 'NavigationPage'),
+                      builder: (context) => const NavigationPage(),
+                    ),
+                  );
+                },
+              ),
+              const _CommunicationMenuTile(),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmergencySosButton() {
+    return AccessibleFocusRegion(
+      label: '${context.l10n.t('emergencySos')}. ${context.l10n.t('emergencySosSubtitle')}',
+      onActivate: () {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            settings: const RouteSettings(name: 'EmergencySosPage'),
+            builder: (context) => const EmergencySosPage(),
+          ),
+        );
+      },
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              settings: const RouteSettings(name: 'EmergencySosPage'),
+              builder: (context) => const EmergencySosPage(),
+            ),
+          );
+        },
+        child: Ink(
+          decoration: BoxDecoration(
+            borderRadius: DoctorTheme.cardRadius,
+            color: DoctorTheme.dangerSurface,
+            border: Border.all(color: DoctorTheme.dangerBorder, width: 1.5),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 50,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: DoctorTheme.dangerBorder.withValues(alpha: 0.35),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        context.l10n.t('emergencySos'),
+                        style: const TextStyle(
+                          color: AppColors.text,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        context.l10n.t('emergencySosSubtitle'),
+                        style: const TextStyle(
+                          color: AppColors.subtext,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.arrow_forward_ios,
+                  color: DoctorTheme.dangerBorder,
+                  size: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       key: MainMenuPage.scaffoldKey,
-      backgroundColor: _bg,
+      backgroundColor: AppColors.background,
       drawer: const _MainMenuDrawer(),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const _HeaderSection(),
-              const SizedBox(height: 14),
-              const DailyStepCard(),
-              const SizedBox(height: 14),
-              const _ReminderCard(),
-              const SizedBox(height: 18),
-              Expanded(
-                child: GridView.count(
-                  physics: const BouncingScrollPhysics(),
-                  crossAxisCount: 2,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  childAspectRatio: 1.02,
-                  children: [
-                    const _AppointmentsMenuTile(),
-                    const _HealthRecordsMenuTile(),
-                    const _MedicationsMenuTile(),
-                    _MenuTile(
-                      title: context.l10n.t('emergencySos'),
-                      subtitle: context.l10n.t('emergencySosSubtitle'),
-                      icon: Icons.info_outline,
-                      border: const Color(0xFFE13636),
-                      tile: const Color(0xFF3C1111),
-                      iconCircle: const Color(0xFF8E2626),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (context) => const EmergencySosPage(),
-                          ),
-                        );
-                      },
-                    ),
-                    _MenuTile(
-                      title: context.l10n.t('navigation'),
-                      subtitle: context.l10n.t('navigationSubtitle'),
-                      icon: Icons.near_me_outlined,
-                      border: const Color(0xFFC88423),
-                      tile: const Color(0xFF3D2A10),
-                      iconCircle: const Color(0xFF885B1F),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (context) => const NavigationPage(),
-                          ),
-                        );
-                      },
-                    ),
-                    const _CommunicationMenuTile(),
-                  ],
+      drawerEnableOpenDragGesture: false,
+      body: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: _handlePointerDown,
+        onPointerMove: _handlePointerMove,
+        onPointerUp: _handlePointerUp,
+        onPointerCancel: _handlePointerCancel,
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const _HeaderSection(),
+                const SizedBox(height: 16),
+                _buildEmergencySosButton(),
+                const SizedBox(height: 16),
+                _buildCategorySelector(),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: PageView(
+                    controller: _pageController,
+                    physics: const NeverScrollableScrollPhysics(),
+                    onPageChanged: (index) {
+                      if (_currentTab != index) {
+                        setState(() {
+                          _currentTab = index;
+                        });
+                      }
+                    },
+                    children: [
+                      _buildHealthPage(),
+                      _buildAssistancePage(),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -137,13 +492,16 @@ class _HeaderSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final profileService = UserProfileService();
+    final now = ClinicDateTime.nowClinic();
+    final dates = _todayLabels(context);
+    final greeting = DoctorTheme.greetingForHour(now.hour);
+
     return StreamBuilder<Map<String, dynamic>>(
       stream: profileService.watchForCurrentUser(),
       initialData: const {},
       builder: (context, snapshot) {
         final profile = snapshot.data ?? const {};
         final name = UserProfileService.greetingName(profile);
-        final dates = _todayLabels(context);
         final a11yLabel = name.isEmpty
             ? context.l10n.t('goodMorningA11yLabelNoName', {
                 'date': dates.spoken,
@@ -157,19 +515,19 @@ class _HeaderSection extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const _MenuButton(),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
               child: AccessibleFocusRegion(
                 label: a11yLabel,
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      context.l10n.t('goodMorning'),
-                      style: TextStyle(
-                        color: _MainMenuPageState._subtext,
-                        fontSize: 15,
+                      greeting,
+                      style: const TextStyle(
+                        color: DoctorTheme.portalAccent,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -178,18 +536,19 @@ class _HeaderSection extends StatelessWidget {
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
-                        fontSize: 24,
+                        fontSize: 22,
+                        height: 1.15,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 4),
                     Semantics(
                       label: dates.spoken,
                       excludeSemantics: true,
                       child: Text(
                         dates.display,
-                        style: TextStyle(
-                          color: _MainMenuPageState._subtext,
-                          fontSize: 15,
+                        style: const TextStyle(
+                          color: AppColors.subtext,
+                          fontSize: 12,
                         ),
                       ),
                     ),
@@ -198,7 +557,7 @@ class _HeaderSection extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 10),
-            const _NotificationButton(),
+            _PatientNotificationBell(),
           ],
         );
       },
@@ -219,10 +578,10 @@ class _MenuButton extends StatelessWidget {
       label: context.l10n.t('menuOpenHint'),
       onActivate: () => _openDrawer(context),
       child: Material(
-        color: const Color(0xFF1A1A1A),
+        color: DoctorTheme.surfaceElevated,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: Color(0xFF3A3A3A)),
+          side: const BorderSide(color: DoctorTheme.borderSoft),
         ),
         child: InkWell(
           onTap: () => _openDrawer(context),
@@ -241,40 +600,31 @@ class _MenuButton extends StatelessWidget {
   }
 }
 
-class _NotificationButton extends StatelessWidget {
-  const _NotificationButton();
-
-  void _openNotifications(BuildContext context) {
-    unawaited(MedicationPushService.instance.registerForReminders());
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const NotificationsPage()),
-    );
-  }
+class _PatientNotificationBell extends StatelessWidget {
+  const _PatientNotificationBell();
 
   @override
   Widget build(BuildContext context) {
-    return AccessibleFocusRegion(
-      label: context.l10n.t('notification'),
-      onActivate: () => _openNotifications(context),
-      child: Material(
-        color: const Color(0xFF50BDC5),
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          onTap: () => _openNotifications(context),
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Text(
-              context.l10n.t('notification'),
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
+    final service = NotificationsService();
+    return StreamBuilder<int>(
+      stream: service.watchUnreadCount(),
+      initialData: 0,
+      builder: (context, snapshot) {
+        final count = snapshot.data ?? 0;
+        return PortalNotificationBell(
+          unreadCount: count,
+          tooltip: context.l10n.t('notification'),
+          onTap: () {
+            unawaited(MedicationPushService.instance.registerForReminders());
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                settings: const RouteSettings(name: 'NotificationsPage'),
+                builder: (_) => const NotificationsPage(),
               ),
-            ),
-          ),
-        ),
-      ),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -294,6 +644,7 @@ class _ReminderCardState extends State<_ReminderCard> {
   void _openMedications() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
+        settings: const RouteSettings(name: 'MedicationsPage'),
         builder: (context) => const MedicationsPage(),
       ),
     );
@@ -351,19 +702,26 @@ class _ReminderCardState extends State<_ReminderCard> {
           label: a11yLabel,
           onActivate: _openMedications,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              color: const Color(0xFF203536),
-              border: Border.all(color: const Color(0xFF40595B), width: 1.1),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: DoctorTheme.surfaceCard(
+              tint: DoctorTheme.surfaceHighlight,
             ),
             child: Row(
               children: [
-                const _IconCircle(
-                  bg: Color(0xFF2A666A),
-                  icon: Icons.medication_outlined,
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: DoctorTheme.portalAccent.withValues(alpha: 0.22),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.medication_outlined,
+                    color: DoctorTheme.portalAccent,
+                    size: 24,
+                  ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -379,8 +737,8 @@ class _ReminderCardState extends State<_ReminderCard> {
                       const SizedBox(height: 2),
                       Text(
                         subtitle,
-                        style: TextStyle(
-                          color: _MainMenuPageState._subtext,
+                        style: const TextStyle(
+                          color: AppColors.subtext,
                           fontSize: 14,
                         ),
                       ),
@@ -423,16 +781,15 @@ class _AppointmentsMenuTileState extends State<_AppointmentsMenuTile> {
             ? context.l10n.t('noAppointmentsUpcoming')
             : _subtitleForCount(context, count);
 
-        return _MenuTile(
+        return DoctorModuleTile(
           title: context.l10n.t('appointments'),
           subtitle: subtitle,
           icon: Icons.calendar_today_outlined,
-          border: const Color(0xFF49BFC5),
-          tile: const Color(0xFF12363B),
-          iconCircle: const Color(0xFF226A6C),
+          accent: DoctorTheme.moduleAppointments,
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
+                settings: const RouteSettings(name: 'AppointmentsPage'),
                 builder: (context) => const AppointmentsPage(),
               ),
             );
@@ -471,13 +828,11 @@ class _MedicationsMenuTileState extends State<_MedicationsMenuTile> {
             ? context.l10n.t('noMedications')
             : _subtitleForCount(context, remaining);
 
-        return _MenuTile(
+        return DoctorModuleTile(
           title: context.l10n.t('medications'),
           subtitle: subtitle,
-          icon: Icons.link_outlined,
-          border: const Color(0xFF9DDC3D),
-          tile: const Color(0xFF263913),
-          iconCircle: const Color(0xFF5C8D29),
+          icon: Icons.medication_outlined,
+          accent: DoctorTheme.moduleMedications,
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
@@ -519,16 +874,15 @@ class _HealthRecordsMenuTileState extends State<_HealthRecordsMenuTile> {
             ? context.l10n.t('noHealthRecord')
             : _subtitleForCount(context, count);
 
-        return _MenuTile(
+        return DoctorModuleTile(
           title: context.l10n.t('healthRecords'),
           subtitle: subtitle,
           icon: Icons.description_outlined,
-          border: const Color(0xFF3E99F7),
-          tile: const Color(0xFF19324F),
-          iconCircle: const Color(0xFF2C4F7F),
+          accent: DoctorTheme.moduleRecords,
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
+                settings: const RouteSettings(name: 'HealthRecordsPage'),
                 builder: (context) => const HealthRecordsPage(),
               ),
             );
@@ -566,16 +920,16 @@ class _CommunicationMenuTileState extends State<_CommunicationMenuTile> {
             ? context.l10n.t('noMessagesUpcoming')
             : _subtitleForCount(context, count);
 
-        return _MenuTile(
+        return DoctorModuleTile(
           title: context.l10n.t('communication'),
           subtitle: subtitle,
           icon: Icons.forum_outlined,
-          border: const Color(0xFF59C6D1),
-          tile: const Color(0xFF19393D),
-          iconCircle: const Color(0xFF3D8E96),
+          accent: DoctorTheme.moduleCommunication,
+          badge: count > 0 ? '$count' : null,
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
+                settings: const RouteSettings(name: 'CommunicationPage'),
                 builder: (context) => const CommunicationPage(),
               ),
             );
@@ -591,94 +945,24 @@ class _MenuTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.icon,
-    required this.border,
-    required this.tile,
-    required this.iconCircle,
+    required this.accent,
     this.onTap,
   });
 
   final String title;
   final String subtitle;
   final IconData icon;
-  final Color border;
-  final Color tile;
-  final Color iconCircle;
+  final Color accent;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    void onActivate() {
-      if (onTap != null) {
-        onTap!();
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.t('featureComingSoon', {'title': title})),
-        ),
-      );
-    }
-
-    return AccessibleFocusRegion(
-      label: '$title. $subtitle',
-      onActivate: onActivate,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onActivate,
-        child: Ink(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            color: tile,
-            border: Border.all(color: border, width: 1.4),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(8, 10, 8, 8),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _IconCircle(bg: iconCircle, icon: icon),
-                const SizedBox(height: 10),
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: _MainMenuPageState._text,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  subtitle,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: _MainMenuPageState._subtext,
-                    fontSize: 14,
-                    height: 1.2,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _IconCircle extends StatelessWidget {
-  const _IconCircle({required this.bg, required this.icon});
-
-  final Color bg;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 70,
-      height: 70,
-      decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
-      child: Icon(icon, color: Colors.white70, size: 34),
+    return DoctorModuleTile(
+      title: title,
+      subtitle: subtitle,
+      icon: icon,
+      accent: accent,
+      onTap: onTap,
     );
   }
 }
@@ -850,6 +1134,7 @@ class _MainMenuDrawer extends StatelessWidget {
                             _closeDrawer(context);
                             navigator.push(
                               MaterialPageRoute<void>(
+                                settings: const RouteSettings(name: 'SettingsPage'),
                                 builder: (context) => const SettingsPage(),
                               ),
                             );
@@ -874,11 +1159,29 @@ class _MainMenuDrawer extends StatelessWidget {
                         onActivate: () async {
                           AuthSession.markExplicitSignOut();
                           await FirebaseAuth.instance.signOut();
+                          if (context.mounted) {
+                            Navigator.of(context).pushAndRemoveUntil(
+                              MaterialPageRoute<void>(
+                                settings: const RouteSettings(name: 'StartPage'),
+                                builder: (context) => const StartPage(),
+                              ),
+                              (route) => false,
+                            );
+                          }
                         },
                         child: FilledButton.icon(
                           onPressed: () async {
                             AuthSession.markExplicitSignOut();
                             await FirebaseAuth.instance.signOut();
+                            if (context.mounted) {
+                              Navigator.of(context).pushAndRemoveUntil(
+                                MaterialPageRoute<void>(
+                                  settings: const RouteSettings(name: 'StartPage'),
+                                  builder: (context) => const StartPage(),
+                                ),
+                                (route) => false,
+                              );
+                            }
                           },
                           icon: const Icon(Icons.logout, size: 20),
                           label: Text(context.l10n.t('logOut')),

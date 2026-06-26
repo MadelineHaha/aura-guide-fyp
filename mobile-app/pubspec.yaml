@@ -58,6 +58,9 @@ dependencies:
   mobile_number: ^3.0.0
   http: ^1.6.0
   audioplayers: ^6.1.0
+  video_player: ^2.9.5
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
   flutter_webrtc: ^1.5.1
   sensors_plus: ^6.1.1
   tflite_flutter: ^0.11.0

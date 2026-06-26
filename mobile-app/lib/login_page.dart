@@ -25,6 +25,7 @@ class LoginPage extends StatelessWidget {
     void openVoiceLogin() {
       Navigator.of(context).push(
         MaterialPageRoute<void>(
+          settings: const RouteSettings(name: 'VoiceLoginPage'),
           builder: (context) => const VoiceLoginPage(),
         ),
       );
@@ -33,6 +34,7 @@ class LoginPage extends StatelessWidget {
     void openManualLogin() {
       Navigator.of(context).push(
         MaterialPageRoute<void>(
+          settings: const RouteSettings(name: 'ManualLoginPage'),
           builder: (context) => const ManualLoginPage(),
         ),
       );
@@ -41,6 +43,7 @@ class LoginPage extends StatelessWidget {
     void openRegister() {
       Navigator.of(context).push(
         MaterialPageRoute<void>(
+          settings: const RouteSettings(name: 'RegisterPage'),
           builder: (context) => const RegisterPage(),
         ),
       );

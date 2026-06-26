@@ -62,6 +62,11 @@ class MedicationPushService {
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
+  /// Shared plugin for medication local alarms and FCM foreground display.
+  FlutterLocalNotificationsPlugin get localNotifications => _localNotifications;
+
+  bool _pendingMedicationsNavigation = false;
+
   StreamSubscription<String>? _tokenSub;
   StreamSubscription<RemoteMessage>? _foregroundSub;
   StreamSubscription<RemoteMessage>? _openedSub;
@@ -332,6 +337,17 @@ class MedicationPushService {
         if (uid != null) unawaited(_saveToken(uid, token));
       });
 
+      final launchDetails =
+          await _localNotifications.getNotificationAppLaunchDetails();
+      if (launchDetails?.didNotificationLaunchApp == true) {
+        final payload = launchDetails!.notificationResponse?.payload?.trim();
+        if (payload != null && payload.isNotEmpty && payload != 'TEST') {
+          openMedicationsFromNotificationTap(payload);
+        } else {
+          openMedicationsFromNotificationTap();
+        }
+      }
+
       final initialMessage = await _messaging.getInitialMessage();
       if (initialMessage != null) {
         _handleMessageNavigation(initialMessage);
@@ -450,23 +466,49 @@ class MedicationPushService {
   }
 
   void _onNotificationTapped(NotificationResponse response) {
-    _openMedicationsPage();
+    final payload = response.payload?.trim();
+    if (payload == null || payload.isEmpty || payload == 'TEST') {
+      openMedicationsFromNotificationTap();
+      return;
+    }
+    openMedicationsFromNotificationTap(payload);
   }
 
   void _handleMessageNavigation(RemoteMessage message) {
     if (!_isMedicationReminder(message)) return;
-    _openMedicationsPage();
+    final reminderId = message.data['reminderId']?.trim();
+    if (reminderId != null && reminderId.isNotEmpty) {
+      openMedicationsFromNotificationTap(reminderId);
+    } else {
+      openMedicationsFromNotificationTap();
+    }
   }
 
   bool _isMedicationReminder(RemoteMessage message) {
     return message.data['type'] == 'medication_reminder';
   }
 
-  void _openMedicationsPage() {
-    final navigator = rootNavigatorKey.currentState;
-    if (navigator == null) return;
-    navigator.push(
-      MaterialPageRoute<void>(builder: (_) => const MedicationsPage()),
-    );
+  /// Opens [MedicationsPage] when the user taps a medication notification.
+  void openMedicationsFromNotificationTap([String? reminderId]) {
+    void navigate() {
+      final navigator = rootNavigatorKey.currentState;
+      if (navigator == null) {
+        if (!_pendingMedicationsNavigation) {
+          _pendingMedicationsNavigation = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _pendingMedicationsNavigation = false;
+            openMedicationsFromNotificationTap(reminderId);
+          });
+        }
+        return;
+      }
+
+      final route = MaterialPageRoute<void>(
+        builder: (_) => MedicationsPage(highlightReminderId: reminderId),
+      );
+      navigator.push(route);
+    }
+
+    navigate();
   }
 }

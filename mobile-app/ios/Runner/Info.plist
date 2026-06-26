@@ -47,6 +47,8 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Microphone access is used for voice login, voice registration, emergency SOS, fall detection voice check-in, and navigation voice commands.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Speech recognition is used so Aura Guide can hear your voice commands and respond hands-free.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Motion sensors are used to detect sudden falls and to track daily step counts for health reports.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

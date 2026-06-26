@@ -51,26 +51,31 @@ class PlaceSearchMatcher {
 
     final label = destination.label;
     final address = destination.address;
+    final category = destination.category ?? '';
     final compactLabel = compact(label);
     final compactAddress = compact(address);
+    final compactCategory = compact(category);
 
     if (compactLabel.contains(compactQuery) ||
-        compactAddress.contains(compactQuery)) {
+        compactAddress.contains(compactQuery) ||
+        compactCategory.contains(compactQuery)) {
       return true;
     }
 
     final loweredLabel = label.toLowerCase();
     final loweredAddress = address.toLowerCase();
+    final loweredCategory = category.toLowerCase();
     final loweredQuery = trimmed.toLowerCase();
     if (loweredLabel.contains(loweredQuery) ||
-        loweredAddress.contains(loweredQuery)) {
+        loweredAddress.contains(loweredQuery) ||
+        loweredCategory.contains(loweredQuery)) {
       return true;
     }
 
     final queryTokens = tokens(trimmed).where((token) => token.length >= 2);
     if (queryTokens.isEmpty) return false;
 
-    final combined = '$loweredLabel $loweredAddress';
+    final combined = '$loweredLabel $loweredAddress $loweredCategory';
     return queryTokens.every(combined.contains);
   }
 
@@ -90,6 +95,8 @@ class PlaceSearchMatcher {
     final compactLabel = compact(label);
     final loweredAddress = destination.address.toLowerCase();
     final compactAddress = compact(destination.address);
+    final loweredCategory = (destination.category ?? '').toLowerCase();
+    final compactCategory = compact(destination.category ?? '');
 
     var points = 1;
     if (matches(query: query, destination: destination)) {
@@ -101,6 +108,8 @@ class PlaceSearchMatcher {
       if (compactLabel.contains(compactQuery)) points += 65;
       if (loweredAddress.contains(loweredQuery)) points += 40;
       if (compactAddress.contains(compactQuery)) points += 35;
+      if (loweredCategory.contains(loweredQuery)) points += 30;
+      if (compactCategory.contains(compactQuery)) points += 28;
     }
 
     return points;

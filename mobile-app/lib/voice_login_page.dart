@@ -5,15 +5,16 @@ import 'package:flutter/material.dart';
 
 import 'l10n/app_localizations.dart';
 import 'firebase_auth_helper.dart';
-import 'main_menu_page.dart';
 import 'services/activity_log_actions.dart';
 import 'services/activity_log_service.dart';
 import 'services/phone_number_service.dart';
+import 'services/app_settings_service.dart';
 import 'services/voice_auth_credentials_service.dart';
 import 'services/voice_passphrase_controller.dart';
 import 'services/voice_profile_service.dart';
 import 'widgets/app_back_button.dart';
 import 'widgets/voice_record_button.dart';
+import 'utils/post_auth_navigation.dart';
 
 class VoiceLoginPage extends StatefulWidget {
   const VoiceLoginPage({super.key});
@@ -28,6 +29,7 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
 
   bool _enteringDashboard = false;
   bool _showPhoneBackup = false;
+  bool _isAutoSpeaking = false;
   String? _statusMessage;
   List<Map<String, dynamic>> _phoneBackupCandidates = const [];
 
@@ -39,6 +41,19 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
   void initState() {
     super.initState();
     _controller.addListener(_onRecordingChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _autoStartVoiceLogin();
+    });
+  }
+
+  Future<void> _autoStartVoiceLogin() async {
+    final l10n = context.l10n;
+    setState(() => _isAutoSpeaking = true);
+    await AppSettingsService.instance.speakAndAwaitCompletion(l10n.t('voiceLoginPrompt'));
+    if (!mounted) return;
+    setState(() => _isAutoSpeaking = false);
+    await _startRecording();
   }
 
   void _onRecordingChanged() {
@@ -47,7 +62,15 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
   }
 
   Future<void> _startRecording() async {
-    if (_enteringDashboard || _controller.isRecording) return;
+    if (_enteringDashboard || _controller.isRecording || _isAutoSpeaking) {
+      if (_isAutoSpeaking) {
+        // If they managed to tap while speaking, stop the TTS and allow recording
+        await AppSettingsService.instance.stopSpeaking();
+        setState(() => _isAutoSpeaking = false);
+      } else {
+        return;
+      }
+    }
 
     setState(() {
       _statusMessage = null;
@@ -249,12 +272,7 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
         })),
       ),
     );
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute<void>(
-        builder: (context) => const MainMenuPage(),
-      ),
-      (route) => false,
-    );
+    returnToRoleHome(context);
   }
 
   @override
@@ -323,6 +341,7 @@ class _VoiceLoginPageState extends State<VoiceLoginPage> {
                     heardPreview: _controller.heardPreview,
                     accessibilityMessage: _controller.accessibilityMessage,
                     onActivate: _startRecording,
+                    onStop: _controller.stopRecording,
                   );
                 },
               ),

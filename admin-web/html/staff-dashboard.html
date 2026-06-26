@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Staff Dashboard — Aura Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body class="staff-app">
+  <header class="staff-nav">
+    <a class="staff-nav-brand" href="staff-dashboard.html">
+      <img class="logo" src="../assets/images/logo.png" alt="" width="40" height="40" />
+      <span class="staff-nav-brand-text">Aura Guide</span>
+    </a>
+    <div class="staff-nav-links-wrap">
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--prev" aria-label="Scroll navigation left">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <nav class="staff-nav-links" aria-label="Main">
+        <!-- Dynamically injected by staff-shell.js -->
+      </nav>
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--next" aria-label="Scroll navigation right">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
+    <div class="staff-nav-user">
+      <button type="button" class="staff-avatar" id="btn-user-menu" aria-label="Account menu">
+        <span class="staff-avatar-initials" id="staff-avatar-initials">—</span>
+      </button>
+      <div class="staff-user-menu" id="user-menu" hidden>
+        <p class="staff-user-menu-name" id="menu-staff-name">—</p>
+        <p class="staff-user-menu-role" id="menu-staff-role">—</p>
+        <button type="button" class="staff-user-menu-signout" id="btn-sign-out">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="emergency-banners" id="emergency-banners" hidden aria-live="polite"></div>
+
+  <main class="staff-dashboard" id="main-dashboard-content" hidden>
+    <header class="staff-dashboard-header">
+      <h1 class="staff-dashboard-title">Staff Dashboard</h1>
+      <p class="staff-dashboard-greeting" id="dashboard-greeting">—</p>
+    </header>
+
+    <section class="stat-cards" id="staff-stat-cards" aria-label="Summary">
+      <article class="stat-card">
+        <p class="stat-card-label">Total Patients</p>
+        <p class="stat-card-value" id="stat-staff-total-patients">—</p>
+        <p class="stat-card-meta" id="stat-patients-meta">Loading…</p>
+      </article>
+      <article class="stat-card">
+        <p class="stat-card-label">Today&apos;s Appointment</p>
+        <p class="stat-card-value" id="stat-today-appointments">—</p>
+        <p class="stat-card-meta" id="stat-appointments-meta">Loading…</p>
+      </article>
+      <article class="stat-card">
+        <p class="stat-card-label">Active Emergencies</p>
+        <p class="stat-card-value" id="stat-staff-active-emergencies">0</p>
+        <p class="stat-card-meta" id="stat-emergencies-meta">Live from Firestore</p>
+      </article>
+    </section>
+
+    <section class="dashboard-grid" id="staff-dashboard-grid">
+      <article class="panel panel--chart" id="panel-weekly-activity">
+        <h2 class="panel-title">Weekly Activity</h2>
+        <div class="bar-chart" id="weekly-activity-chart" role="img" aria-label="Weekly activity bar chart"></div>
+      </article>
+      <article class="panel" id="panel-today-appointments">
+        <h2 class="panel-title">Today&apos;s Appointments</h2>
+        <ul class="appointment-list" id="staff-today-appointments-list"></ul>
+        <p class="dashboard-empty" id="staff-today-appointments-empty" hidden>No appointments today.</p>
+      </article>
+      <article class="panel panel--chart" id="panel-patient-status">
+        <h2 class="panel-title">Patient Status</h2>
+        <div class="donut-wrap">
+          <div class="donut-chart" id="patient-status-donut" role="img" aria-label="Patient status distribution"></div>
+          <ul class="donut-legend" id="patient-status-legend"></ul>
+        </div>
+      </article>
+      <article class="panel" id="panel-medication-alerts">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+          <h2 class="panel-title" style="margin-bottom:0;">Medication Adherence Alerts</h2>
+          <select id="medication-adherence-timeframe" class="form-input" style="width:auto; padding:4px 8px; border-radius:4px; font-size:0.875rem;">
+            <option value="today">Today</option>
+            <option value="month" selected>This Month</option>
+            <option value="all">All Time</option>
+          </select>
+        </div>
+        <ul class="attention-list" id="medication-alerts-list"></ul>
+        <p class="dashboard-empty" id="medication-alerts-empty" hidden>No medication adherence alerts.</p>
+      </article>
+    </section>
+  </main>
+
+  <script type="module" src="../js/dashboard.js"></script>
+</body>
+</html>

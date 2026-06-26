@@ -4,12 +4,16 @@ import 'package:flutter/material.dart';
 
 import 'l10n/app_localizations.dart';
 import 'models/medication_item.dart';
+import 'models/medication_reminder_entity.dart';
 import 'services/medications_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
 
 class MedicationsPage extends StatefulWidget {
-  const MedicationsPage({super.key});
+  const MedicationsPage({super.key, this.highlightReminderId});
+
+  /// Optional reminder id from a notification tap (highlights that dose).
+  final String? highlightReminderId;
 
   @override
   State<MedicationsPage> createState() => _MedicationsPageState();
@@ -43,7 +47,7 @@ class _MedicationsPageState extends State<MedicationsPage> {
     final l10n = context.l10n;
     final status = item.takenToday
         ? l10n.t('medicationTaken')
-        : item.isOverdue
+        : item.status == MedicationReminderEntity.statusMissed || item.isOverdue
             ? l10n.t('medicationOverdue')
             : l10n.t('medicationNotTaken');
     return l10n.t('medicationItemA11y', {
@@ -169,6 +173,8 @@ class _MedicationsPageState extends State<MedicationsPage> {
                     onActivate: () => _toggleTaken(med),
                     child: _MedicationCard(
                       item: med,
+                      highlighted: widget.highlightReminderId != null &&
+                          widget.highlightReminderId == med.reminderId,
                       onToggleTaken: () => _toggleTaken(med),
                     ),
                   ),
@@ -282,10 +288,12 @@ class _MedicationCard extends StatelessWidget {
   const _MedicationCard({
     required this.item,
     required this.onToggleTaken,
+    this.highlighted = false,
   });
 
   final MedicationItem item;
   final VoidCallback onToggleTaken;
+  final bool highlighted;
 
   static const Color _card = Color(0xFF1A1A1A);
   static const Color _subtext = Color(0xFFB0B0B0);
@@ -296,7 +304,8 @@ class _MedicationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final taken = item.takenToday;
-    final overdue = !taken && item.isOverdue;
+    final overdue = !taken &&
+        (item.isOverdue || item.status == MedicationReminderEntity.statusMissed);
 
     final titleColor = taken
         ? Colors.black87
@@ -335,7 +344,10 @@ class _MedicationCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: cardColor,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: borderColor, width: overdue ? 2 : 1.4),
+        border: Border.all(
+          color: highlighted ? Colors.white : borderColor,
+          width: highlighted ? 2.5 : (overdue ? 2 : 1.4),
+        ),
       ),
       child: Row(
         children: [

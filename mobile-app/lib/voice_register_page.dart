@@ -6,7 +6,6 @@ import 'package:speech_to_text/speech_to_text.dart';
 
 import 'l10n/app_localizations.dart';
 import 'firebase_auth_helper.dart';
-import 'main_menu_page.dart';
 import 'models/voice_capture_result.dart';
 import 'services/field_speech_input.dart';
 import 'services/phone_number_service.dart';
@@ -20,6 +19,7 @@ import 'widgets/app_back_button.dart';
 import 'widgets/listening_mic_button.dart';
 import 'widgets/password_field_suffix.dart';
 import 'widgets/voice_record_button.dart';
+import 'utils/post_auth_navigation.dart';
 
 class VoiceRegisterPage extends StatefulWidget {
   const VoiceRegisterPage({super.key});
@@ -39,6 +39,7 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
 
   int _step = 0;
   bool _submitting = false;
+  bool _isAutoSpeaking = false;
 
   static const Color _accent = Color(0xFF66C2BD);
   static const Color _bg = Color(0xFF000000);
@@ -58,6 +59,19 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
       onValidCapture: _onVoiceCaptured,
     );
     _fieldSpeech.addListener(_onFieldSpeechChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _autoStartVoiceRegistration();
+    });
+  }
+
+  Future<void> _autoStartVoiceRegistration() async {
+    final l10n = context.l10n;
+    setState(() => _isAutoSpeaking = true);
+    await AppSettingsService.instance.speakAndAwaitCompletion(l10n.t('voiceLoginPrompt'));
+    if (!mounted) return;
+    setState(() => _isAutoSpeaking = false);
+    await _startRecording();
   }
 
   void _onFieldSpeechChanged() {
@@ -137,7 +151,14 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
   }
 
   Future<void> _startRecording() async {
-    if (_voiceController.isRecording) return;
+    if (_voiceController.isRecording || _isAutoSpeaking) {
+      if (_isAutoSpeaking) {
+        await AppSettingsService.instance.stopSpeaking();
+        setState(() => _isAutoSpeaking = false);
+      } else {
+        return;
+      }
+    }
     final error = await _voiceController.startRecording(
       allowOverwrite: !_voiceController.hasValidSample,
     );
@@ -238,10 +259,7 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l10n.t('voiceRegistrationCompleted'))),
       );
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute<void>(builder: (context) => const MainMenuPage()),
-        (route) => false,
-      );
+      returnToRoleHome(context);
     } on FirebaseAuthException catch (e) {
       await _registration.deleteCurrentAuthUser();
       await FirebaseAuth.instance.signOut();
@@ -322,10 +340,7 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l10n.t('voiceRegistrationSetupCompleted'))),
       );
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute<void>(builder: (context) => const MainMenuPage()),
-        (route) => false,
-      );
+      returnToRoleHome(context);
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
@@ -398,11 +413,11 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
               ),
             ),
             Padding(
-              padding: EdgeInsets.fromLTRB(
-                24,
-                8,
-                24,
-                16 + MediaQuery.viewInsetsOf(context).bottom,
+              padding: const EdgeInsets.only(
+                left: 24,
+                top: 8,
+                right: 24,
+                bottom: 16,
               ),
               child: ListenableBuilder(
                 listenable: _voiceController,
@@ -463,6 +478,7 @@ class _VoiceRegisterPageState extends State<VoiceRegisterPage> {
               heardPreview: _voiceController.heardPreview,
               accessibilityMessage: _voiceController.accessibilityMessage,
               onActivate: _startRecording,
+              onStop: _voiceController.stopRecording,
               onRetake: _retakeVoiceSample,
               accent: _accent,
               subtext: _subtext,

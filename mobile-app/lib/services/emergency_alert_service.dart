@@ -216,6 +216,7 @@ class EmergencyAlertService {
   /// Creates an Active alert (ERD Table 4.7). Returns existing open alert if one exists.
   Future<EmergencyAlertEntity> triggerSos({
     String alertType = EmergencyAlertEntity.alertTypeManualSos,
+    String? voiceTranscript,
   }) async {
     final patientId = await _ensurePatientUserId();
 
@@ -257,11 +258,18 @@ class EmergencyAlertService {
 
     final isFall =
         alertType == EmergencyAlertEntity.alertTypeFallDetection;
-    if (isFall) {
+    final isFallTest =
+        alertType == EmergencyAlertEntity.alertTypeFallDetectionTest;
+    final transcriptSuffix = (voiceTranscript ?? '').trim().isEmpty
+        ? ''
+        : ' Voice: "${voiceTranscript!.trim()}".';
+    if (isFall || isFallTest) {
       unawaited(
         ActivityLogService.instance.logSystem(
           action: ActivityLogActions.emergencyAlert,
-          details: 'Fall detection event detected.',
+          details: isFallTest
+              ? 'Fall detection test — emergency speech detected.$transcriptSuffix'
+              : 'Fall detection event detected.$transcriptSuffix',
           relatedUserId: patientId,
         ),
       );
@@ -270,7 +278,7 @@ class EmergencyAlertService {
         ActivityLogService.instance.log(
           action: ActivityLogActions.emergencyAlert,
           details:
-              'Manual SOS alert $alertId sent. Location: $location.',
+              'Manual SOS alert $alertId sent. Location: $location.$transcriptSuffix',
           userId: patientId,
         ),
       );

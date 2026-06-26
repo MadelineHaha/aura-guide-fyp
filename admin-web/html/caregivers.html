@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Caregivers — Aura Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body class="staff-app">
+  <header class="staff-nav">
+    <a class="staff-nav-brand" href="dashboard.html">
+      <img class="logo" src="../assets/images/logo.png" alt="" width="40" height="40" />
+      <span class="staff-nav-brand-text">Aura Guide</span>
+    </a>
+    <div class="staff-nav-links-wrap">
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--prev" aria-label="Scroll navigation left">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <nav class="staff-nav-links" aria-label="Main">
+        <!-- Dynamically injected by staff-shell.js -->
+      </nav>
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--next" aria-label="Scroll navigation right">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
+    <div class="staff-nav-user">
+      <button type="button" class="staff-avatar" id="btn-user-menu" aria-label="Account menu">
+        <span class="staff-avatar-initials" id="staff-avatar-initials">—</span>
+      </button>
+      <div class="staff-user-menu" id="user-menu" hidden>
+        <p class="staff-user-menu-name" id="menu-staff-name">—</p>
+        <p class="staff-user-menu-role" id="menu-staff-role">—</p>
+        <button type="button" class="staff-user-menu-signout" id="btn-sign-out">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="staff-page patients-page">
+    <header class="page-toolbar">
+      <div class="page-toolbar-heading">
+        <h1 class="page-title">Caregivers</h1>
+        <p class="page-subtitle" id="staff-count"></p>
+      </div>
+      <button type="button" class="btn-primary btn-quick-action" id="btn-add-staff">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        Add Caregiver
+      </button>
+    </header>
+
+    <div class="appointments-toolbar">
+      <label class="search-field">
+        <span class="search-field-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="7" />
+            <line x1="16.5" y1="16.5" x2="21" y2="21" />
+          </svg>
+        </span>
+        <input
+          type="search"
+          class="search-field-input"
+          id="staff-search"
+          placeholder="Search caregiver name or caregiver ID..."
+          autocomplete="off"
+        />
+      </label>
+      <div class="filter-tabs" role="tablist" aria-label="Filter by status">
+        <button type="button" class="filter-tab is-active" data-status="all">All</button>
+        <button type="button" class="filter-tab" data-status="active">Active</button>
+        <button type="button" class="filter-tab" data-status="inactive">Inactive</button>
+      </div>
+    </div>
+
+    <div class="table-card">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Caregiver ID</th>
+            <th scope="col">Name</th>
+            <th scope="col">Contact</th>
+            <th scope="col">Email</th>
+            <th scope="col">Status</th>
+            <th scope="col">Linked Patients</th>
+            <th scope="col">Profile</th>
+          </tr>
+        </thead>
+        <tbody id="staff-tbody"></tbody>
+      </table>
+      <p class="table-empty" id="staff-empty" hidden>No caregivers match your search.</p>
+      <nav class="table-pagination" id="staff-pagination" aria-label="Caregivers pages"></nav>
+    </div>
+  </main>
+
+  <div class="modal-backdrop" id="staff-form-modal" hidden>
+    <div class="add-patient-modal" role="dialog" aria-modal="true" aria-labelledby="staff-form-title">
+      <header class="modal-dialog-header">
+        <h2 class="modal-dialog-title" id="staff-form-title">Add Caregiver</h2>
+        <button type="button" class="modal-dialog-close" id="staff-form-close" aria-label="Close">×</button>
+      </header>
+      <form class="add-patient-form staff-add-form" id="staff-form" novalidate>
+        <p class="staff-next-id" id="staff-form-next-id" aria-live="polite">New Caregiver ID: —</p>
+        <div class="add-patient-grid">
+          <label class="form-field form-field--full">
+            <span class="form-field-label">Full name</span>
+            <input class="form-field-input" type="text" id="staff-form-name" required autocomplete="name" />
+          </label>
+          <label class="form-field">
+            <span class="form-field-label">Email</span>
+            <input class="form-field-input" type="email" id="staff-form-email" required autocomplete="email" />
+          </label>
+          <label class="form-field">
+            <span class="form-field-label">Contact number</span>
+            <input class="form-field-input" type="tel" id="staff-form-phone" autocomplete="tel" />
+          </label>
+          <div class="form-field form-field--full">
+            <span class="form-field-label">Connected patients</span>
+            <div class="connected-patient-fields" id="staff-form-connected-patients-list"></div>
+            <button type="button" class="btn-secondary btn-connect-more-patient" id="btn-add-connected-patient">
+              + Connect another patient
+            </button>
+          </div>
+        </div>
+        <p class="form-hint">An email will be sent so the caregiver can set their password and access the mobile app.</p>
+        <p class="add-patient-error" id="staff-form-error" role="alert" hidden></p>
+        <footer class="add-patient-footer">
+          <button type="submit" class="btn-primary">Add Caregiver</button>
+        </footer>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="staff-profile-modal" hidden>
+    <div class="patient-profile-modal" role="dialog" aria-modal="true" aria-labelledby="staff-profile-name">
+      <header class="patient-profile-header">
+        <div class="patient-profile-header-main">
+          <span class="patient-profile-avatar" id="staff-profile-avatar" aria-hidden="true">—</span>
+          <div>
+            <h2 class="patient-profile-name" id="staff-profile-name">—</h2>
+            <p class="patient-profile-userid" id="staff-profile-staffid">Caregiver ID: —</p>
+          </div>
+        </div>
+        <button type="button" class="modal-dialog-close" id="staff-profile-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+      <div class="patient-profile-grid" id="staff-profile-grid">
+        <div class="profile-detail">
+          <span class="profile-detail-label">Email</span>
+          <span class="profile-detail-value profile-field-view" id="staff-profile-email">—</span>
+          <input type="email" class="profile-detail-input profile-field-edit" id="staff-profile-email-input" hidden />
+        </div>
+        <div class="profile-detail">
+          <span class="profile-detail-label">Contact</span>
+          <span class="profile-detail-value profile-field-view" id="staff-profile-phone">—</span>
+          <input type="tel" class="profile-detail-input profile-field-edit" id="staff-profile-phone-input" hidden />
+        </div>
+        <div class="profile-detail" id="staff-profile-linked-field">
+          <span class="profile-detail-label">Linked Patients</span>
+          <span class="profile-detail-value profile-field-view" id="staff-profile-linked">—</span>
+        </div>
+        <div class="profile-detail">
+          <span class="profile-detail-label">Status</span>
+          <span class="profile-detail-value profile-field-view" id="staff-profile-status">—</span>
+          <select class="profile-detail-input profile-detail-select profile-field-edit" id="staff-profile-status-input" hidden>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+        </div>
+      </div>
+      <p class="add-patient-error patient-profile-error" id="staff-profile-error" role="alert" hidden></p>
+      <footer class="patient-profile-footer">
+        <div class="patient-profile-footer-actions" id="staff-profile-footer-view">
+          <button type="button" class="btn-profile-action btn-profile-action--primary" id="staff-profile-update">Update Profile</button>
+          <button type="button" class="btn-profile-action btn-profile-action--secondary" id="staff-profile-link">Manage connected patients</button>
+          <button type="button" class="btn-profile-action btn-profile-action--danger" id="staff-profile-deactivate">Deactivate</button>
+        </div>
+        <div class="patient-profile-footer-actions" id="staff-profile-footer-edit" hidden>
+          <button type="button" class="btn-profile-action btn-profile-action--primary" id="staff-profile-save">
+            <span id="staff-profile-save-label">Save Changes</span>
+          </button>
+          <button type="button" class="btn-profile-action btn-profile-action--secondary" id="staff-profile-cancel">Cancel</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <div class="modal-backdrop modal-backdrop--stacked" id="staff-link-modal" hidden>
+    <div class="add-patient-modal" role="dialog" aria-modal="true" aria-labelledby="staff-link-title">
+      <header class="modal-dialog-header">
+        <h2 class="modal-dialog-title" id="staff-link-title">Connected patients for <span id="staff-link-name">—</span></h2>
+        <button type="button" class="modal-dialog-close" id="staff-link-close" aria-label="Close">×</button>
+      </header>
+      <div class="add-patient-form">
+        <div class="form-field form-field--full">
+          <span class="form-field-label">Connected patients</span>
+          <div class="connected-patient-fields" id="staff-link-patients-list"></div>
+          <button type="button" class="btn-secondary btn-connect-more-patient" id="btn-link-add-patient">
+            + Connect another patient
+          </button>
+        </div>
+        <p class="add-patient-error" id="staff-link-error" role="alert" hidden></p>
+        <footer class="add-patient-footer form-actions-row">
+          <button type="button" class="btn-primary" id="staff-link-save">Save connections</button>
+        </footer>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initCaregiversPage } from "../js/caregivers-page.js";
+    initCaregiversPage();
+  </script>
+</body>
+</html>

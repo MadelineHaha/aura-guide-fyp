@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Logs — Aura Guide</title>
+  <title>Audit Log — Aura Guide</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -20,13 +20,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
       <nav class="staff-nav-links" aria-label="Main">
-        <a class="staff-nav-link" href="dashboard.html">Dashboard</a>
-        <a class="staff-nav-link" href="appointments.html">Appointments</a>
-        <a class="staff-nav-link" href="patients.html">Patients</a>
-        <a class="staff-nav-link" href="emergencies.html">Emergencies</a>
-        <a class="staff-nav-link" href="reports.html">Reports</a>
-        <a class="staff-nav-link" href="communication.html">Communication</a>
-        <a class="staff-nav-link is-active" href="logs.html">Logs</a>
+        <!-- Dynamically injected by staff-shell.js -->
       </nav>
       <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--next" aria-label="Scroll navigation right">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
@@ -47,8 +41,8 @@
   <main class="staff-page logs-page">
     <header class="page-toolbar logs-toolbar-top">
       <div class="page-toolbar-heading">
-        <h1 class="page-title">System Activity Logs</h1>
-        <p class="page-subtitle">Audit trail for all user actions and system events.</p>
+        <h1 class="page-title">Audit Log</h1>
+        <p class="page-subtitle">Track all actions performed in the system.</p>
       </div>
       <button type="button" class="logs-export-btn" id="logs-export-btn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">

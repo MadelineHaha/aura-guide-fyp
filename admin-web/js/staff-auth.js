@@ -2,7 +2,7 @@ import {
   signInWithEmailAndPassword,
   signOut,
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
-import { doc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+import { doc, getDoc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { auth, db } from "./firebase.js";
 import { LOG_ACTIONS } from "./activity-log-actions.js";
 import { logStaffActivity, logSecurityAudit } from "./activity-logs-service.js";
@@ -43,16 +43,35 @@ export async function verifyActiveStaff(uid) {
     await signOut(auth);
     throw new Error(LOGIN_ERROR_MESSAGE);
   }
-  if (profile.status !== "Active") {
+  if (String(profile.status || "").trim() !== "Active") {
     await signOut(auth);
     throw new Error(LOGIN_ERROR_MESSAGE);
   }
   return profile;
 }
 
+async function markStaffAccountActivated(uid) {
+  const staffRef = doc(db, HEALTHCARE_STAFF_COLLECTION, uid);
+  const snap = await getDoc(staffRef);
+  if (!snap.exists()) return;
+
+  const data = snap.data() || {};
+  if (data.accountActivated === true && data.invitePending !== true) {
+    return;
+  }
+
+  await updateDoc(staffRef, {
+    accountActivated: true,
+    invitePending: false,
+    activatedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function signInStaff(email, password) {
   const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
   const profile = await verifyActiveStaff(credential.user.uid);
+  await markStaffAccountActivated(credential.user.uid);
   saveStaffSession(profile);
   void logStaffActivity({
     action: LOG_ACTIONS.LOGIN,

@@ -211,19 +211,8 @@ ObstacleDetection? _detectObstacleHeuristicIsolate(_HeuristicFrameInput input) {
   final texture = (centerVariance / 6500).clamp(0.0, 1.0);
   final score = (contrast * 0.55 + texture * 0.45).clamp(0.0, 1.0);
 
-  if (score < 0.18) return null;
+  if (score < 0.50) return null;
 
   final distance = (4.5 - score * 3.2).clamp(0.8, 4.0);
-  return ObstacleDetection(
-    label: 'Person',
-    distanceMeters: double.parse(distance.toStringAsFixed(1)),
-    confidence: score,
-    classId: -1,
-    bounds: const ObstacleBounds(
-      left: 0.24,
-      top: 0.16,
-      width: 0.52,
-      height: 0.62,
-    ),
-  );
+    return null;
 }

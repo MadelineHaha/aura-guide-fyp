@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../utils/clinic_datetime.dart';
+import 'medication_reminder_entity.dart';
 
 /// Today's medication row (Medication + MedicationReminder join for UI).
 class MedicationItem {
@@ -34,6 +35,7 @@ class MedicationItem {
   /// True when today's scheduled time has passed and the dose is not taken.
   bool get isOverdue {
     if (takenToday) return false;
+    if (status == MedicationReminderEntity.statusMissed) return true;
 
     final schedule = ClinicDateTime.fromFirestore(reminderTime);
     if (schedule == null) return false;

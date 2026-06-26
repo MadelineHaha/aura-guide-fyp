@@ -11,6 +11,7 @@ import {
   setDoc,
   updateDoc,
   where,
+  orderBy,
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import {
   getDownloadURL,
@@ -24,6 +25,31 @@ import {
   mapUserDoc,
   USERS_COLLECTION,
 } from "./user-patients-service.js";
+import { filterPatientsForRole } from "./staff-rbac.js";
+import { ANNOUNCEMENTS_COLLECTION, subscribeAnnouncements } from "./announcements-service.js";
+
+function mapAnnouncementDoc(docSnap) {
+  const data = docSnap.data() || {};
+  const created = data.createdAt?.toDate?.() || null;
+  return {
+    id: docSnap.id,
+    type: data.type || "Broadcast Message",
+    title: data.title || "",
+    message: data.message || "",
+    createdBy: data.createdByName || "Admin",
+    createdAtLabel: created
+      ? created.toLocaleString("en-GB", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "—",
+    timestamp: data.createdAt || null,
+    status: data.status || "Active",
+  };
+}
 
 export const CONVERSATIONS_COLLECTION = "conversations";
 export const MESSAGES_COLLECTION = "messages";
@@ -440,7 +466,7 @@ function buildStaffConversationThreads(
       id: conversation.conversationId,
       conversationId: conversation.conversationId,
       patientId,
-      name: patientNameById.get(patientId) || patientId || "Unknown",
+      name: patientId === "system_aura_guide" ? "Aura Guide" : (patientNameById.get(patientId) || patientId || "Unknown"),
       avatarColor: avatarColorForId(conversation.conversationId),
       preview,
       time: formatChatListTime(timeSource),
@@ -546,6 +572,8 @@ export function subscribeAvailableConversationsForStaff(staffId, onData, onError
     }
   }
 
+  let announcements = [];
+
   function emit() {
     const available = conversations.filter((conversation) => {
       const otherId = getOtherParticipantId(conversation, trimmedStaffId);
@@ -556,14 +584,31 @@ export function subscribeAvailableConversationsForStaff(staffId, onData, onError
       return activePatientIds.has(otherId);
     });
     syncMessageListeners(available.map((c) => c.conversationId));
-    onData(
-      buildStaffConversationThreads(
-        trimmedStaffId,
-        patients,
-        conversations,
-        latestByConversation,
-      ),
+    
+    const threads = buildStaffConversationThreads(
+      trimmedStaffId,
+      patients,
+      conversations,
+      latestByConversation,
     );
+
+    // Inject Virtual Aura Guide
+    const latestAnnouncement = announcements.length > 0 ? announcements[0] : null;
+    threads.push({
+      id: "sys_ag_virtual",
+      conversationId: "sys_ag_virtual",
+      patientId: "system_aura_guide",
+      name: "Aura Guide",
+      avatarColor: "teal",
+      preview: latestAnnouncement ? "Broadcast Message" : "No broadcast message yet",
+      time: latestAnnouncement ? (latestAnnouncement.createdAtLabel || "—") : "—",
+      unread: false,
+      lastMessageAt: latestAnnouncement && latestAnnouncement.timestamp ? latestAnnouncement.timestamp.toDate().getTime() : Date.now(),
+    });
+
+    threads.sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+
+    onData(threads);
   }
 
   const conversationsQuery = query(
@@ -572,6 +617,16 @@ export function subscribeAvailableConversationsForStaff(staffId, onData, onError
   );
 
   const unsubs = [
+    onSnapshot(
+      query(collection(db, ANNOUNCEMENTS_COLLECTION), orderBy("createdAt", "desc")),
+      (snap) => {
+        announcements = snap.docs
+          .map(mapAnnouncementDoc)
+          .filter((a) => a.status !== "Inactive");
+        emit();
+      },
+      onError,
+    ),
     onSnapshot(
       collection(db, USERS_COLLECTION),
       (snap) => {
@@ -609,17 +664,24 @@ export function subscribeAvailableConversationsForStaff(staffId, onData, onError
   return stopAll;
 }
 
-export async function fetchAvailablePatientsForNewConversation(staffId) {
+export async function fetchAvailablePatientsForNewConversation(staffId, profile = null) {
   const trimmedStaffId = String(staffId || "").trim();
   if (!PARTICIPANT_ID_PATTERN.test(trimmedStaffId)) {
     throw new Error("Your staff profile is missing a valid Staff ID (e.g. S00001).");
   }
 
-  const patients = await fetchUsersForConversation();
-  const activePatients = patients.filter(
-    (patient) =>
-      isPatientAccountActive(patient) && patient.patientId && patient.patientId !== "—",
-  );
+  let patients = await fetchPatients();
+  if (profile) {
+    patients = filterPatientsForRole(patients, profile);
+  }
+  const activePatients = patients
+    .filter((patient) => patient.accountStatus !== "Inactive")
+    .map((patient) => ({
+      id: patient.id,
+      patientId: String(patient.patientId || "").trim(),
+      name: String(patient.name || "").trim() || "—",
+      accountStatus: String(patient.accountStatus || "Active").trim() || "Active",
+    }));
 
   let linkedPatientIds = new Set();
   try {
@@ -973,6 +1035,50 @@ export function subscribeMessagesForConversation(
   onData,
   onError,
 ) {
+  if (conversationId === "sys_ag_virtual") {
+    const q = query(
+      collection(db, ANNOUNCEMENTS_COLLECTION),
+      orderBy("createdAt", "asc")
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        let messages = snap.docs
+          .map(mapAnnouncementDoc)
+          .filter((a) => a.status !== "Inactive")
+          .map((ann) => ({
+          messageId: ann.id,
+          conversationId: "sys_ag_virtual",
+          senderId: "system_aura_guide",
+          receiverId: staffId,
+          content: `📢 **${ann.type}**\n${ann.title}\n${ann.message}`,
+          type: "text",
+          messageType: "Text",
+          timestamp: ann.timestamp || { toDate: () => new Date() },
+          deliveryStatus: "Sent",
+        }));
+        
+        if (messages.length === 0) {
+           messages = [{
+             messageId: "sys_ag_empty",
+             conversationId: "sys_ag_virtual",
+             senderId: "system_aura_guide",
+             receiverId: staffId,
+             content: "There is no broadcast message yet",
+             type: "text",
+             messageType: "Text",
+             timestamp: { toDate: () => new Date() },
+             deliveryStatus: "Sent",
+           }];
+        }
+        onData(buildMessageRenderList(messages, staffId, true));
+      },
+      onError
+    );
+    trackFirestoreListener(unsub);
+    return unsub;
+  }
+
   if (!CONVERSATION_ID_PATTERN.test(conversationId)) {
     onError?.(new Error("Invalid conversation ID."));
     return () => {};
@@ -996,12 +1102,18 @@ export function subscribeMessagesForConversation(
   return unsub;
 }
 
-export function buildMessageRenderList(messages, staffId) {
+export function buildMessageRenderList(messages, staffId, isVirtual = false) {
   const items = [];
   let lastDivider = null;
 
   messages.forEach((message) => {
-    const divider = formatDividerLabel(message.timestamp);
+    let divider = formatDividerLabel(message.timestamp);
+    if (isVirtual) {
+      const d = timestampToDate(message.timestamp);
+      if (d) {
+        divider = d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+      }
+    }
     const dateKey = formatMessageDateKey(message.timestamp);
     const timestampMs = timestampToDate(message.timestamp)?.getTime() || 0;
     if (divider !== lastDivider) {

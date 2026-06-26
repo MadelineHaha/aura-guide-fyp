@@ -2,10 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'auth_session.dart';
 import 'l10n/app_localizations.dart';
 import 'models/patient_notification_item.dart';
 import 'services/medication_push_service.dart';
 import 'services/notifications_service.dart';
+import 'services/notification_history_service.dart';
+import 'services/user_profile_service.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
 
@@ -24,6 +27,32 @@ class _NotificationsPageState extends State<NotificationsPage> {
   final _service = NotificationsService();
   late final Stream<List<PatientNotificationItem>> _notificationsStream;
   Timer? _refreshTimer;
+  bool _markedViewed = false;
+
+  Future<void> _markNotificationsViewed(List<PatientNotificationItem> items) async {
+    if (_markedViewed) return;
+    _markedViewed = true;
+    final patientId = await _servicePatientId();
+    if (patientId != null) {
+      await _service.markAllViewedForPatient(patientId);
+      return;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final upTo = items.isEmpty
+        ? now
+        : items
+            .map((item) => item.sortMillis)
+            .fold<int>(now, (max, value) => value > max ? value : max);
+    unawaited(NotificationHistoryService.instance.markViewed(upToMillis: upTo));
+  }
+
+  Future<String?> _servicePatientId() async {
+    final user = AuthSession.resolveUser();
+    if (user == null) return null;
+    final profile = await UserProfileService().loadProfile(user.uid, syncAuthFirst: false);
+    return (profile.data['userId'] as String?)?.trim() ??
+        (profile.data['patientId'] as String?)?.trim();
+  }
 
   @override
   void initState() {
@@ -89,9 +118,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
         initialData: const [],
         builder: (context, snapshot) {
           if (snapshot.hasError) {
-            final message = l10n.t('couldNotLoadNotifications', {
-              'error': snapshot.error,
-            });
+            final message = l10n.t('couldNotLoadNotifications');
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -108,6 +135,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
           final waiting =
               snapshot.connectionState == ConnectionState.waiting &&
                   items.isEmpty;
+
+          if (!waiting) {
+            unawaited(_markNotificationsViewed(items));
+          }
 
           if (waiting) {
             return const Center(

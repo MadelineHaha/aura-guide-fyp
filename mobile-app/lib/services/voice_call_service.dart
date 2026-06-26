@@ -74,6 +74,7 @@ class VoiceCallService {
   String? _staffId;
   String? _remoteName;
   bool _isCaller = false;
+  bool _initiatedByStaff = false;
   DateTime? _connectedAt;
   bool _isMuted = false;
   Timer? _ringTimer;
@@ -160,21 +161,26 @@ class VoiceCallService {
     required String staffId,
     required String patientId,
     required String remoteName,
+    bool initiatedByStaff = false,
   }) async {
     if (_phase != VoiceCallPhase.idle) {
       throw StateError('A call is already in progress.');
     }
 
     _isCaller = true;
+    _initiatedByStaff = initiatedByStaff;
     _staffId = staffId;
     _remoteName = remoteName;
     _emit(VoiceCallPhase.connecting);
+
+    final localIceFrom = initiatedByStaff ? 'staff' : 'patient';
+    final remoteIceFrom = initiatedByStaff ? 'patient' : 'staff';
 
     try {
       await _prepareLocalAudio();
       _pc = await createPeerConnection(_iceServers);
       await _attachLocalTracks();
-      _wirePeerConnection();
+      _wirePeerConnection(iceFrom: localIceFrom);
 
       _callId = await _reserveCallId();
       final callRef = _firestore.collection(_callSessions).doc(_callId);
@@ -184,7 +190,7 @@ class VoiceCallService {
         'staffId': staffId,
         'patientId': patientId,
         'status': 'ringing',
-        'initiatedBy': 'patient',
+        'initiatedBy': initiatedByStaff ? 'staff' : 'patient',
         'offer': null,
         'answer': null,
         'createdAt': FieldValue.serverTimestamp(),
@@ -200,7 +206,7 @@ class VoiceCallService {
       });
 
       _watchCallSession(callRef);
-      _watchRemoteIceCandidates(from: 'staff');
+      _watchRemoteIceCandidates(from: remoteIceFrom);
       _emit(VoiceCallPhase.ringing);
       _startRingTimeout();
     } catch (error, stackTrace) {
@@ -230,7 +236,7 @@ class VoiceCallService {
       await _prepareLocalAudio();
       _pc = await createPeerConnection(_iceServers);
       await _attachLocalTracks();
-      _wirePeerConnection();
+      _wirePeerConnection(iceFrom: 'patient');
 
       final callRef = _firestore.collection(_callSessions).doc(_callId);
       await _setRemoteDescription(
@@ -391,7 +397,7 @@ class VoiceCallService {
     }
   }
 
-  void _wirePeerConnection() {
+  void _wirePeerConnection({required String iceFrom}) {
     final pc = _pc;
     if (pc == null) return;
 
@@ -407,7 +413,7 @@ class VoiceCallService {
             .doc(_callId)
             .collection('iceCandidates')
             .add({
-          'from': 'patient',
+          'from': iceFrom,
           'candidate': candidate.candidate,
           'sdpMid': candidate.sdpMid,
           'sdpMLineIndex': candidate.sdpMLineIndex,
@@ -493,7 +499,7 @@ class VoiceCallService {
         await _firestore.collection(_callSessions).doc(_callId).update({
           'status': resolvedReason,
           'endedAt': FieldValue.serverTimestamp(),
-          'endedBy': 'patient',
+          'endedBy': _initiatedByStaff ? 'staff' : 'patient',
           'durationSeconds': wasConnected ? durationSeconds : null,
         });
       } catch (error) {

@@ -8,7 +8,7 @@ import 'activity_log_actions.dart';
 import 'activity_log_service.dart';
 import 'app_settings_service.dart';
 
-/// Fetches pedestrian routes from the public OSRM service.
+/// Fetches pedestrian routes (OSRM foot profile — shortest walkable path).
 class WalkingRouteService {
   WalkingRouteService({http.Client? client}) : _client = client ?? http.Client();
 
@@ -114,6 +114,8 @@ class WalkingRouteService {
           longitude: (location[0] as num).toDouble(),
           latitude: (location[1] as num).toDouble(),
           distanceMeters: ((item['distance'] as num?) ?? 0).toDouble(),
+          maneuverType: (maneuver['type'] as String?) ?? '',
+          maneuverModifier: (maneuver['modifier'] as String?) ?? '',
         ),
       );
     }

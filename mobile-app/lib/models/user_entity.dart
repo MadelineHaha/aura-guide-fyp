@@ -16,6 +16,7 @@ class UserEntity {
     this.emergencyContact = '',
     Map<String, dynamic>? accessibilityPreferences,
     this.status = UserStatus.active,
+    this.role = 'patient',
   }) : accessibilityPreferences =
             accessibilityPreferences ?? _defaultAccessibilityPreferences();
 
@@ -24,6 +25,7 @@ class UserEntity {
         'notificationsEnabled': true,
         'fallDetectionEnabled': true,
         'voiceAssistantEnabled': true,
+        'voiceOnlyModeEnabled': false,
         'languageCode': 'en',
       };
 
@@ -38,6 +40,7 @@ class UserEntity {
   final String emergencyContact;
   final Map<String, dynamic> accessibilityPreferences;
   final UserStatus status;
+  final String role;
 
   static const String collection = 'users';
   static const String counterDocPath = 'system/userCounter';
@@ -65,9 +68,9 @@ class UserEntity {
       'email': email,
       if (voiceProfile.isNotEmpty) 'voiceProfile': voiceProfile,
       'emergencyContact': emergencyContact,
-      'accessibilityPreferences': accessibilityPreferences,
       'settings': accessibilityPreferences,
       'status': status == UserStatus.active ? 'Active' : 'Inactive',
+      'role': role,
       'createdAt': FieldValue.serverTimestamp(),
     };
   }

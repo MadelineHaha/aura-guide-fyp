@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Medical Records — Aura Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body class="staff-app">
+  <header class="staff-nav">
+    <a class="staff-nav-brand" href="dashboard.html">
+      <img class="logo" src="../assets/images/logo.png" alt="" width="40" height="40" />
+      <span class="staff-nav-brand-text">Aura Guide</span>
+    </a>
+    <div class="staff-nav-links-wrap">
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--prev" aria-label="Scroll navigation left">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <nav class="staff-nav-links" aria-label="Main">
+        <!-- Dynamically injected by staff-shell.js -->
+      </nav>
+      <button type="button" class="staff-nav-scroll-btn staff-nav-scroll-btn--next" aria-label="Scroll navigation right">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
+    <div class="staff-nav-user">
+      <button type="button" class="staff-avatar" id="btn-user-menu" aria-label="Account menu">
+        <span class="staff-avatar-initials" id="staff-avatar-initials">—</span>
+      </button>
+      <div class="staff-user-menu" id="user-menu" hidden>
+        <p class="staff-user-menu-name" id="menu-staff-name">—</p>
+        <p class="staff-user-menu-role" id="menu-staff-role">—</p>
+        <button type="button" class="staff-user-menu-signout" id="btn-sign-out">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="staff-page">
+    <header class="page-toolbar">
+      <div class="page-toolbar-heading">
+        <h1 class="page-title">Medical Records</h1>
+        <p class="page-subtitle" id="records-count">Loading patients...</p>
+      </div>
+      <div class="page-toolbar-actions">
+        <button type="button" class="btn-primary btn-quick-action" id="btn-add-record" hidden>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          Upload Medical Record
+        </button>
+      </div>
+    </header>
+
+    <div class="patient-accordion-list" id="records-accordion-list">
+      <!-- Dynamically populated -->
+    </div>
+    <p class="table-empty" id="medical-records-empty" hidden>No patients found in Firestore.</p>
+    
+    <div class="modal-backdrop modal-backdrop--stacked" id="add-health-record-modal" hidden>
+      <div
+        class="add-health-record-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-health-record-title"
+      >
+        <header class="health-records-header">
+          <div class="health-records-header-main">
+            <span class="health-records-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="8" y1="13" x2="16" y2="13" />
+                <line x1="8" y1="17" x2="16" y2="17" />
+              </svg>
+            </span>
+            <div>
+              <h2 class="health-records-title" id="add-health-record-title">Upload Medical Record</h2>
+            </div>
+          </div>
+          <button type="button" class="health-records-close" id="add-health-record-close" aria-label="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </header>
+
+        <form class="add-health-record-form" id="add-health-record-form" novalidate>
+          <div class="add-health-record-body">
+            <label class="form-field form-field--full">
+              <span class="form-field-label">Select Patient</span>
+              <select class="form-field-input form-field-select" id="add-health-record-patient-select" required>
+                <option value="">Choose a patient...</option>
+                <!-- Populated dynamically -->
+              </select>
+            </label>
+            <label class="form-field form-field--full">
+              <span class="form-field-label">Record Type</span>
+              <select class="form-field-input form-field-select" id="add-health-record-type" required>
+                <option value="Eye Examination">Eye Examination</option>
+                <option value="General Checkup">General Checkup</option>
+                <option value="Lab Results">Lab Results</option>
+                <option value="Imaging">Imaging</option>
+                <option value="Prescription Update">Prescription Update</option>
+                <option value="Other">Other</option>
+              </select>
+            </label>
+            <label class="form-field form-field--full" id="add-health-record-type-other-field" hidden>
+              <span class="form-field-label">Specify Record Type</span>
+              <input
+                class="form-field-input"
+                type="text"
+                id="add-health-record-type-other"
+                placeholder="Enter record type"
+                maxlength="50"
+                pattern="[A-Za-z0-9 ]+"
+                autocomplete="off"
+              />
+            </label>
+            <label class="form-field form-field--full">
+              <span class="form-field-label">Clinical Summary</span>
+              <textarea
+                class="form-field-input form-field-textarea"
+                id="add-health-record-summary"
+                rows="4"
+                maxlength="100"
+                placeholder="Enter patient status, observations, and treatment plan..."
+                required
+              ></textarea>
+            </label>
+            <div class="form-field form-field--full">
+              <span class="form-field-label">Upload Report</span>
+              <div class="form-field-file">
+                <input
+                  type="file"
+                  class="form-field-file-input"
+                  id="add-health-record-file"
+                  accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
+                />
+                <label class="form-field-file-btn" for="add-health-record-file">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                  Choose File
+                </label>
+                <span class="form-field-file-name" id="add-health-record-file-name">No file chosen</span>
+              </div>
+              <span class="form-field-hint" id="add-health-record-upload-hint">Maximum 2 MB. Reports up to 750 KB save faster.</span>
+            </div>
+          </div>
+          <p class="add-patient-error" id="add-health-record-error" role="alert" hidden></p>
+          <footer class="add-health-record-footer">
+            <button type="submit" class="btn-primary btn-save-health-record">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+              <span id="add-health-record-save-label">Save Record</span>
+            </button>
+          </footer>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <div class="modal-backdrop modal-backdrop--stacked" id="health-record-view-modal" hidden>
+    <div
+      class="health-record-view-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="health-record-view-title"
+    >
+      <header class="health-records-header">
+        <div class="health-records-header-main">
+          <span class="health-records-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+          </span>
+          <div>
+            <h2 class="health-records-title" id="health-record-view-title">Medical report</h2>
+          </div>
+        </div>
+        <button type="button" class="health-records-close" id="health-record-view-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </header>
+      <div class="health-record-view-body">
+        <p class="patient-accordion-loading" id="health-record-view-loading">Loading report…</p>
+        <p class="add-patient-error" id="health-record-view-error" role="alert" hidden></p>
+        <div id="health-record-view-content"></div>
+      </div>
+      <footer class="health-record-view-footer">
+        <button type="button" class="btn-secondary" id="health-record-view-open-tab">Open in new tab</button>
+      </footer>
+    </div>
+  </div>
+
+  <script type="module" src="../js/medical-records-page.js"></script>
+</body>
+</html>

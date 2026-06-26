@@ -1,5 +1,8 @@
 import { initStaffAuth } from "./staff-shell.js";
+import { formatFirestoreError } from "./staff-data-status.js";
+import { filterPatientsForRole, normalizeStaffRole } from "./staff-rbac.js";
 import { subscribePatients } from "./user-patients-service.js";
+import { subscribeActiveStaff } from "./staff-list-service.js";
 import {
   createAppointment,
   completeAppointment,
@@ -43,6 +46,11 @@ const patientDisplayEl = document.getElementById("add-appointment-patient-displa
 const patientFieldEl = document.getElementById("appointment-patient-field");
 const dateInputEl = document.getElementById("add-appointment-date");
 const timeSelectEl = document.getElementById("add-appointment-time");
+const staffRoleSelectEl = document.getElementById("add-appointment-staff-role");
+const staffSelectEl = document.getElementById("add-appointment-staff");
+const appointmentTypeSelectEl = document.getElementById("add-appointment-type");
+const roleFilterSelectEl = document.getElementById("appointment-staff-role-filter");
+const sortSelectEl = document.getElementById("appointment-sort-select");
 
 const ADD_SUBMIT_HTML = `
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
@@ -57,8 +65,30 @@ const SAVE_SUBMIT_HTML = `
   </svg>
   Save Changes`;
 
+/** Realistic appointment types offered per staff role. */
+const APPOINTMENT_TYPES_BY_ROLE = {
+  doctor: [
+    "General Check-up",
+    "Follow-up Consultation",
+    "Urgent Consultation",
+    "Chronic Disease Review",
+    "Medication Review",
+    "Pre-operative Assessment",
+  ],
+  therapist: [
+    "Physical Therapy Session",
+    "Occupational Therapy Session",
+    "Rehabilitation Session",
+    "Pain Management Session",
+    "Speech Therapy Session",
+    "Mental Health Counseling",
+  ],
+};
+
 let appointments = [];
 let patientsForSelect = [];
+let patientsRaw = [];
+let appointmentsRaw = [];
 let staffProfile = null;
 let statusFilter = "all";
 let searchQuery = "";
@@ -67,6 +97,8 @@ let isSaving = false;
 let editingAppointmentId = null;
 let acceptingAppointmentId = null;
 let completingAppointmentId = null;
+let activeStaffList = [];
+let unsubscribeActiveStaff = null;
 
 const acceptModalEl = document.getElementById("accept-appointment-modal");
 const acceptFormEl = document.getElementById("accept-appointment-form");
@@ -117,6 +149,7 @@ function formatFollowUpDateDisplay(value) {
 function statusLabel(status) {
   if (status === "done") return "Done";
   if (status === "cancelled") return "Cancelled";
+  if (status === "missed") return "Missed";
   if (status === "rescheduled") return "Rescheduled";
   if (status === "pending") return "Pending";
   return "Scheduled";
@@ -124,6 +157,7 @@ function statusLabel(status) {
 
 function statusClass(status) {
   if (status === "cancelled") return "status-badge status-badge--cancelled";
+  if (status === "missed") return "status-badge status-badge--danger";
   if (status === "done") return "status-badge status-badge--done";
   if (status === "rescheduled") return "status-badge status-badge--rescheduled";
   if (status === "pending") return "status-badge status-badge--pending";
@@ -175,17 +209,37 @@ function populatePatientSelect(lockedPatient = null) {
 let unsubscribePatients = null;
 let unsubscribeAppointments = null;
 
+function scopedPatients(list) {
+  if (!staffProfile) return list;
+  return filterPatientsForRole(list, staffProfile);
+}
+
+function scopedAppointments(list) {
+  if (!staffProfile || normalizeStaffRole(staffProfile.role) === "admin") {
+    return list;
+  }
+  // For Doctor and Therapist, ONLY show appointments assigned to them
+  return list.filter((appointment) => appointment.staffId === staffProfile.staffID);
+}
+
+function refreshScopedAppointments() {
+  appointments = scopedAppointments(appointmentsRaw);
+  renderTable();
+}
+
 function startPatientsForSelectRealtime() {
   releaseFirestoreListener(unsubscribePatients);
   unsubscribePatients = subscribePatients(
     (list) => {
-      patientsForSelect = list;
+      patientsRaw = list;
+      patientsForSelect = scopedPatients(list);
       populatePatientSelect();
+      refreshScopedAppointments();
     },
-    () => {
+    (error) => {
       patientsForSelect = [];
       patientSelectEl.innerHTML =
-        '<option value="">Could not load patients</option>';
+        `<option value="">${formatFirestoreError(error, "patients")}</option>`;
     },
   );
 }
@@ -194,7 +248,8 @@ function startAppointmentsRealtime() {
   releaseFirestoreListener(unsubscribeAppointments);
   unsubscribeAppointments = subscribeAppointments(
     (list) => {
-      appointments = list;
+      appointmentsRaw = list;
+      appointments = scopedAppointments(list);
       renderTable();
       if (!formModalEl.hidden) {
         refreshAppointmentTimeOptions();
@@ -204,22 +259,62 @@ function startAppointmentsRealtime() {
       appointments = [];
       countEl.textContent = "Could not load appointments";
       tbodyEl.innerHTML = "";
-      emptyEl.textContent =
-        error?.message || "Failed to load appointments from Firestore.";
+      emptyEl.textContent = formatFirestoreError(error, "appointments");
       emptyEl.hidden = false;
     },
   );
 }
 
+function getStaffRole(apt) {
+  if (!apt.staffId) return "";
+  const staffObj = activeStaffList.find((s) => s.staffID === apt.staffId);
+  return staffObj ? normalizeStaffRole(staffObj.role) : "";
+}
+
 function filterAppointments() {
   const q = searchQuery.toLowerCase();
-  return appointments.filter((apt) => {
+  let filtered = appointments.filter((apt) => {
     const matchesStatus =
       statusFilter === "all" || apt.status === statusFilter;
     const haystack = `${apt.patientName} ${apt.patientId} ${apt.staff} ${apt.appointmentType} ${apt.location} ${apt.appointmentId}`.toLowerCase();
     const matchesSearch = !q || haystack.includes(q);
+
+    // Apply role filter
+    const roleFilter = roleFilterSelectEl?.value || "all";
+    if (roleFilter !== "all") {
+      const role = getStaffRole(apt);
+      if (role !== roleFilter) return false;
+    }
+
     return matchesStatus && matchesSearch;
   });
+
+  // Apply sorting
+  const sortVal = sortSelectEl?.value || "datetime";
+  filtered.sort((a, b) => {
+    if (sortVal === "doctor-first") {
+      const roleA = getStaffRole(a);
+      const roleB = getStaffRole(b);
+      if (roleA === "doctor" && roleB !== "doctor") return -1;
+      if (roleA !== "doctor" && roleB === "doctor") return 1;
+      if (roleA === "therapist" && roleB === "caregiver") return -1;
+      if (roleA === "caregiver" && roleB === "therapist") return 1;
+    } else if (sortVal === "therapist-first") {
+      const roleA = getStaffRole(a);
+      const roleB = getStaffRole(b);
+      if (roleA === "therapist" && roleB !== "therapist") return -1;
+      if (roleA !== "therapist" && roleB === "therapist") return 1;
+      if (roleA === "doctor" && roleB === "caregiver") return -1;
+      if (roleA === "caregiver" && roleB === "doctor") return 1;
+    }
+
+    // Fallback to datetime sort
+    const dateA = a.dateTime ? a.dateTime.getTime() : 0;
+    const dateB = b.dateTime ? b.dateTime.getTime() : 0;
+    return dateA - dateB;
+  });
+
+  return filtered;
 }
 
 function renderPendingActions(apt) {
@@ -361,13 +456,19 @@ function refreshAppointmentTimeOptions({ selectedTime = "" } = {}) {
   if (!timeSelectEl) return;
 
   const date = dateInputEl.value;
-  const staffId = staffProfile?.staffID?.trim() || "";
+  const staffId = staffSelectEl?.value || "";
   const editingApt = editingAppointmentId
     ? getAppointmentById(editingAppointmentId)
     : null;
 
-  if (!date || !staffId) {
+  if (!date) {
     timeSelectEl.innerHTML = '<option value="">Select date first</option>';
+    timeSelectEl.disabled = true;
+    timeSelectEl.value = "";
+    return;
+  }
+  if (!staffId) {
+    timeSelectEl.innerHTML = '<option value="">Select staff first</option>';
     timeSelectEl.disabled = true;
     timeSelectEl.value = "";
     return;
@@ -467,12 +568,98 @@ function closeFormModal() {
   editingAppointmentId = null;
 }
 
+function populateStaffSelect(selectedStaffId = "") {
+  if (!staffRoleSelectEl || !staffSelectEl) return;
+  const role = staffRoleSelectEl.value;
+  if (!role) {
+    staffSelectEl.innerHTML = '<option value="">Select role first</option>';
+    staffSelectEl.disabled = true;
+    staffSelectEl.value = "";
+    populateAppointmentTypeSelect();
+    return;
+  }
+
+  const filteredStaff = activeStaffList.filter(
+    (member) => normalizeStaffRole(member.role) === role
+  );
+
+  if (filteredStaff.length === 0) {
+    staffSelectEl.innerHTML = `<option value="">No active ${role}s found</option>`;
+    staffSelectEl.disabled = true;
+    staffSelectEl.value = "";
+    populateAppointmentTypeSelect();
+    return;
+  }
+
+  const options = ['<option value="">Select staff</option>'];
+  for (const s of filteredStaff) {
+    options.push(
+      `<option value="${escapeHtml(s.staffID)}">${escapeHtml(s.name)} (${escapeHtml(s.staffID)})</option>`
+    );
+  }
+  staffSelectEl.innerHTML = options.join("");
+  staffSelectEl.disabled = false;
+  if (selectedStaffId && filteredStaff.some((s) => s.staffID === selectedStaffId)) {
+    staffSelectEl.value = selectedStaffId;
+  } else {
+    staffSelectEl.value = "";
+  }
+  populateAppointmentTypeSelect();
+}
+
+function populateAppointmentTypeSelect({ selectedType = "" } = {}) {
+  if (!appointmentTypeSelectEl) return;
+
+  const role = staffRoleSelectEl?.value || "";
+  const staffId = staffSelectEl?.value || "";
+  const previousValue = selectedType || appointmentTypeSelectEl.value;
+
+  if (!role || !staffId) {
+    appointmentTypeSelectEl.innerHTML =
+      '<option value="">Select staff role and assigned staff first</option>';
+    appointmentTypeSelectEl.disabled = true;
+    appointmentTypeSelectEl.value = "";
+    appointmentTypeSelectEl.required = true;
+    return;
+  }
+
+  const types = [...(APPOINTMENT_TYPES_BY_ROLE[role] || [])];
+  if (
+    previousValue &&
+    !types.includes(previousValue)
+  ) {
+    types.unshift(previousValue);
+  }
+
+  const options = ['<option value="">Select appointment type</option>'];
+  for (const type of types) {
+    options.push(
+      `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`
+    );
+  }
+
+  appointmentTypeSelectEl.innerHTML = options.join("");
+  appointmentTypeSelectEl.disabled = false;
+  appointmentTypeSelectEl.required = true;
+  if (previousValue && types.includes(previousValue)) {
+    appointmentTypeSelectEl.value = previousValue;
+  } else {
+    appointmentTypeSelectEl.value = "";
+  }
+}
+
 function openAddAppointmentModal() {
   editingAppointmentId = null;
   appointmentFormEl.reset();
   formTitleEl.textContent = "Add Appointment";
   formSubmitBtn.innerHTML = ADD_SUBMIT_HTML;
   showPatientFieldForAdd();
+  if (staffRoleSelectEl) {
+    staffRoleSelectEl.value = "";
+    populateStaffSelect();
+  } else {
+    populateAppointmentTypeSelect();
+  }
   openFormModal();
   patientSelectEl.focus();
 }
@@ -493,10 +680,21 @@ function openEditAppointmentModal(appointmentId) {
     patientName,
   });
   showPatientFieldForEdit(apt.patientId, patientName);
-  document.getElementById("add-appointment-type").value = apt.appointmentType;
   document.getElementById("add-appointment-location").value =
     apt.location === "—" ? "" : apt.location;
   document.getElementById("add-appointment-notes").value = apt.notes || "";
+
+  const staffObj = activeStaffList.find((s) => s.staffID === apt.staffId);
+  if (staffObj && staffRoleSelectEl && staffSelectEl) {
+    const role = normalizeStaffRole(staffObj.role);
+    staffRoleSelectEl.value = role;
+    populateStaffSelect(apt.staffId);
+    populateAppointmentTypeSelect({ selectedType: apt.appointmentType });
+  } else if (staffRoleSelectEl && staffSelectEl) {
+    staffRoleSelectEl.value = "";
+    populateStaffSelect();
+    populateAppointmentTypeSelect({ selectedType: apt.appointmentType });
+  }
 
   if (apt.dateTime) {
     dateInputEl.value = dateToInputValue(apt.dateTime);
@@ -508,7 +706,11 @@ function openEditAppointmentModal(appointmentId) {
   }
 
   openFormModal({ repopulatePatients: false });
-  document.getElementById("add-appointment-type").focus();
+  if (appointmentTypeSelectEl && !appointmentTypeSelectEl.disabled) {
+    appointmentTypeSelectEl.focus();
+  } else {
+    staffRoleSelectEl?.focus();
+  }
 }
 
 function defaultReminderTimesForFrequency(frequency) {
@@ -1026,14 +1228,14 @@ async function handleAppointmentFormSubmit(event) {
   formErrorEl.hidden = true;
 
   const userId = patientSelectEl.value;
-  const appointmentType = document.getElementById("add-appointment-type").value;
+  const appointmentType = appointmentTypeSelectEl?.value || "";
   const location = document.getElementById("add-appointment-location").value.trim();
   const date = dateInputEl.value;
   const time = timeSelectEl.value;
   const notes = document.getElementById("add-appointment-notes").value.trim();
-  const staffId = staffProfile?.staffID?.trim() || "";
+  const staffId = staffSelectEl?.value || "";
 
-  if (!userId || !appointmentType || !location || !date || !time) {
+  if (!userId || !staffId || !appointmentType || !location || !date || !time) {
     formErrorEl.textContent = "Please fill in all required fields.";
     formErrorEl.hidden = false;
     return;
@@ -1078,13 +1280,6 @@ async function handleAppointmentFormSubmit(event) {
         previousDateTime: apt?.dateTime,
       });
     } else {
-      if (!staffId) {
-        formErrorEl.textContent =
-          "Your staff profile is missing a Staff ID. Add staffID in Firestore healthcarestaff.";
-        formErrorEl.hidden = false;
-        return;
-      }
-
       await createAppointment({
         userId,
         staffId,
@@ -1154,6 +1349,22 @@ addBtn.addEventListener("click", openAddAppointmentModal);
 formCloseBtn.addEventListener("click", closeFormModal);
 appointmentFormEl.addEventListener("submit", handleAppointmentFormSubmit);
 dateInputEl.addEventListener("change", () => refreshAppointmentTimeOptions());
+staffRoleSelectEl?.addEventListener("change", () => {
+  populateStaffSelect();
+  refreshAppointmentTimeOptions();
+});
+staffSelectEl?.addEventListener("change", () => {
+  populateAppointmentTypeSelect();
+  refreshAppointmentTimeOptions();
+});
+roleFilterSelectEl?.addEventListener("change", () => {
+  currentPage = 1;
+  renderTable();
+});
+sortSelectEl?.addEventListener("change", () => {
+  currentPage = 1;
+  renderTable();
+});
 
 formModalEl.addEventListener("click", (event) => {
   if (event.target === formModalEl) closeFormModal();
@@ -1226,8 +1437,30 @@ document.addEventListener("keydown", (event) => {
 
 dateInputEl.min = todayDateString();
 
+function startActiveStaffRealtime() {
+  releaseFirestoreListener(unsubscribeActiveStaff);
+  unsubscribeActiveStaff = subscribeActiveStaff(
+    (list) => {
+      activeStaffList = list;
+    },
+    (err) => {
+      console.error("Failed to subscribe active staff", err);
+      activeStaffList = [];
+    }
+  );
+}
+
 initStaffAuth((profile) => {
   staffProfile = profile;
+
+  if (normalizeStaffRole(profile.role) !== "admin") {
+    const roleFilter = document.getElementById("admin-role-filter-container");
+    const sortContainer = document.getElementById("admin-sort-container");
+    if (roleFilter) roleFilter.style.display = "none";
+    if (sortContainer) sortContainer.style.display = "none";
+  }
+
   startPatientsForSelectRealtime();
   startAppointmentsRealtime();
+  startActiveStaffRealtime();
 });

@@ -14,12 +14,22 @@ class DevicePermissionsService {
   /// Prompts for mic, camera, and notifications when the app starts.
   Future<void> requestMicAndCameraOnLaunch() async {
     await _requestIfNeeded(Permission.microphone);
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      await _requestIfNeeded(Permission.speech);
+    }
     await _requestIfNeeded(Permission.camera);
     await _requestIfNeeded(Permission.notification);
   }
 
   /// Ensures microphone access before voice capture.
   Future<bool> ensureMicrophone() => _ensure(Permission.microphone);
+
+  /// iOS also requires speech-recognition permission for voice commands.
+  Future<bool> ensureSpeechRecognition() async {
+    if (kIsWeb) return true;
+    if (defaultTargetPlatform != TargetPlatform.iOS) return true;
+    return _ensure(Permission.speech);
+  }
 
   /// Ensures camera access before AR navigation.
   Future<bool> ensureCamera() => _ensure(Permission.camera);

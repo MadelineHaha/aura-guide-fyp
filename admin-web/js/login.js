@@ -7,6 +7,7 @@ import {
   getAuthErrorMessage,
   LOGIN_ERROR_MESSAGE,
 } from "./staff-auth.js";
+import { homePageForRole } from "./staff-rbac.js";
 import { LOG_ACTIONS } from "./activity-log-actions.js";
 import { logStaffActivity, logSecurityAudit, warmUpActivityLogIpCache } from "./activity-logs-service.js";
 import {
@@ -147,9 +148,9 @@ form.addEventListener("submit", async (event) => {
   setLoading(true);
 
   try {
-    await signInStaff(email, password);
+    const profile = await signInStaff(email, password);
     clearLoginLockout();
-    window.location.href = "dashboard.html";
+    window.location.replace(homePageForRole(profile.role));
   } catch (error) {
     const message = getAuthErrorMessage(error);
     handleFailedLogin(email, message);
@@ -162,12 +163,15 @@ form.addEventListener("submit", async (event) => {
 startLockoutTimer();
 void warmUpActivityLogIpCache();
 
-onAuthStateChanged(auth, async (user) => {
-  if (!user) return;
-  try {
-    await verifyActiveStaff(user.uid);
-    window.location.href = "dashboard.html";
-  } catch {
-    /* stay on login — profile missing or inactive */
-  }
+void auth.authStateReady().then(() => {
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) return;
+    if (!window.location.pathname.toLowerCase().endsWith("login.html")) return;
+    try {
+      const profile = await verifyActiveStaff(user.uid);
+      window.location.replace(homePageForRole(profile.role));
+    } catch {
+      /* stay on login — profile missing or inactive */
+    }
+  });
 });

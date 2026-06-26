@@ -58,11 +58,36 @@ class NotificationHistoryService {
       NotificationHistoryService._();
 
   static const _storageKey = 'notification_history_v1';
+  static const _lastViewedKey = 'notification_last_viewed_ms';
   static const _maxEntries = 100;
 
   final StreamController<void> _changes = StreamController<void>.broadcast();
 
   Stream<void> get changes => _changes.stream;
+
+  Future<int> lastViewedMillis() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getInt(_lastViewedKey) ?? 0;
+    } catch (error, stack) {
+      debugPrint(
+        'NotificationHistoryService.lastViewedMillis failed: $error\n$stack',
+      );
+      return 0;
+    }
+  }
+
+  /// Clears the main-menu badge after the patient opens the notifications list.
+  Future<void> markViewed({int? upToMillis}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final value = upToMillis ?? DateTime.now().millisecondsSinceEpoch;
+      await prefs.setInt(_lastViewedKey, value);
+      _changes.add(null);
+    } catch (error, stack) {
+      debugPrint('NotificationHistoryService.markViewed failed: $error\n$stack');
+    }
+  }
 
   Future<void> record({
     required String title,
