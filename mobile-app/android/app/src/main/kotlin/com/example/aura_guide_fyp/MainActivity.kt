@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.LocaleList
 import android.os.Looper
@@ -24,6 +25,8 @@ class MainActivity : FlutterActivity() {
     private val flutterPrefsName = "FlutterSharedPreferences"
     private val flutterLanguageKey = "flutter.settings_language"
     private var alertTone: ToneGenerator? = null
+    private val alertHandler = Handler(Looper.getMainLooper())
+    private var stopToneRunnable: Runnable? = null
 
     private var englishTts: TextToSpeech? = null
     private val englishTtsReady = AtomicBoolean(false)
@@ -36,12 +39,17 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "playAlertBeep" -> {
+                        val soft = call.argument<Boolean>("soft") ?: false
                         try {
-                            playAlertBeep()
+                            playAlertBeep(soft = soft)
                             result.success(null)
                         } catch (e: Exception) {
                             result.error("BEEP_FAILED", e.message, null)
                         }
+                    }
+                    "stopAlertBeep" -> {
+                        stopAlertBeep()
+                        result.success(null)
                     }
                     "speakEnglishTts" -> {
                         val text = call.argument<String>("text")?.trim().orEmpty()
@@ -106,21 +114,87 @@ class MainActivity : FlutterActivity() {
         return stored.ifEmpty { null }
     }
 
-    private fun playAlertBeep() {
+    private var softAlertTone: ToneGenerator? = null
+
+    private fun playAlertBeep(soft: Boolean = false) {
+        cancelPendingStopTone()
+
+        if (soft) {
+            val tone = softAlertTone ?: ToneGenerator(
+                AudioManager.STREAM_NOTIFICATION,
+                70,
+            ).also { softAlertTone = it }
+
+            tone.startTone(ToneGenerator.TONE_PROP_BEEP, 280)
+            val runnable = Runnable {
+                stopToneRunnable = null
+                try {
+                    softAlertTone?.stopTone()
+                } catch (_: RuntimeException) {
+                }
+            }
+            stopToneRunnable = runnable
+            alertHandler.postDelayed(runnable, 300)
+            return
+        }
+
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+        audioManager.setStreamVolume(
+            AudioManager.STREAM_ALARM,
+            maxVolume,
+            0,
+        )
+
         val tone = alertTone ?: ToneGenerator(
             AudioManager.STREAM_ALARM,
             100,
         ).also { alertTone = it }
 
-        tone.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 500)
-        Handler(Looper.getMainLooper()).postDelayed({
-            tone.stopTone()
-        }, 520)
+        tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 750)
+        val runnable = Runnable {
+            stopToneRunnable = null
+            try {
+                alertTone?.stopTone()
+            } catch (_: RuntimeException) {
+                // Tone may already have been stopped or released.
+            }
+        }
+        stopToneRunnable = runnable
+        alertHandler.postDelayed(runnable, 780)
+    }
+
+    private fun stopAlertBeep() {
+        cancelPendingStopTone()
+        try {
+            alertTone?.stopTone()
+        } catch (_: RuntimeException) {
+            // Ignore if the tone was already stopped or released.
+        }
+        try {
+            softAlertTone?.stopTone()
+        } catch (_: RuntimeException) {
+        }
+    }
+
+    private fun cancelPendingStopTone() {
+        stopToneRunnable?.let { alertHandler.removeCallbacks(it) }
+        stopToneRunnable = null
     }
 
     private fun releaseTone() {
-        alertTone?.release()
+        cancelPendingStopTone()
+        try {
+            alertTone?.release()
+        } catch (_: RuntimeException) {
+            // Ignore if already released.
+        }
         alertTone = null
+        try {
+            softAlertTone?.release()
+        } catch (_: RuntimeException) {
+        }
+        softAlertTone = null
     }
 
     /// Align Android/TalkBack app locale with in-app language selection.
@@ -208,9 +282,15 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                 })
-            }
 
-            engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+                val params = Bundle()
+                params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
+                params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
+                engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+            } else {
+                @Suppress("DEPRECATION")
+                engine.speak(text, TextToSpeech.QUEUE_FLUSH, null)
+            }
 
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
                 val words = text.split(Regex("\\s+")).filter { it.isNotEmpty() }.size
@@ -281,8 +361,8 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun configureEnglishVoice(tts: TextToSpeech): Boolean {
-        tts.setSpeechRate(1.0f)
-        tts.setPitch(1.0f)
+        tts.setSpeechRate(0.82f)
+        tts.setPitch(1.05f)
 
         val locales = listOf(Locale.US, Locale.UK, Locale.ENGLISH)
         var languageApplied = false

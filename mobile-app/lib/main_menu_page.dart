@@ -29,7 +29,6 @@ import 'services/step_tracking_service.dart';
 import 'services/user_profile_service.dart';
 import 'theme/app_colors.dart';
 import 'doctor/widgets/doctor_module_tile.dart';
-import 'doctor/widgets/doctor_section_header.dart';
 import 'doctor/widgets/doctor_theme.dart';
 import 'widgets/portal_notification_bell.dart';
 import 'utils/clinic_datetime.dart';
@@ -47,15 +46,6 @@ class MainMenuPage extends StatefulWidget {
 }
 
 class _MainMenuPageState extends State<MainMenuPage> with RouteAware {
-
-  final PageController _pageController = PageController();
-  int _currentTab = 0;
-
-  // Two-finger swipe gesture tracking variables
-  final Map<int, Offset> _pointerStarts = {};
-  final Map<int, Offset> _pointerPositions = {};
-  bool _gestureTriggered = false;
-
   @override
   void initState() {
     super.initState();
@@ -88,200 +78,17 @@ class _MainMenuPageState extends State<MainMenuPage> with RouteAware {
   @override
   void dispose() {
     appRouteObserver.unsubscribe(this);
-    _pageController.dispose();
     super.dispose();
   }
 
-  void _switchToCategory(int index) {
-    if (index < 0 || index > 1) return;
-    if (_currentTab == index) return;
-
-    setState(() {
-      _currentTab = index;
-    });
-
-    _pageController.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    );
-  }
-
-  void _handlePointerDown(PointerDownEvent event) {
-    _pointerStarts[event.pointer] = event.position;
-    _pointerPositions[event.pointer] = event.position;
-    if (_pointerStarts.length == 2) {
-      // Reset start positions of both pointers to align tracking from this moment
-      for (final id in _pointerStarts.keys) {
-        _pointerStarts[id] = _pointerPositions[id] ?? _pointerStarts[id]!;
-      }
-      _gestureTriggered = false;
-      setState(() {});
-    }
-  }
-
-  void _handlePointerMove(PointerMoveEvent event) {
-    if (_pointerStarts.containsKey(event.pointer)) {
-      _pointerPositions[event.pointer] = event.position;
-      _evaluateGesture();
-    }
-  }
-
-  void _handlePointerUp(PointerUpEvent event) {
-    final wasMulti = _pointerStarts.length >= 2;
-    _pointerStarts.remove(event.pointer);
-    _pointerPositions.remove(event.pointer);
-    if (_pointerStarts.isEmpty) {
-      _gestureTriggered = false;
-    }
-    if (wasMulti && _pointerStarts.length < 2) {
-      setState(() {});
-    }
-  }
-
-  void _handlePointerCancel(PointerCancelEvent event) {
-    final wasMulti = _pointerStarts.length >= 2;
-    _pointerStarts.remove(event.pointer);
-    _pointerPositions.remove(event.pointer);
-    if (_pointerStarts.isEmpty) {
-      _gestureTriggered = false;
-    }
-    if (wasMulti && _pointerStarts.length < 2) {
-      setState(() {});
-    }
-  }
-
-  void _evaluateGesture() {
-    if (_gestureTriggered) return;
-
-    if (_pointerStarts.length == 2) {
-      final keys = _pointerStarts.keys.toList();
-      final start1 = _pointerStarts[keys[0]];
-      final current1 = _pointerPositions[keys[0]];
-      final start2 = _pointerStarts[keys[1]];
-      final current2 = _pointerPositions[keys[1]];
-
-      if (start1 != null && current1 != null && start2 != null && current2 != null) {
-        final delta1 = current1.dx - start1.dx;
-        final delta2 = current2.dx - start2.dx;
-
-        // Ensure both fingers are swiping in the same direction
-        final sameDirection = (delta1 > 0 && delta2 > 0) || (delta1 < 0 && delta2 < 0);
-        if (sameDirection) {
-          final averageDelta = (delta1 + delta2) / 2;
-          const double swipeThreshold = 70.0;
-
-          if (averageDelta.abs() > swipeThreshold) {
-            if (averageDelta > 0) {
-              // Swipe right -> Switch to Health (tab 0)
-              if (_currentTab != 0) {
-                _switchToCategory(0);
-                _gestureTriggered = true;
-              }
-            } else {
-              // Swipe left -> Switch to Assistance (tab 1)
-              if (_currentTab != 1) {
-                _switchToCategory(1);
-                _gestureTriggered = true;
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  Widget _buildCategorySelector() {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: DoctorTheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: DoctorTheme.borderSoft),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _buildCategoryTab(
-              index: 0,
-              title: 'Health',
-              icon: Icons.medical_services_outlined,
-            ),
-          ),
-          Expanded(
-            child: _buildCategoryTab(
-              index: 1,
-              title: 'Assistance',
-              icon: Icons.handshake_outlined,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCategoryTab({
-    required int index,
-    required String title,
-    required IconData icon,
-  }) {
-    final isActive = _currentTab == index;
-    final activeColor = DoctorTheme.portalGlow;
-
-    return Semantics(
-      selected: isActive,
-      label: '$title category',
-      hint: isActive ? null : 'Double tap to select $title category',
-      child: InkWell(
-        onTap: () => _switchToCategory(index),
-        borderRadius: BorderRadius.circular(8),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            color: isActive ? activeColor : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                color: isActive ? Colors.white : const Color(0xFF8E8E8E),
-                size: 18,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                title,
-                style: TextStyle(
-                  color: isActive ? Colors.white : const Color(0xFF8E8E8E),
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHealthPage() {
-    final physics = _pointerStarts.length >= 2
-        ? const NeverScrollableScrollPhysics()
-        : const BouncingScrollPhysics();
+  Widget _buildMainMenuContent() {
     return SingleChildScrollView(
-      physics: physics,
+      physics: const BouncingScrollPhysics(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const _ReminderCard(),
           const SizedBox(height: 20),
-          const DoctorSectionHeader(
-            title: 'Health',
-            subtitle: 'Medications, records, and appointments',
-          ),
-          const SizedBox(height: 14),
           GridView.count(
             physics: const NeverScrollableScrollPhysics(),
             shrinkWrap: true,
@@ -289,39 +96,10 @@ class _MainMenuPageState extends State<MainMenuPage> with RouteAware {
             mainAxisSpacing: 12,
             crossAxisSpacing: 12,
             childAspectRatio: 1.05,
-            children: const [
-              _MedicationsMenuTile(),
-              _AppointmentsMenuTile(),
-              _HealthRecordsMenuTile(),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAssistancePage() {
-    final physics = _pointerStarts.length >= 2
-        ? const NeverScrollableScrollPhysics()
-        : const BouncingScrollPhysics();
-    return SingleChildScrollView(
-      physics: physics,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const DoctorSectionHeader(
-            title: 'Assistance',
-            subtitle: 'Navigation and communication',
-          ),
-          const SizedBox(height: 14),
-          GridView.count(
-            physics: physics,
-            shrinkWrap: true,
-            crossAxisCount: 2,
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            childAspectRatio: 1.05,
             children: [
+              const _MedicationsMenuTile(),
+              const _AppointmentsMenuTile(),
+              const _HealthRecordsMenuTile(),
               _MenuTile(
                 title: context.l10n.t('navigation'),
                 subtitle: context.l10n.t('navigationSubtitle'),
@@ -433,43 +211,18 @@ class _MainMenuPageState extends State<MainMenuPage> with RouteAware {
       backgroundColor: AppColors.background,
       drawer: const _MainMenuDrawer(),
       drawerEnableOpenDragGesture: false,
-      body: Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: _handlePointerDown,
-        onPointerMove: _handlePointerMove,
-        onPointerUp: _handlePointerUp,
-        onPointerCancel: _handlePointerCancel,
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const _HeaderSection(),
-                const SizedBox(height: 16),
-                _buildEmergencySosButton(),
-                const SizedBox(height: 16),
-                _buildCategorySelector(),
-                const SizedBox(height: 16),
-                Expanded(
-                  child: PageView(
-                    controller: _pageController,
-                    physics: const NeverScrollableScrollPhysics(),
-                    onPageChanged: (index) {
-                      if (_currentTab != index) {
-                        setState(() {
-                          _currentTab = index;
-                        });
-                      }
-                    },
-                    children: [
-                      _buildHealthPage(),
-                      _buildAssistancePage(),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const _HeaderSection(),
+              const SizedBox(height: 16),
+              _buildEmergencySosButton(),
+              const SizedBox(height: 16),
+              Expanded(child: _buildMainMenuContent()),
+            ],
           ),
         ),
       ),
@@ -836,6 +589,7 @@ class _MedicationsMenuTileState extends State<_MedicationsMenuTile> {
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
+                settings: const RouteSettings(name: 'MedicationsPage'),
                 builder: (context) => const MedicationsPage(),
               ),
             );

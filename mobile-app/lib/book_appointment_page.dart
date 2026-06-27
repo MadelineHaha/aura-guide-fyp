@@ -5,6 +5,7 @@ import 'models/book_appointment_session.dart';
 import 'models/bookable_slot.dart';
 import 'models/staff_option.dart';
 import 'utils/appointment_time_slots.dart';
+import 'utils/appointment_types.dart';
 import 'widgets/calendar_date_picker_dialog.dart';
 import 'widgets/centered_back_title_bar.dart';
 import 'widgets/date_select_field.dart';
@@ -52,15 +53,15 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
   String _stepTitle(BuildContext context) {
     switch (_session.step) {
       case 0:
-        return _l10n(context, 'chooseSessionType');
-      case 1:
         return _l10n(context, 'chooseSpecialistRole');
-      case 2:
+      case 1:
         return _session.roleKey == 'doctor'
             ? _l10n(context, 'selectDoctor')
             : _session.roleKey == 'therapist'
                 ? _l10n(context, 'selectTherapist')
                 : _l10n(context, 'selectCaregiver');
+      case 2:
+        return _l10n(context, 'chooseSessionType');
       default:
         return _l10n(context, 'selectDateAndTime');
     }
@@ -126,16 +127,15 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
     }
   }
 
-  String _sessionAppointmentType(BuildContext context) {
-    return _session.sessionTitleForKey(
-      _session.sessionKey ?? BookAppointmentSession.sessionOptions.first.key,
-      (key) => _l10n(context, key),
+  String _sessionAppointmentType() {
+    return _session.sessionCanonicalTypeForKey(
+      _session.sessionKey ?? AppointmentTypes.doctorOptions.first.key,
     );
   }
 
   Future<void> _book() async {
     try {
-      final success = await _session.submitBooking(_sessionAppointmentType(context));
+      final success = await _session.submitBooking(_sessionAppointmentType());
       if (!mounted) return;
       if (success) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -244,21 +244,6 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
         return ListView(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           children: [
-            for (final s in BookAppointmentSession.sessionOptions)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _OptionCard(
-                  title: l10n.t(s.titleKey),
-                  subtitle: s.subtitleKey.isEmpty ? '' : l10n.t(s.subtitleKey),
-                  onTap: () => _session.selectSession(s.key),
-                ),
-              ),
-          ],
-        );
-      case 1:
-        return ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          children: [
             for (final r in BookAppointmentSession.roleOptions)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -270,7 +255,7 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
               ),
           ],
         );
-      case 2:
+      case 1:
         if (_session.loadingStaff) {
           return const Center(child: CircularProgressIndicator(color: _accent));
         }
@@ -298,6 +283,21 @@ class _BookAppointmentPageState extends State<BookAppointmentPage> {
               onTap: () => _session.selectStaff(staff),
             );
           },
+        );
+      case 2:
+        return ListView(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          children: [
+            for (final s in BookAppointmentSession.sessionOptionsForRole(_session.roleKey))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _OptionCard(
+                  title: l10n.t(s.titleKey),
+                  subtitle: s.subtitleKey.isEmpty ? '' : l10n.t(s.subtitleKey),
+                  onTap: () => _session.selectSession(s.key),
+                ),
+              ),
+          ],
         );
       default:
         return ListView(

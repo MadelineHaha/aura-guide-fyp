@@ -1,3 +1,5 @@
+import '../utils/appointment_types.dart';
+
 class TherapySessionItem {
   const TherapySessionItem({
     required this.id,
@@ -27,10 +29,7 @@ class TherapySessionItem {
   final String sessionOutcome;
   final String notes;
 
-  bool get isTherapyType {
-    final type = appointmentType.trim().toLowerCase();
-    return type == 'therapy session' || type == 'therapist session';
-  }
+  bool get isTherapyType => AppointmentTypes.isTherapistAppointmentType(appointmentType);
 
   bool get isPlanned {
     final value = status.trim().toLowerCase();

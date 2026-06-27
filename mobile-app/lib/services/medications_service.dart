@@ -10,6 +10,7 @@ import '../models/medication_entity.dart';
 import '../models/medication_item.dart';
 import '../models/medication_reminder_entity.dart';
 import '../utils/clinic_datetime.dart';
+import '../utils/voice_option_parser.dart';
 import 'activity_log_actions.dart';
 import 'activity_log_service.dart';
 import 'medication_local_reminder_service.dart';
@@ -600,4 +601,307 @@ class MedicationsService {
     _clearStreamCache();
     unawaited(MedicationLocalReminderService.instance.syncSchedules());
   }
+
+  /// Groups today's medications for voice summaries.
+  static MedicationDayGroups groupTodayItems(List<MedicationItem> items) {
+    final taken = <MedicationItem>[];
+    final missed = <MedicationItem>[];
+    final upcoming = <MedicationItem>[];
+
+    for (final item in items) {
+      if (item.takenToday) {
+        taken.add(item);
+      } else if (item.isOverdue ||
+          item.status == MedicationReminderEntity.statusMissed) {
+        missed.add(item);
+      } else {
+        upcoming.add(item);
+      }
+    }
+
+    return MedicationDayGroups(
+      taken: taken,
+      missed: missed,
+      upcoming: upcoming,
+    );
+  }
+
+  /// Spoken summary of taken, missed, and upcoming doses for voice-only mode.
+  static String buildVoiceSummary(
+    List<MedicationItem> items,
+    String Function(String key, [Map<String, Object?> params]) l10n,
+  ) {
+    if (items.isEmpty) {
+      return l10n('voiceMedicationsEmpty');
+    }
+
+    final groups = groupTodayItems(items);
+    final parts = <String>[
+      l10n('voiceMedicationsPageIntro'),
+      buildProgressLine(items, l10n),
+    ];
+
+    var doseNumber = 1;
+    for (final section in [
+      (headerKey: 'voiceMedicationsTakenHeader', items: groups.taken),
+      (headerKey: 'voiceMedicationsMissedHeader', items: groups.missed),
+      (headerKey: 'voiceMedicationsUpcomingHeader', items: groups.upcoming),
+    ]) {
+      parts.add(
+        _voiceMedicationSection(
+          l10n: l10n,
+          headerKey: section.headerKey,
+          items: section.items,
+          startNumber: doseNumber,
+          onNumberAdvanced: (next) => doseNumber = next,
+        ),
+      );
+    }
+    parts.add(l10n('voiceMedicationsPageFooter'));
+
+    return parts.join(' ');
+  }
+
+  static String buildProgressLine(
+    List<MedicationItem> items,
+    String Function(String key, [Map<String, Object?> params]) l10n,
+  ) {
+    final takenCount = items.where((item) => item.takenToday).length;
+    final total = items.length;
+    final percent = total == 0 ? 0 : ((takenCount / total) * 100).round();
+    return l10n('voiceMedicationsProgress', {
+      'takenCount': takenCount,
+      'total': total,
+      'percent': percent,
+    });
+  }
+
+  /// Parses spoken mark taken / not taken commands against today's doses.
+  static MedicationVoiceAction? parseVoiceAction(
+    String speech,
+    List<MedicationItem> items,
+  ) {
+    if (items.isEmpty) return null;
+
+    final normalized = _normalizeSpeech(speech);
+    if (normalized.isEmpty) return null;
+
+    final taken = _parseWantsTaken(normalized);
+    if (taken == null) return null;
+
+    final item = _findItemForSpeech(normalized, items, rawSpeech: speech);
+    if (item == null) return null;
+
+    return MedicationVoiceAction(item: item, taken: taken);
+  }
+
+  static bool? _parseWantsTaken(String normalized) {
+    const notTakenPhrases = [
+      'unmark',
+      'mark as not taken',
+      'as not taken',
+      'not taken',
+      'mark not taken',
+      'did not take',
+      'didnt take',
+      'have not taken',
+      'havent taken',
+      'undo',
+      'uncheck',
+      'batal tanda',
+      'tidak ambil',
+      'belum ambil',
+      '未服用',
+      '标记为未服用',
+      '取消标记',
+      '没有服用',
+    ];
+    for (final phrase in notTakenPhrases) {
+      if (normalized.contains(phrase)) return false;
+    }
+
+    const takenPhrases = [
+      'mark as taken',
+      'as taken',
+      'mark taken',
+      'checked off',
+      'check off',
+      'i took',
+      'already took',
+      'have taken',
+      'tandakan',
+      'sudah ambil',
+      'telah ambil',
+      '已服用',
+      '标记为已服用',
+    ];
+    for (final phrase in takenPhrases) {
+      if (normalized.contains(phrase)) return true;
+    }
+
+    if (normalized.contains('mark') && normalized.contains('taken')) {
+      return true;
+    }
+    if (RegExp(r'\btaken\b').hasMatch(normalized)) {
+      return true;
+    }
+    return null;
+  }
+
+  static MedicationItem? _findItemForSpeech(
+    String normalized,
+    List<MedicationItem> items, {
+    String? rawSpeech,
+  }) {
+    final byOption = VoiceOptionParser.selectByOptionIndex(
+      items,
+      rawSpeech ?? normalized,
+      skipIfTimeLike: true,
+    );
+    if (byOption != null) return byOption;
+
+    final nameMatches = <MedicationItem>[];
+    MedicationItem? best;
+    var bestScore = 0;
+
+    for (final item in items) {
+      final timeNorm = _normalizeSpeech(item.scheduledTime);
+      if (timeNorm.isNotEmpty &&
+          (normalized.contains(timeNorm) ||
+              normalized.contains(timeNorm.replaceAll(' ', '')))) {
+        return item;
+      }
+
+      final nameNorm = _normalizeSpeech(item.name);
+      if (nameNorm.isNotEmpty && normalized.contains(nameNorm)) {
+        nameMatches.add(item);
+      }
+
+      if (nameNorm.isNotEmpty) {
+        final words = nameNorm.split(RegExp(r'\s+'));
+        final score = words
+            .where((word) => word.length > 2 && normalized.contains(word))
+            .length;
+        if (score > bestScore) {
+          bestScore = score;
+          best = item;
+        }
+      }
+    }
+
+    if (nameMatches.length == 1) return nameMatches.first;
+    if (nameMatches.length > 1) {
+      for (final item in nameMatches) {
+        final timeNorm = _normalizeSpeech(item.scheduledTime);
+        if (timeNorm.isNotEmpty &&
+            (normalized.contains(timeNorm) ||
+                normalized.contains(timeNorm.replaceAll(' ', '')))) {
+          return item;
+        }
+      }
+      return null;
+    }
+
+    if (bestScore > 0) return best;
+
+    final query = _extractMedicationQuery(normalized);
+    if (query.isNotEmpty) {
+      for (final item in items) {
+        final nameNorm = _normalizeSpeech(item.name);
+        if (nameNorm.contains(query) || query.contains(nameNorm)) {
+          return item;
+        }
+      }
+    }
+
+    return items.length == 1 ? items.first : null;
+  }
+
+  static String _extractMedicationQuery(String normalized) {
+    var query = normalized;
+    const stripPhrases = [
+      'mark as taken',
+      'mark as not taken',
+      'as not taken',
+      'as taken',
+      'not taken',
+      'check off',
+      'please',
+      'the',
+      'my',
+      'medication',
+      'medications',
+      'medicine',
+      'pill',
+      'dose',
+      'uncheck',
+      'unmark',
+      'mark',
+      'taken',
+      'undo',
+    ];
+    for (final phrase in stripPhrases) {
+      query = query.replaceAll(phrase, ' ');
+    }
+    return query.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  static String _normalizeSpeech(String text) {
+    return text
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  static String _voiceMedicationSection({
+    required String Function(String key, [Map<String, Object?> params]) l10n,
+    required String headerKey,
+    required List<MedicationItem> items,
+    required int startNumber,
+    required void Function(int next) onNumberAdvanced,
+  }) {
+    if (items.isEmpty) {
+      return l10n('voiceMedicationsSectionNone', {'header': l10n(headerKey)});
+    }
+
+    var number = startNumber;
+    final doses = items
+        .map(
+          (item) => l10n('voiceMedicationsNumberedDoseLine', {
+            'number': number++,
+            'name': item.name,
+            'time': item.scheduledTime,
+            'dosage': item.dosage,
+          }),
+        )
+        .join(' ');
+    onNumberAdvanced(number);
+    return l10n('voiceMedicationsSectionList', {
+      'header': l10n(headerKey),
+      'items': doses,
+    });
+  }
+}
+
+class MedicationDayGroups {
+  const MedicationDayGroups({
+    required this.taken,
+    required this.missed,
+    required this.upcoming,
+  });
+
+  final List<MedicationItem> taken;
+  final List<MedicationItem> missed;
+  final List<MedicationItem> upcoming;
+}
+
+class MedicationVoiceAction {
+  const MedicationVoiceAction({
+    required this.item,
+    required this.taken,
+  });
+
+  final MedicationItem item;
+  final bool taken;
 }

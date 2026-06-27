@@ -331,10 +331,11 @@ class FallDetectionCoordinator extends ChangeNotifier {
     try {
       await _speech.listen(
         listenFor: const Duration(seconds: _responseTimeoutSeconds),
-        pauseFor: const Duration(seconds: 3),
+        pauseFor: const Duration(seconds: 4),
         listenOptions: SpeechListenOptions(
           partialResults: true,
           cancelOnError: false,
+          listenMode: ListenMode.dictation,
         ),
         onResult: (result) {
           unawaited(
@@ -342,11 +343,20 @@ class FallDetectionCoordinator extends ChangeNotifier {
               generation: generation,
               completer: completer,
               words: result.recognizedWords.trim(),
-              isFinal: result.finalResult,
             ),
           );
         },
       );
+
+      // Wait until speech recognition ends, or the emergency intent is captured
+      while (_speech.isListening && _isResponseCurrent(generation) && !completer.isCompleted) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      
+      if (!completer.isCompleted) {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      }
+      
     } catch (e) {
       debugPrint('FallDetectionCoordinator listen failed: $e');
       _isListeningForVoice = false;
@@ -360,13 +370,14 @@ class FallDetectionCoordinator extends ChangeNotifier {
     }
 
     _VoiceIntent intent;
-    try {
-      intent = await completer.future.timeout(
-        const Duration(seconds: _responseTimeoutSeconds),
-        onTimeout: () => _VoiceIntent.timeout,
-      );
-    } catch (_) {
-      intent = _VoiceIntent.timeout;
+    if (completer.isCompleted) {
+      intent = await completer.future;
+    } else {
+      if (_heardVoicePreview.isEmpty) {
+        intent = _VoiceIntent.timeout;
+      } else {
+        intent = _VoiceIntent.fine;
+      }
     }
 
     try {
@@ -407,9 +418,13 @@ class FallDetectionCoordinator extends ChangeNotifier {
     required int generation,
     required Completer<_VoiceIntent> completer,
     required String words,
-    required bool isFinal,
   }) async {
-    if (!_isResponseCurrent(generation) || completer.isCompleted) return;
+    if (!_isResponseCurrent(generation) || completer.isCompleted) {
+      if (!_isResponseCurrent(generation) && _speech.isListening) {
+        unawaited(_speech.stop());
+      }
+      return;
+    }
     if (words.isEmpty) return;
 
     if (words != _heardVoicePreview) {
@@ -418,6 +433,8 @@ class FallDetectionCoordinator extends ChangeNotifier {
     }
 
     final analysis = await _emergencyAI.analyze(words);
+    if (!_isResponseCurrent(generation) || completer.isCompleted) return;
+
     _lastVoiceAnalysis = analysis;
     notifyListeners();
 
@@ -428,11 +445,6 @@ class FallDetectionCoordinator extends ChangeNotifier {
 
     if (analysis.isEmergency) {
       completer.complete(_VoiceIntent.help);
-      return;
-    }
-
-    if (isFinal) {
-      completer.complete(_VoiceIntent.fine);
     }
   }
 

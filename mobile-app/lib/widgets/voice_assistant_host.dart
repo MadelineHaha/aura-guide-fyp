@@ -74,6 +74,10 @@ class _VoiceAssistantHostState extends State<VoiceAssistantHost>
     _coordinator.setAppResumed(state == AppLifecycleState.resumed);
   }
 
+  bool _shouldShowConversationBox(bool voiceAssistantEnabled, bool voiceOnly) {
+    return voiceAssistantEnabled && voiceOnly;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!AppExperienceService.instance.isPatientExperience) {
@@ -82,7 +86,8 @@ class _VoiceAssistantHostState extends State<VoiceAssistantHost>
 
     final voiceAssistantEnabled = _settings.settings.voiceAssistantEnabled;
     final voiceOnly = _settings.settings.voiceOnlyModeEnabled;
-    final showAssistantBox = voiceAssistantEnabled;
+    final showAssistantBox =
+        _shouldShowConversationBox(voiceAssistantEnabled, voiceOnly);
     final blockTouches = voiceAssistantEnabled && voiceOnly;
 
     Widget content = widget.child;
@@ -93,11 +98,17 @@ class _VoiceAssistantHostState extends State<VoiceAssistantHost>
       );
     }
 
-    return Stack(
-      fit: StackFit.expand,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        content,
-        if (showAssistantBox) const _VoiceAssistantConversationBox(),
+        Expanded(child: content),
+        if (showAssistantBox)
+          AnimatedSize(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeInOut,
+            alignment: Alignment.topCenter,
+            child: const _VoiceAssistantConversationBox(),
+          ),
       ],
     );
   }
@@ -125,6 +136,12 @@ class _VoiceAssistantConversationBox extends StatelessWidget {
         assistantMessage = AppSettingsService.instance.localized(
           flow.statusKey,
         );
+      } else if (AppSettingsService.instance.isVoiceConversationEnabled) {
+        assistantMessage = AppSettingsService.instance.localized(
+          coordinator.isAwaitingCommand
+              ? 'voiceAssistantListening'
+              : 'voiceFlowMenuPrompt',
+        );
       }
     }
 
@@ -132,29 +149,29 @@ class _VoiceAssistantConversationBox extends StatelessWidget {
         ? 'welcomeVoiceTitle'
         : 'voiceAssistantSettingTitle';
 
-    return IgnorePointer(
-      child: Align(
-        alignment: Alignment.bottomCenter,
-        child: SafeArea(
-          minimum: const EdgeInsets.only(bottom: 12),
-          child: Material(
-            color: Colors.transparent,
-            child: Container(
-              width: MediaQuery.sizeOf(context).width - 24,
-              margin: const EdgeInsets.symmetric(horizontal: 12),
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.88),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: _accent.withValues(alpha: 0.6)),
-                boxShadow: [
-                  BoxShadow(
-                    color: _accent.withValues(alpha: 0.15),
-                    blurRadius: 18,
-                    spreadRadius: 1,
-                  ),
-                ],
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.88),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: _accent.withValues(alpha: 0.6)),
+            boxShadow: [
+              BoxShadow(
+                color: _accent.withValues(alpha: 0.15),
+                blurRadius: 18,
+                spreadRadius: 1,
               ),
+            ],
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 168),
+            child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,

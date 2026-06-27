@@ -13,7 +13,9 @@ import '../models/staff_option.dart';
 import '../utils/chat_date_grouping.dart';
 import '../utils/chat_time_format.dart';
 import '../utils/clinic_datetime.dart';
+import '../utils/localized_date_format.dart';
 import '../utils/localized_staff_name.dart';
+import '../utils/temporal_parser.dart';
 import 'app_settings_service.dart';
 import 'activity_log_actions.dart';
 import 'activity_log_service.dart';
@@ -48,6 +50,9 @@ class CommunicationService {
   static const auraGuideSystemId = 'system_aura_guide';
   static const auraGuideVirtualConversationId = 'sys_ag_virtual';
   static const _announcements = 'announcements';
+
+  /// Conversation currently open in the chat UI (null when inbox only).
+  static String? activeOpenConversationId;
 
   Future<String?> _patientUserId() async {
     final user = AuthSession.resolveUser() ?? _auth.currentUser;
@@ -456,6 +461,7 @@ class CommunicationService {
     required String patientId,
     required Map<String, Map<String, dynamic>> staffLookup,
     Map<String, dynamic>? latestMessage,
+    bool hasUnread = false,
   }) {
     final conversationId = conversation['conversationId'] as String;
     if (!_isValidConversationId(conversationId)) return null;
@@ -484,7 +490,7 @@ class CommunicationService {
         conversation['createdAt'];
     final lastMs = _timestampMs(ts);
 
-    var unread = conversation['patientUnread'] as bool? ?? false;
+    var unread = hasUnread || (conversation['patientUnread'] as bool? ?? false);
     if (!unread && latestMessage != null) {
       unread = latestMessage['receiverId'] == patientId &&
           (latestMessage['deliveryStatus'] as String).toLowerCase() != 'read';
@@ -522,6 +528,7 @@ class CommunicationService {
       conversationIds,
       patientId,
     );
+    final unreadFlags = await _unreadFlagsByConversation(patientId);
 
     final threads = <ConversationThread>[];
     for (final conversation in conversations) {
@@ -531,6 +538,7 @@ class CommunicationService {
         patientId: patientId,
         staffLookup: staffLookup,
         latestMessage: latestByConversation[conversationId],
+        hasUnread: unreadFlags[conversationId] ?? false,
       );
       if (thread != null) threads.add(thread);
     }
@@ -621,6 +629,14 @@ class CommunicationService {
                 .listen((_) => scheduleEmit(), onError: controller.addError),
           );
         }
+
+        subs.add(
+          _firestore
+              .collection(_messages)
+              .where('receiverId', isEqualTo: patientId)
+              .snapshots()
+              .listen((_) => scheduleEmit(), onError: controller.addError),
+        );
 
         controller.onCancel = () {
           debounce?.cancel();
@@ -913,6 +929,126 @@ class CommunicationService {
     return null;
   }
 
+  void setOpenConversation(String? conversationId) {
+    activeOpenConversationId = conversationId?.trim().isEmpty == true
+        ? null
+        : conversationId?.trim();
+  }
+
+  Future<Map<String, bool>> _unreadFlagsByConversation(String patientId) async {
+    final snap = await _firestore
+        .collection(_messages)
+        .where('receiverId', isEqualTo: patientId)
+        .get();
+
+    final flags = <String, bool>{};
+    for (final doc in snap.docs) {
+      final data = doc.data();
+      final status = (data['deliveryStatus'] as String?)?.toLowerCase() ?? '';
+      if (status == 'read') continue;
+      final conversationId = data['conversationId'] as String?;
+      if (conversationId != null && conversationId.isNotEmpty) {
+        flags[conversationId] = true;
+      }
+    }
+    return flags;
+  }
+
+  Future<List<MessageEntity>> fetchUnreadIncomingMessages({
+    required String conversationId,
+  }) async {
+    final patientId = await _patientUserId();
+    if (patientId == null) return const [];
+
+    final snap = await _firestore
+        .collection(_messages)
+        .where('conversationId', isEqualTo: conversationId.trim())
+        .get();
+
+    final unread = <MessageEntity>[];
+    for (final doc in snap.docs) {
+      final entity = _parseMessageDoc(doc);
+      if (entity == null) continue;
+      if (entity.receiverId != patientId) continue;
+      if (entity.deliveryStatus.toLowerCase() == 'read') continue;
+      unread.add(entity);
+    }
+
+    unread.sort((a, b) {
+      final aMs = _timestampMs(a.timestamp);
+      final bMs = _timestampMs(b.timestamp);
+      return aMs.compareTo(bMs);
+    });
+    return unread;
+  }
+
+  Future<List<MessageEntity>> searchMessagesForVoice({
+    required String conversationId,
+    required String query,
+    bool dateOnly = false,
+  }) async {
+    final patientId = await _patientUserId();
+    if (patientId == null) return const [];
+
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return const [];
+
+    final snap = await _firestore
+        .collection(_messages)
+        .where('conversationId', isEqualTo: conversationId.trim())
+        .get();
+
+    final matches = <MessageEntity>[];
+    for (final doc in snap.docs) {
+      final entity = _parseMessageDoc(doc);
+      if (entity == null) continue;
+
+      if (dateOnly) {
+        final date = TemporalParser.extractDate(trimmed);
+        if (date == null) continue;
+        final messageDate = ClinicDateTime.fromFirestore(entity.timestamp);
+        if (messageDate == null) continue;
+        if (messageDate.year == date.year &&
+            messageDate.month == date.month &&
+            messageDate.day == date.day) {
+          matches.add(entity);
+        }
+        continue;
+      }
+
+      final haystack = '${entity.content} ${entity.messageType}'.toLowerCase();
+      if (haystack.contains(trimmed.toLowerCase())) {
+        matches.add(entity);
+      }
+    }
+
+    matches.sort((a, b) {
+      final aMs = _timestampMs(a.timestamp);
+      final bMs = _timestampMs(b.timestamp);
+      return aMs.compareTo(bMs);
+    });
+    return matches;
+  }
+
+  String messageSpeechContent(MessageEntity message) {
+    final type = message.messageType.toLowerCase();
+    if (type == 'voice') return 'Voice message';
+    if (type == 'call') {
+      return message.content.trim().isEmpty ? 'Call' : message.content.trim();
+    }
+    return message.content.trim();
+  }
+
+  String messageTimeLabel(MessageEntity message) {
+    return ChatTimeFormat.listTime(message.timestamp);
+  }
+
+  String messageDateLabel(MessageEntity message) {
+    final date = ClinicDateTime.fromFirestore(message.timestamp);
+    if (date == null) return '';
+    return LocalizedDateFormat.spokenDate(date, AppSettingsService.instance.settings.languageCode);
+  }
+
   Future<void> markConversationRead({
     required String conversationId,
   }) async {
@@ -944,6 +1080,14 @@ class CommunicationService {
       if (count >= 400) break;
     }
     if (count > 0) await batch.commit();
+
+    await _firestore.collection(_conversations).doc(conversationId.trim()).set(
+      {
+        'patientUnread': false,
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
   }
 
   Future<String> ensureConversationWithStaff(String staffId) async {
@@ -1035,8 +1179,31 @@ class CommunicationService {
 
     final ref = _firestore.collection(_messages).doc(message.messageId);
     await ref.set(message.toFirestoreMap(useServerTimestamp: true));
+    unawaited(
+      _touchPatientUnreadIfNeeded(
+        conversationId: message.conversationId,
+        receiverId: message.receiverId,
+      ),
+    );
     _clearThreadStreamCaches();
     return message.messageId;
+  }
+
+  Future<void> _touchPatientUnreadIfNeeded({
+    required String conversationId,
+    required String receiverId,
+  }) async {
+    final patientId = await _patientUserId();
+    if (patientId == null || receiverId != patientId) return;
+    if (activeOpenConversationId == conversationId.trim()) return;
+
+    await _firestore.collection(_conversations).doc(conversationId.trim()).set(
+      {
+        'patientUnread': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
   }
 
   Future<String> sendTextMessage({

@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'app_route_observer.dart';
 import 'chat_page.dart';
 import 'l10n/app_localizations.dart';
 import 'models/conversation_thread.dart';
 import 'models/staff_option.dart';
 import 'services/communication_service.dart';
 import 'services/patient_call_session.dart';
+import 'services/voice_assistant_coordinator.dart';
 import 'widgets/grouped_conversation_list_view.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
@@ -18,9 +20,10 @@ class CommunicationPage extends StatefulWidget {
   State<CommunicationPage> createState() => _CommunicationPageState();
 }
 
-class _CommunicationPageState extends State<CommunicationPage> {
+class _CommunicationPageState extends State<CommunicationPage> with RouteAware {
   static const Color _bg = Color(0xFF000000);
   final _service = CommunicationService();
+
   /// 0 = Messages, 1 = Calls, 2 = Archived.
   int _view = 0;
   List<StaffOption> _staff = [];
@@ -30,6 +33,30 @@ class _CommunicationPageState extends State<CommunicationPage> {
   void initState() {
     super.initState();
     _loadStaff();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      VoiceAssistantCoordinator.instance.setTopRouteLabel('CommunicationPage');
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPopNext() {
+    VoiceAssistantCoordinator.instance.setTopRouteLabel('CommunicationPage');
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
   }
 
   Future<void> _loadStaff() async {
@@ -65,8 +92,9 @@ class _CommunicationPageState extends State<CommunicationPage> {
 
   Future<void> _openChatWithStaff(StaffOption staff) async {
     try {
-      final conversationId =
-          await _service.ensureConversationWithStaff(staff.staffId);
+      final conversationId = await _service.ensureConversationWithStaff(
+        staff.staffId,
+      );
       if (!mounted) return;
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
@@ -80,9 +108,9 @@ class _CommunicationPageState extends State<CommunicationPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not start chat: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not start chat: $e')));
     }
   }
 
@@ -95,9 +123,9 @@ class _CommunicationPageState extends State<CommunicationPage> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_voiceCallErrorMessage(error))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_voiceCallErrorMessage(error))));
     }
   }
 
@@ -245,20 +273,16 @@ class _CommunicationPageState extends State<CommunicationPage> {
               const SizedBox(height: 12),
               Expanded(
                 child: switch (_view) {
-                  0 => _MessagesTab(
-                      service: _service,
-                      onOpenChat: _openChat,
-                    ),
+                  0 => _MessagesTab(service: _service, onOpenChat: _openChat),
                   1 => _CallsTab(
-                      loading: _loadingStaff,
-                      staff: _staff,
-                      onCall: _onCallStaff,
-                    ),
+                    loading: _loadingStaff,
+                    staff: _staff,
+                    onCall: _onCallStaff,
+                  ),
                   _ => _ArchivedTab(
-                      service: _service,
-                      onOpenChat: (thread) =>
-                          _openChat(thread, isArchived: true),
-                    ),
+                    service: _service,
+                    onOpenChat: (thread) => _openChat(thread, isArchived: true),
+                  ),
                 },
               ),
             ],
@@ -279,10 +303,7 @@ class _CommunicationPageState extends State<CommunicationPage> {
 }
 
 class _SegmentedTabs extends StatelessWidget {
-  const _SegmentedTabs({
-    required this.selectedIndex,
-    required this.onChanged,
-  });
+  const _SegmentedTabs({required this.selectedIndex, required this.onChanged});
 
   /// 0 = Messages, 1 = Calls, null = neither (Archived view).
   final int? selectedIndex;
@@ -323,10 +344,7 @@ class _SegmentedTabs extends StatelessWidget {
 }
 
 class _ArchivedNavButton extends StatelessWidget {
-  const _ArchivedNavButton({
-    required this.selected,
-    required this.onTap,
-  });
+  const _ArchivedNavButton({required this.selected, required this.onTap});
 
   final bool selected;
   final VoidCallback onTap;
@@ -420,10 +438,7 @@ class _TabButton extends StatelessWidget {
 }
 
 class _MessagesTab extends StatefulWidget {
-  const _MessagesTab({
-    required this.service,
-    required this.onOpenChat,
-  });
+  const _MessagesTab({required this.service, required this.onOpenChat});
 
   final CommunicationService service;
   final ValueChanged<ConversationThread> onOpenChat;
@@ -455,9 +470,8 @@ class _MessagesTabState extends State<_MessagesTab> {
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: Text(
-                'Could not load messages.\n${snapshot.error}\n\n'
-                'Check users/{authUid}.userId matches a conversations '
-                'participant (e.g. U00003) and redeploy firestore rules.',
+                'Could not load messages right now.\n'
+                'Please try again later or contact your healthcare staff.',
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: _subtext, height: 1.4),
               ),
@@ -468,12 +482,10 @@ class _MessagesTabState extends State<_MessagesTab> {
         final threads = snapshot.data ?? const [];
         final waiting =
             snapshot.connectionState == ConnectionState.waiting &&
-                threads.isEmpty;
+            threads.isEmpty;
 
         if (waiting) {
-          return const Center(
-            child: CircularProgressIndicator(color: _accent),
-          );
+          return const Center(child: CircularProgressIndicator(color: _accent));
         }
 
         if (threads.isEmpty) {
@@ -497,10 +509,7 @@ class _MessagesTabState extends State<_MessagesTab> {
 }
 
 class _ArchivedTab extends StatefulWidget {
-  const _ArchivedTab({
-    required this.service,
-    required this.onOpenChat,
-  });
+  const _ArchivedTab({required this.service, required this.onOpenChat});
 
   final CommunicationService service;
   final ValueChanged<ConversationThread> onOpenChat;
@@ -543,12 +552,10 @@ class _ArchivedTabState extends State<_ArchivedTab> {
         final threads = snapshot.data ?? const [];
         final waiting =
             snapshot.connectionState == ConnectionState.waiting &&
-                threads.isEmpty;
+            threads.isEmpty;
 
         if (waiting) {
-          return const Center(
-            child: CircularProgressIndicator(color: _accent),
-          );
+          return const Center(child: CircularProgressIndicator(color: _accent));
         }
 
         if (threads.isEmpty) {
@@ -646,7 +653,6 @@ class _ThreadCard extends StatelessWidget {
 
   static const Color _card = Color(0xFF1A1A1A);
   static const Color _subtext = Color(0xFFB0B0B0);
-  static const Color _accent = Color(0xFF63C3C4);
 
   @override
   Widget build(BuildContext context) {
@@ -667,65 +673,68 @@ class _ThreadCard extends StatelessWidget {
             child: Row(
               children: [
                 _ThreadAvatar(thread: thread),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            thread.title,
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight:
-                                  thread.unread ? FontWeight.w800 : FontWeight.bold,
-                              fontSize: 16,
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              thread.title,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: thread.unread
+                                    ? FontWeight.w800
+                                    : FontWeight.bold,
+                                fontSize: 16,
+                              ),
                             ),
                           ),
-                        ),
-                        Text(
-                          thread.timeLabel,
-                          style: TextStyle(
-                            color: thread.unread ? Colors.white70 : _subtext,
-                            fontSize: 13,
-                            fontWeight:
-                                thread.unread ? FontWeight.w600 : FontWeight.normal,
+                          Text(
+                            thread.timeLabel,
+                            style: TextStyle(
+                              color: thread.unread ? Colors.white70 : _subtext,
+                              fontSize: 13,
+                              fontWeight: thread.unread
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      thread.preview,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: thread.unread ? Colors.white : _subtext,
-                        fontSize: 14,
-                        fontWeight:
-                            thread.unread ? FontWeight.w600 : FontWeight.normal,
+                        ],
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              if (thread.unread) ...[
-                const SizedBox(width: 8),
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: const BoxDecoration(
-                    color: _accent,
-                    shape: BoxShape.circle,
+                      const SizedBox(height: 6),
+                      Text(
+                        thread.preview,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: thread.unread ? Colors.white : _subtext,
+                          fontSize: 14,
+                          fontWeight: thread.unread
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
+                if (thread.unread) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF2196F3),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }

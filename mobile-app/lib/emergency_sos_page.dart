@@ -9,14 +9,16 @@ import 'services/device_permissions_service.dart';
 import 'services/emergency_alert_service.dart';
 import 'services/emergency_alert_sound_service.dart';
 import 'services/emergency_ai_service.dart';
+import 'services/voice_assistant_coordinator.dart';
 import 'l10n/app_localizations.dart';
-import 'utils/accessibility_announcement.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
 
-
 class EmergencySosPage extends StatefulWidget {
-  const EmergencySosPage({super.key});
+  const EmergencySosPage({super.key, this.voiceTriggered = false});
+
+  /// When true, skip idle help listening and start the 5-second alert countdown.
+  final bool voiceTriggered;
 
   @override
   State<EmergencySosPage> createState() => _EmergencySosPageState();
@@ -30,6 +32,14 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
   static const Color _sosSentGreen = Color(0xFF2ECC71);
   static const Color _gpsCard = Color(0xFF1A1A1A);
   static const int _countdownStart = 5;
+
+  /// Quiet window for the user to say "cancel" between countdown beeps.
+  static const Duration _tickListenWindow = Duration(milliseconds: 2000);
+
+  /// Time to wait after a beep before resuming the microphone.
+  static const Duration _beepTailDelay = Duration(milliseconds: 450);
+
+  bool _countdownListenPaused = false;
 
   String _l10n(String key, [Map<String, Object?> params = const {}]) =>
       AppSettingsService.instance.localized(key, params);
@@ -48,21 +58,23 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
   int _countdownGeneration = 0;
   bool _checkingActiveAlert = true;
   bool _pageInitialized = false;
+  bool _speechReady = false;
   EmergencyAlertEntity? _activeAlert;
   String? _locationLine;
-  DateTime? _lastCancelTapAt;
 
   @override
   void initState() {
     super.initState();
+    VoiceAssistantCoordinator.instance.acquireMicLock();
     unawaited(_initializePage());
   }
 
   @override
   void dispose() {
-    _cancelCountdown();
+    _cancelCountdown(notify: false);
     _activeAlertSub?.cancel();
     _speech.stop();
+    VoiceAssistantCoordinator.instance.releaseMicLock();
     unawaited(EmergencyAlertSoundService.instance.dispose());
     super.dispose();
   }
@@ -85,8 +97,13 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
         _sosActive = false;
         _locationLine = null;
       });
-      unawaited(_startVoiceListen());
-      _startCountdown();
+      if (widget.voiceTriggered) {
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+        if (!mounted) return;
+        _startCountdown();
+      } else {
+        _startCountdown();
+      }
     }
 
     setState(() {
@@ -94,8 +111,9 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
       _pageInitialized = true;
     });
 
-    _activeAlertSub ??=
-        _alertService.watchActiveForCurrentPatient().listen(_onActiveAlert);
+    _activeAlertSub ??= _alertService.watchActiveForCurrentPatient().listen(
+      _onActiveAlert,
+    );
   }
 
   void _applyActiveAlert(EmergencyAlertEntity alert) {
@@ -139,18 +157,183 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
         !_submitting;
   }
 
+  bool get _isVoiceOnlyEmergencyUi =>
+      AppSettingsService.instance.isVoiceConversationEnabled;
+
+  String _countdownIntroKey() => _isVoiceOnlyEmergencyUi
+      ? 'sosCountdownIntroVoice'
+      : 'sosCountdownIntroTouch';
+
+  String _countdownTickKey() => _isVoiceOnlyEmergencyUi
+      ? 'sosCountdownTickVoice'
+      : 'sosCountdownTickTouch';
+
+  String _openingMessageKey() => _isVoiceOnlyEmergencyUi
+      ? 'sosOpeningMessageVoice'
+      : 'sosOpeningMessageTouch';
+
+  String _cancelA11yKey() => _isVoiceOnlyEmergencyUi
+      ? 'sosCancelA11yLabelVoice'
+      : 'sosCancelA11yLabelTouch';
+
+  bool _matchesCancelPhrase(String text) {
+    final normalized = text
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s\u4e00-\u9fff]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (normalized.isEmpty) return false;
+    const phrases = [
+      'cancel',
+      'stop',
+      'abort',
+      'never mind',
+      'no',
+      'batal',
+      'henti',
+      '取消',
+      '不要',
+      '停止',
+      '撤销',
+    ];
+    return phrases.any(
+      (phrase) => normalized == phrase || normalized.contains(phrase),
+    );
+  }
+
   Future<void> _announceCountdownIntro(int generation) async {
     if (!_isCountdownActive(generation)) return;
 
-    await AppSettingsService.instance.stopSpeaking();
-    unawaited(AppSettingsService.instance.speak(_l10n('sosCountdownIntro')));
+    final intro = _l10n(_countdownIntroKey());
+    await AppSettingsService.instance.speakEmergencyAndAwait(intro);
+  }
+
+  Future<void> _pauseCountdownListen() async {
+    _countdownListenPaused = true;
+    if (_speech.isListening) {
+      try {
+        await _speech.stop();
+      } catch (_) {}
+    }
+  }
+
+  void _resumeCountdownListen() {
+    _countdownListenPaused = false;
+  }
+
+  void _stopCountdownVoiceListen() {
+    _countdownListenPaused = true;
+    unawaited(_speech.stop());
+  }
+
+  Future<void> _listenForCountdownCancel(int generation) async {
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+
+    while (_isCountdownActive(generation) && mounted) {
+      while (_countdownListenPaused &&
+          _isCountdownActive(generation) &&
+          mounted) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      if (!_isCountdownActive(generation) || !mounted) return;
+
+      final micGranted = await DevicePermissionsService.instance
+          .ensureMicrophone();
+      final speechGranted = await DevicePermissionsService.instance
+          .ensureSpeechRecognition();
+      if (!micGranted ||
+          !speechGranted ||
+          !_isCountdownActive(generation) ||
+          !mounted) {
+        return;
+      }
+
+      if (!_speechReady) {
+        _speechReady = await _speech.initialize(
+          onError: (error) {
+            debugPrint('EmergencySosPage STT error: $error');
+          },
+        );
+        if (!_speechReady) return;
+      }
+
+      if (mounted) {
+        setState(() => _listening = true);
+      }
+
+      var heardCancel = false;
+
+      try {
+        await _speech.listen(
+          listenFor: const Duration(seconds: 12),
+          pauseFor: const Duration(seconds: 5),
+          localeId: await _resolveListenLocale(),
+          listenOptions: SpeechListenOptions(
+            partialResults: true,
+            cancelOnError: false,
+            listenMode: ListenMode.dictation,
+          ),
+          onResult: (result) {
+            if (_countdownListenPaused) return;
+            final words = result.recognizedWords.trim();
+            if (words.isEmpty || !_matchesCancelPhrase(words)) return;
+            heardCancel = true;
+            unawaited(_speech.stop());
+          },
+        );
+
+        while (_speech.isListening &&
+            _isCountdownActive(generation) &&
+            !heardCancel &&
+            mounted) {
+          if (_countdownListenPaused) {
+            try {
+              await _speech.stop();
+            } catch (_) {}
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+      } catch (error) {
+        debugPrint('EmergencySosPage cancel listen failed: $error');
+      }
+
+      if (heardCancel && _countdownRunning) {
+        if (mounted) setState(() => _listening = false);
+        await _onCancelCountdown();
+        return;
+      }
+
+      if (!_isCountdownActive(generation) || !mounted) {
+        if (mounted) setState(() => _listening = false);
+        return;
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+    }
+
+    if (mounted) setState(() => _listening = false);
+  }
+
+  Future<String?> _resolveListenLocale() async {
+    final lang = AppSettingsService.instance.settings.languageCode;
+    final preferred = switch (lang) {
+      'ms' => 'ms_MY',
+      'zh' => 'zh_CN',
+      _ => 'en_US',
+    };
+    final locales = await _speech.locales();
+    if (locales.any((locale) => locale.localeId == preferred)) {
+      return preferred;
+    }
+    return locales.isNotEmpty ? locales.first.localeId : null;
   }
 
   Future<void> _speakToUser(String message) async {
     if (!mounted || message.trim().isEmpty) return;
 
     await AppSettingsService.instance.stopSpeaking();
-    await AppSettingsService.instance.speakAndAwaitCompletion(message);
+    await AppSettingsService.instance.speakEmergencyAndAwait(message);
   }
 
   void _announceToUser(String message) {
@@ -162,7 +345,11 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
 
     setState(() => _countdownSeconds = seconds);
     await WidgetsBinding.instance.endOfFrame;
-    await EmergencyAlertSoundService.instance.playCountdownAlert();
+
+    await _pauseCountdownListen();
+    await EmergencyAlertSoundService.instance.playCountdownAlert(soft: true);
+    await Future<void>.delayed(_beepTailDelay);
+    _resumeCountdownListen();
   }
 
   void _startCountdown() {
@@ -174,11 +361,13 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
       return;
     }
 
-    _speech.stop();
     unawaited(AppSettingsService.instance.stopSpeaking());
     final generation = ++_countdownGeneration;
     unawaited(_runCountdownLoop(generation));
   }
+
+  /// Duration of the voice-cancel window after the intro speech.
+  static const int _cancelWindowSeconds = 5;
 
   Future<void> _runCountdownLoop(int generation) async {
     if (!_isCountdownActive(generation)) return;
@@ -186,24 +375,39 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
     setState(() {
       _listening = false;
       _countdownRunning = true;
-      _countdownSeconds = _countdownStart;
+      _countdownSeconds = null;
+      _countdownListenPaused = false;
     });
 
     await EmergencyAlertSoundService.instance.prepare();
 
-    unawaited(_announceCountdownIntro(generation));
+    // ── Phase 1: Speak warning, then listen for "cancel" for 5 seconds ──
+    await _announceCountdownIntro(generation);
     if (!_isCountdownActive(generation)) return;
 
+    // Listen for 5 seconds — if user says "cancel", abort the alert
+    final cancelled = await _listenForCancelWindow(generation);
+    if (!_isCountdownActive(generation)) return;
+
+    if (cancelled) {
+      await _onCancelCountdown();
+      return;
+    }
+
+    // ── Phase 2: Loud beeping countdown 5→1, then send alert ──
     for (var seconds = _countdownStart; seconds >= 1; seconds--) {
       if (!_isCountdownActive(generation)) return;
 
-      await _playCountdownTick(generation, seconds);
+      // Loud beep (soft: false) + show number
+      setState(() => _countdownSeconds = seconds);
+      await WidgetsBinding.instance.endOfFrame;
+
+      await EmergencyAlertSoundService.instance.playCountdownAlert(soft: false);
       if (!_isCountdownActive(generation)) return;
 
+      // Wait 1 second per tick
       await Future<void>.delayed(const Duration(seconds: 1));
     }
-
-    if (!_isCountdownActive(generation)) return;
 
     setState(() {
       _countdownSeconds = null;
@@ -212,46 +416,111 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
     await _triggerSos(announceSent: true);
   }
 
-  void _cancelCountdown() {
+  /// Listens for [_cancelWindowSeconds] seconds. Returns true if "cancel" was heard.
+  Future<bool> _listenForCancelWindow(int generation) async {
+    if (!_isCountdownActive(generation) || !mounted) return false;
+
+    final micGranted = await DevicePermissionsService.instance
+        .ensureMicrophone();
+    final speechGranted = await DevicePermissionsService.instance
+        .ensureSpeechRecognition();
+    if (!micGranted || !speechGranted || !_isCountdownActive(generation)) {
+      return false;
+    }
+
+    if (!_speechReady) {
+      _speechReady = await _speech.initialize(
+        onError: (error) {
+          debugPrint('EmergencySosPage STT error: $error');
+        },
+      );
+      if (!_speechReady) return false;
+    }
+
+    if (mounted) setState(() => _listening = true);
+
+    var heardCancel = false;
+
+    try {
+      await _speech.listen(
+        listenFor: Duration(seconds: _cancelWindowSeconds + 2),
+        pauseFor: Duration(seconds: _cancelWindowSeconds + 1),
+        localeId: await _resolveListenLocale(),
+        listenOptions: SpeechListenOptions(
+          partialResults: true,
+          cancelOnError: false,
+          listenMode: ListenMode.dictation,
+        ),
+        onResult: (result) {
+          final words = result.recognizedWords.trim();
+          if (words.isEmpty) return;
+          if (_matchesCancelPhrase(words)) {
+            heardCancel = true;
+            unawaited(_speech.stop());
+          }
+        },
+      );
+
+      // Wait for the cancel window duration or until cancel is heard
+      final deadline = DateTime.now().add(
+        Duration(seconds: _cancelWindowSeconds),
+      );
+      while (DateTime.now().isBefore(deadline) &&
+          !heardCancel &&
+          _isCountdownActive(generation) &&
+          mounted) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+
+      // Stop listening regardless
+      try {
+        await _speech.stop();
+      } catch (_) {}
+    } catch (error) {
+      debugPrint('EmergencySosPage cancel window listen failed: $error');
+    }
+
+    if (mounted) setState(() => _listening = false);
+    return heardCancel;
+  }
+
+  void _cancelCountdown({bool notify = true}) {
     _countdownGeneration++;
     _countdownRunning = false;
+    _countdownListenPaused = false;
+    _stopCountdownVoiceListen();
     unawaited(AppSettingsService.instance.stopSpeaking());
     unawaited(EmergencyAlertSoundService.instance.stop());
+    if (!notify || !mounted) return;
     if (_countdownSeconds != null) {
       setState(() => _countdownSeconds = null);
-    } else if (mounted) {
+    } else {
       setState(() {});
     }
   }
 
-  void _onCancelCountdown() {
+  Future<void> _onCancelCountdown() async {
     if (!_countdownRunning) return;
     _countdownCancelled = true;
     _cancelCountdown();
     unawaited(_speech.stop());
     if (!mounted) return;
+    // Announce cancellation to the user via voice
+    await _speakToUser(_l10n('sosCountdownStopped'));
+    if (!mounted) return;
     Navigator.of(context).pop();
+    unawaited(VoiceAssistantCoordinator.instance.promptMainMenuAfterReturn());
   }
 
   void _handleCancelAttempt() {
     if (!_countdownRunning) return;
-
-    final now = DateTime.now();
-    if (_lastCancelTapAt != null &&
-        now.difference(_lastCancelTapAt!) <= const Duration(milliseconds: 650)) {
-      _lastCancelTapAt = null;
-      _onCancelCountdown();
-      return;
-    }
-
-    _lastCancelTapAt = now;
-    unawaited(AccessibilityAnnouncement.announce(_l10n('sosCancelTapAgain')));
+    unawaited(_onCancelCountdown());
   }
 
   Future<void> _startVoiceListen() async {
     if (_sosActive || _countdownRunning) return;
-    final micGranted =
-        await DevicePermissionsService.instance.ensureMicrophone();
+    final micGranted = await DevicePermissionsService.instance
+        .ensureMicrophone();
     if (!micGranted || !mounted) return;
     final available = await _speech.initialize(
       onStatus: (status) {
@@ -284,7 +553,6 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
   }
 
   Future<void> _listenForHelpPhrase() async {
-
     if (!mounted ||
         _sosActive ||
         _submitting ||
@@ -298,11 +566,8 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
     await _speech.listen(
       listenFor: const Duration(seconds: 10),
       pauseFor: const Duration(seconds: 3),
-      listenOptions: SpeechListenOptions(
-        partialResults: false,
-      ),
+      listenOptions: SpeechListenOptions(partialResults: false),
       onResult: (result) async {
-
         if (!result.finalResult) return;
 
         final words = result.recognizedWords.trim();
@@ -312,23 +577,16 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
         print("User said: $words");
 
         try {
-
-          final prediction =
-          await _emergencyAI.classify(words);
+          final prediction = await _emergencyAI.classify(words);
 
           print("AI Prediction: $prediction");
 
           if (prediction == "EMERGENCY") {
-
             _cancelCountdown();
             _countdownCancelled = true;
 
-            await _triggerSos(
-              fromVoice: true,
-            );
-
+            await _triggerSos(fromVoice: true);
           } else {
-
             _cancelCountdown();
 
             setState(() {
@@ -338,16 +596,11 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
             _announceToUser(_l10n('sosEmergencyVoiceCancelled'));
 
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(_l10n('sosEmergencyCancelledSnackbar')),
-              ),
+              SnackBar(content: Text(_l10n('sosEmergencyCancelledSnackbar'))),
             );
           }
-
         } catch (e) {
-
           print(e);
-
         }
       },
     );
@@ -379,17 +632,17 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
       });
 
       if (announceSent || fromVoice) {
-        _announceToUser(_l10n('sosAlertSentVoice'));
+        // Wait for the announcement to finish before navigating back
+        await AppSettingsService.instance.speakEmergencyAndAwait(
+          _l10n('sosAlertSentVoice'),
+        );
       }
 
-      final createdNow = alert.alertId;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _l10n('sosSentSnackbar', {'id': createdNow}),
-          ),
-        ),
-      );
+      if (!mounted) return;
+
+      // Navigate back to main menu after alert is sent
+      Navigator.of(context).pop();
+      unawaited(VoiceAssistantCoordinator.instance.promptMainMenuAfterReturn());
     } catch (e) {
       if (!mounted) return;
       _announceToUser(_l10n('couldNotSendEmergencyAlert', {'error': '$e'}));
@@ -416,15 +669,15 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
       return _l10n('sosStaffNotified');
     }
     if (_countdownRunning && _countdownSeconds == null) {
-      return _l10n('sosCountdownIntro');
+      return _l10n(_countdownIntroKey());
     }
     if (_countdownSeconds != null) {
-      return _l10n('sosCountdownTick', {'seconds': '$_countdownSeconds'});
+      return _l10n(_countdownTickKey(), {'seconds': '$_countdownSeconds'});
     }
     if (_countdownCancelled) {
       return _l10n('sosCountdownStopped');
     }
-    return _l10n('sosOpeningMessage');
+    return _l10n(_openingMessageKey());
   }
 
   String get _sentAccessibilityLabel {
@@ -436,8 +689,8 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
         : ' ${_l10n('gpsBeingShared')}';
     final statusPart =
         _activeAlert?.status == EmergencyAlertEntity.statusResponded
-            ? ' ${_l10n('sosStaffResponding')}'
-            : ' ${_l10n('sosStaffNotified')}';
+        ? ' ${_l10n('sosStaffResponding')}'
+        : ' ${_l10n('sosStaffNotified')}';
     return _l10n('sosSentA11y', {
       'idPart': idPart,
       'statusPart': statusPart,
@@ -488,300 +741,303 @@ class _EmergencySosPageState extends State<EmergencySosPage> {
     return PopScope(
       canPop: !countdownActive,
       child: Scaffold(
-      backgroundColor: _bg,
-      appBar: AppBar(
         backgroundColor: _bg,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        automaticallyImplyLeading: false,
-        leadingWidth: AppBackButton.appBarLeadingWidth,
-        leading: countdownActive
-            ? const SizedBox.shrink()
-            : const AppBackButton(),
-        title: ExcludeSemantics(
-          excluding: countdownActive,
-          child: Text(
-            context.l10n.t('emergencySos'),
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+        appBar: AppBar(
+          backgroundColor: _bg,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          automaticallyImplyLeading: false,
+          leadingWidth: AppBackButton.appBarLeadingWidth,
+          leading: countdownActive
+              ? const SizedBox.shrink()
+              : const AppBackButton(),
+          title: ExcludeSemantics(
+            excluding: countdownActive,
+            child: Text(
+              context.l10n.t('emergencySos'),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+            ),
           ),
+          centerTitle: true,
+          bottom: countdownActive
+              ? PreferredSize(
+                  preferredSize: Size.fromHeight(
+                    _countdownSeconds == null ? 52 : 44,
+                  ),
+                  child: ExcludeSemantics(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+                      child: Text(
+                        _instructionText,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.92),
+                          fontSize: _countdownSeconds == null ? 15 : 14,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              : null,
         ),
-        centerTitle: true,
-        bottom: countdownActive
-            ? PreferredSize(
-                preferredSize: Size.fromHeight(
-                  _countdownSeconds == null ? 52 : 44,
-                ),
-                child: ExcludeSemantics(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              children: [
+                const SizedBox(height: 8),
+                if (!countdownActive && !_sosActive)
+                  AccessibleFocusRegion(
+                    label: _instructionText,
                     child: Text(
                       _instructionText,
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.92),
-                        fontSize: _countdownSeconds == null ? 15 : 14,
-                        height: 1.35,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        height: 1.4,
                       ),
                     ),
                   ),
-                ),
-              )
-            : null,
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Column(
-            children: [
-              const SizedBox(height: 8),
-              if (!countdownActive && !_sosActive)
-                AccessibleFocusRegion(
-                  label: _instructionText,
-                  child: Text(
-                    _instructionText,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-              if (_sosActive && !countdownActive) ...[
-                AccessibleFocusRegion(
-                  label: _sentAccessibilityLabel,
-                  child: Column(
-                    children: [
-                      Text(
-                        _instructionText,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
-                          height: 1.3,
-                        ),
-                      ),
-                      if (_activeAlert != null) ...[
-                        const SizedBox(height: 6),
+                if (_sosActive && !countdownActive) ...[
+                  AccessibleFocusRegion(
+                    label: _sentAccessibilityLabel,
+                    child: Column(
+                      children: [
                         Text(
-                          _activeAlert!.alertId,
+                          _instructionText,
                           textAlign: TextAlign.center,
                           style: const TextStyle(
-                            color: _accent,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                            height: 1.3,
+                          ),
+                        ),
+                        if (_activeAlert != null) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            _activeAlert!.alertId,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: _accent,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+                const Spacer(flex: 2),
+                ExcludeSemantics(
+                  excluding: countdownActive,
+                  child: AnimatedScale(
+                    scale: countdownActive ? 1.04 : 1.0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Container(
+                      width: 220,
+                      height: 220,
+                      decoration: BoxDecoration(
+                        color: circleColor,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: circleColor.withValues(
+                              alpha: countdownActive ? 0.6 : 0.45,
+                            ),
+                            blurRadius: countdownActive ? 32 : 16,
+                            spreadRadius: countdownActive ? 6 : 0,
+                          ),
+                        ],
+                      ),
+                      child: _submitting
+                          ? const Center(
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                              ),
+                            )
+                          : Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                if (showingNumber) ...[
+                                  Text(
+                                    '$_countdownSeconds',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 72,
+                                      height: 1,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    _l10n('sosSending'),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 16,
+                                      letterSpacing: 1,
+                                    ),
+                                  ),
+                                ] else if (countdownActive &&
+                                    !showingNumber) ...[
+                                  const Icon(
+                                    Icons.notifications_active_outlined,
+                                    color: Colors.white,
+                                    size: 52,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    _l10n('sosLabelSpaced'),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 44,
+                                      letterSpacing: 2,
+                                      height: 1,
+                                    ),
+                                  ),
+                                ] else if (_sosActive) ...[
+                                  const Icon(
+                                    Icons.check_circle_outline,
+                                    color: Colors.white,
+                                    size: 52,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    _l10n('sosSent'),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 26,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ] else ...[
+                                  const Icon(
+                                    Icons.notifications_active_outlined,
+                                    color: Colors.white,
+                                    size: 52,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    _l10n('sosLabelSpaced'),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 44,
+                                      letterSpacing: 2,
+                                      height: 1,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                    ),
+                  ),
+                ),
+                if (countdownActive) ...[
+                  const SizedBox(height: 20),
+                  Semantics(
+                    button: true,
+                    label: _l10n(_cancelA11yKey()),
+                    excludeSemantics: true,
+                    onTap: _handleCancelAttempt,
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: _handleCancelAttempt,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: Colors.white54),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Text(
+                          context.l10n.t('cancel'),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                const Spacer(flex: 2),
+                ExcludeSemantics(
+                  excluding: countdownActive,
+                  child: Column(
+                    children: [
+                      if (!_sosActive) ...[
+                        Text(
+                          context.l10n.t('locationSharingAuto'),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                      ],
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _gpsCard,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFF333333)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.location_on_outlined,
+                              color: _accent,
+                              size: 28,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                _locationCardText,
+                                style: const TextStyle(
+                                  color: _subtext,
+                                  fontSize: 14,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_listening && !_sosActive && !_submitting) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          countdownActive
+                              ? _l10n(_cancelA11yKey())
+                              : context.l10n.t('listeningForHelpMe'),
+                          style: TextStyle(
+                            color: _accent.withValues(alpha: 0.9),
+                            fontSize: 13,
                           ),
                         ),
                       ],
                     ],
                   ),
                 ),
+                const SizedBox(height: 24),
               ],
-              const Spacer(flex: 2),
-              ExcludeSemantics(
-                excluding: countdownActive,
-                child: AnimatedScale(
-                scale: countdownActive ? 1.04 : 1.0,
-                duration: const Duration(milliseconds: 200),
-                child: Container(
-                  width: 220,
-                  height: 220,
-                  decoration: BoxDecoration(
-                    color: circleColor,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: circleColor.withValues(
-                          alpha: countdownActive ? 0.6 : 0.45,
-                        ),
-                        blurRadius: countdownActive ? 32 : 16,
-                        spreadRadius: countdownActive ? 6 : 0,
-                      ),
-                    ],
-                  ),
-                  child: _submitting
-                      ? const Center(
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                          ),
-                        )
-                      : Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            if (showingNumber) ...[
-                              Text(
-                                '$_countdownSeconds',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 72,
-                                  height: 1,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                _l10n('sosSending'),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 16,
-                                  letterSpacing: 1,
-                                ),
-                              ),
-                            ] else if (countdownActive && !showingNumber) ...[
-                              const Icon(
-                                Icons.notifications_active_outlined,
-                                color: Colors.white,
-                                size: 52,
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                _l10n('sosLabelSpaced'),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 44,
-                                  letterSpacing: 2,
-                                  height: 1,
-                                ),
-                              ),
-                            ] else if (_sosActive) ...[
-                              const Icon(
-                                Icons.check_circle_outline,
-                                color: Colors.white,
-                                size: 52,
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                _l10n('sosSent'),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 26,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ] else ...[
-                              const Icon(
-                                Icons.notifications_active_outlined,
-                                color: Colors.white,
-                                size: 52,
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                _l10n('sosLabelSpaced'),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 44,
-                                  letterSpacing: 2,
-                                  height: 1,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                ),
-              ),
-              ),
-              if (countdownActive) ...[
-                const SizedBox(height: 20),
-                Semantics(
-                  button: true,
-                  label: _l10n('sosCancelA11yLabel'),
-                  excludeSemantics: true,
-                  onTap: _handleCancelAttempt,
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      onPressed: _handleCancelAttempt,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        side: const BorderSide(color: Colors.white54),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: Text(
-                        context.l10n.t('cancel'),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-              const Spacer(flex: 2),
-              ExcludeSemantics(
-                excluding: countdownActive,
-                child: Column(
-                  children: [
-              if (!_sosActive) ...[
-                Text(
-                  context.l10n.t('locationSharingAuto'),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 20),
-              ],
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 14,
-                ),
-                decoration: BoxDecoration(
-                  color: _gpsCard,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFF333333)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.location_on_outlined,
-                      color: _accent,
-                      size: 28,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        _locationCardText,
-                        style: const TextStyle(
-                          color: _subtext,
-                          fontSize: 14,
-                          height: 1.35,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (_listening && !_sosActive && !_submitting && !countdownActive) ...[
-                const SizedBox(height: 12),
-                Text(
-                  context.l10n.t('listeningForHelpMe'),
-                  style: TextStyle(
-                    color: _accent.withValues(alpha: 0.9),
-                    fontSize: 13,
-                  ),
-                ),
-              ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-            ],
+            ),
           ),
         ),
       ),
-    ),
     );
   }
 }

@@ -22,7 +22,7 @@ class NavigationVoiceService {
     if (_initialized) return;
     try {
       await _tts.setLanguage(_ttsLanguageCode());
-      await _tts.setSpeechRate(0.48);
+      await _tts.setSpeechRate(AppSettingsService.calmSpeechRate);
       await _tts.setVolume(1.0);
       await _tts.awaitSpeakCompletion(false);
       _initialized = true;

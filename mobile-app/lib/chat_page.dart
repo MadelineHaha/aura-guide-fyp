@@ -31,6 +31,7 @@ class ChatPage extends StatefulWidget {
     required this.staffId,
     required this.isAuraGuide,
     this.isArchived = false,
+    this.deferMarkReadForVoice = false,
   });
 
   final String conversationId;
@@ -38,6 +39,7 @@ class ChatPage extends StatefulWidget {
   final String staffId;
   final bool isAuraGuide;
   final bool isArchived;
+  final bool deferMarkReadForVoice;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -77,7 +79,10 @@ class _ChatPageState extends State<ChatPage> {
     super.initState();
     _isArchived = widget.isArchived;
     _fieldSpeech.addListener(_onFieldSpeechChanged);
-    _service.markConversationRead(conversationId: widget.conversationId);
+    CommunicationService.activeOpenConversationId = widget.conversationId;
+    if (!widget.deferMarkReadForVoice) {
+      _service.markConversationRead(conversationId: widget.conversationId);
+    }
     unawaited(_bootstrapCallHandling());
   }
 
@@ -91,6 +96,9 @@ class _ChatPageState extends State<ChatPage> {
     _controller.dispose();
     _searchController.dispose();
     _scrollController.dispose();
+    if (CommunicationService.activeOpenConversationId == widget.conversationId) {
+      CommunicationService.activeOpenConversationId = null;
+    }
     super.dispose();
   }
 

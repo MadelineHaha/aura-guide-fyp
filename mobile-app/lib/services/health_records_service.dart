@@ -3,7 +3,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../auth_session.dart';
 import '../models/health_record_item.dart';
+import '../utils/clinic_datetime.dart';
+import '../utils/localized_date_format.dart';
 import '../utils/localized_staff_name.dart';
+import '../utils/voice_option_parser.dart';
 import 'app_settings_service.dart';
 import 'healthcare_staff_service.dart';
 import 'user_profile_service.dart';
@@ -104,6 +107,9 @@ class HealthRecordsService {
       filePath: (data['filePath'] as String?)?.trim() ?? '',
       hasInlineFile: hasInlineFile || fileStorage.toLowerCase() == 'firestore',
       userId: userId,
+      uploadedAt: ClinicDateTime.fromFirestore(
+        data['createdAt'] ?? data['uploadedAt'],
+      ),
     );
   }
 
@@ -280,4 +286,231 @@ class HealthRecordsService {
       }
     });
   }
+
+  static bool isUploadedToday(HealthRecordItem record) {
+    final uploadedAt = record.uploadedAt;
+    if (uploadedAt != null) {
+      final now = ClinicDateTime.nowClinic();
+      return uploadedAt.year == now.year &&
+          uploadedAt.month == now.month &&
+          uploadedAt.day == now.day;
+    }
+
+    final created = record.dateCreated.trim();
+    if (created.isEmpty || created == '—') return false;
+
+    final isoMatch = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(created);
+    if (isoMatch != null) {
+      final now = ClinicDateTime.nowClinic();
+      final year = int.tryParse(isoMatch.group(1)!);
+      final month = int.tryParse(isoMatch.group(2)!);
+      final day = int.tryParse(isoMatch.group(3)!);
+      if (year == null || month == null || day == null) return false;
+      return year == now.year && month == now.month && day == now.day;
+    }
+
+    return created.toLowerCase().contains(
+      ClinicDateTime.nowClinic().day.toString(),
+    );
+  }
+
+  static List<HealthRecordItem> recordsUploadedToday(
+    List<HealthRecordItem> records,
+  ) {
+    return records.where(isUploadedToday).toList();
+  }
+
+  static List<HealthRecordItem> recordsUploadedBeforeToday(
+    List<HealthRecordItem> records,
+  ) {
+    return records.where((record) => !isUploadedToday(record)).toList();
+  }
+
+  static String buildVoiceIntro(
+    List<HealthRecordItem> records,
+    String Function(String key, [Map<String, Object?> params]) l10n,
+  ) {
+    if (records.isEmpty) {
+      return l10n('voiceHealthRecordsEmpty');
+    }
+
+    final todayCount = recordsUploadedToday(records).length;
+    return l10n('voiceHealthRecordsIntro', {'count': todayCount});
+  }
+
+  static String buildRecordsListSpeech(
+    List<HealthRecordItem> records,
+    String Function(String key, [Map<String, Object?> params]) l10n,
+    String languageCode,
+  ) {
+    if (records.isEmpty) {
+      return l10n('voiceHealthRecordsListEmpty');
+    }
+
+    final parts = <String>[];
+    for (var i = 0; i < records.length; i++) {
+      parts.add(_formatVoiceListEntry(records[i], i, l10n, languageCode));
+    }
+    return parts.join(', ');
+  }
+
+  static HealthRecordsVoiceChoice? parseVoiceChoice(String speech) {
+    final option = VoiceOptionParser.extractOptionNumber(speech, 2);
+    if (option == 1) return HealthRecordsVoiceChoice.today;
+    if (option == 2) return HealthRecordsVoiceChoice.other;
+
+    final normalized = _normalizeSpeech(speech);
+    if (normalized.isEmpty) return null;
+
+    const todayPhrases = [
+      'today',
+      'todays',
+      'today s',
+      'today records',
+      'today health records',
+      'hear today',
+      'today only',
+      'uploaded today',
+      'hari ini',
+      '今天',
+      '今日',
+      '今天的记录',
+    ];
+    const otherPhrases = [
+      'other',
+      'other records',
+      'other health records',
+      'listen to other',
+      'hear other',
+      'the rest',
+      'previous records',
+      'older records',
+      'not today',
+      'lain',
+      'rekod lain',
+      '其他',
+      '其他记录',
+    ];
+
+    if (otherPhrases.any(normalized.contains)) {
+      return HealthRecordsVoiceChoice.other;
+    }
+    if (todayPhrases.any(normalized.contains)) {
+      return HealthRecordsVoiceChoice.today;
+    }
+    return null;
+  }
+
+  static String _formatVoiceListEntry(
+    HealthRecordItem record,
+    int index,
+    String Function(String key, [Map<String, Object?> params]) l10n,
+    String languageCode,
+  ) {
+    final ordinal = _ordinalLabel(index, l10n);
+    final title = _voiceTitle(record);
+    final staff = record.doctorName.trim().isEmpty
+        ? l10n('voiceHealthRecordsUnknownStaff')
+        : record.doctorName;
+    final date = _voiceDate(record, languageCode);
+    final time = _voiceTime(record, languageCode);
+
+    if (time.isEmpty) {
+      return l10n('voiceHealthRecordsListEntryDateOnly', {
+        'ordinal': ordinal,
+        'title': title,
+        'staff': staff,
+        'date': date,
+      });
+    }
+
+    return l10n('voiceHealthRecordsListEntry', {
+      'ordinal': ordinal,
+      'title': title,
+      'staff': staff,
+      'date': date,
+      'time': time,
+    });
+  }
+
+  static String _voiceTitle(HealthRecordItem record) {
+    final type = record.recordType.trim();
+    if (type.isNotEmpty && type != '—' && type.toLowerCase() != 'health record') {
+      return type;
+    }
+    final summary = record.summary.trim();
+    if (summary.isNotEmpty && summary != '—') return summary;
+    return type.isNotEmpty ? type : 'Health record';
+  }
+
+  static String _voiceDate(HealthRecordItem record, String languageCode) {
+    final uploadedAt = record.uploadedAt;
+    if (uploadedAt != null) {
+      return LocalizedDateFormat.spokenDate(uploadedAt, languageCode);
+    }
+    final created = record.dateCreated.trim();
+    return created.isEmpty || created == '—'
+        ? LocalizedDateFormat.spokenDate(
+            ClinicDateTime.nowClinic(),
+            languageCode,
+          )
+        : created;
+  }
+
+  static String _voiceTime(HealthRecordItem record, String languageCode) {
+    final uploadedAt = record.uploadedAt;
+    if (uploadedAt == null) return '';
+
+    final hour = uploadedAt.hour;
+    final minute = uploadedAt.minute.toString().padLeft(2, '0');
+    switch (languageCode) {
+      case 'zh':
+        final period = hour >= 12 ? '下午' : '上午';
+        final hour12 = hour % 12 == 0 ? 12 : hour % 12;
+        return '$period$hour12点$minute分';
+      case 'ms':
+        final period = hour >= 12 ? 'PTG' : 'PG';
+        final hour12 = hour % 12 == 0 ? 12 : hour % 12;
+        return '$hour12:$minute $period';
+      default:
+        final period = hour >= 12 ? 'PM' : 'AM';
+        final hour12 = hour % 12 == 0 ? 12 : hour % 12;
+        return '$hour12:$minute $period';
+    }
+  }
+
+  static String _ordinalLabel(
+    int index,
+    String Function(String key, [Map<String, Object?> params]) l10n,
+  ) {
+    const keys = [
+      'voiceHealthRecordsOrdinalFirst',
+      'voiceHealthRecordsOrdinalSecond',
+      'voiceHealthRecordsOrdinalThird',
+      'voiceHealthRecordsOrdinalFourth',
+      'voiceHealthRecordsOrdinalFifth',
+      'voiceHealthRecordsOrdinalSixth',
+      'voiceHealthRecordsOrdinalSeventh',
+      'voiceHealthRecordsOrdinalEighth',
+      'voiceHealthRecordsOrdinalNinth',
+      'voiceHealthRecordsOrdinalTenth',
+    ];
+    if (index >= 0 && index < keys.length) {
+      return l10n(keys[index]);
+    }
+    return l10n('voiceHealthRecordsOrdinalNumber', {'n': index + 1});
+  }
+
+  static String _normalizeSpeech(String text) {
+    return text
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+}
+
+enum HealthRecordsVoiceChoice {
+  today,
+  other,
 }
