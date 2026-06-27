@@ -28,12 +28,19 @@ class EmergencyAlertSoundService {
     await _ensureToneAsset();
   }
 
-  Future<void> playCountdownAlert() async {
-    await HapticFeedback.heavyImpact();
+  Future<void> playCountdownAlert({bool soft = false}) async {
+    if (soft) {
+      await HapticFeedback.mediumImpact();
+    } else {
+      await HapticFeedback.heavyImpact();
+    }
 
     if (!kIsWeb && Platform.isAndroid) {
       try {
-        await _channel.invokeMethod<void>('playAlertBeep');
+        await _channel.invokeMethod<void>(
+          'playAlertBeep',
+          <String, dynamic>{'soft': soft},
+        );
         return;
       } catch (e) {
         if (kDebugMode) {
@@ -46,7 +53,7 @@ class EmergencyAlertSoundService {
       await _ensureAudioContext();
       final file = await _ensureToneAsset();
       await _player.stop();
-      await _player.setVolume(1.0);
+      await _player.setVolume(soft ? 0.55 : 1.0);
       await _player.setPlayerMode(PlayerMode.mediaPlayer);
       await _player.setReleaseMode(ReleaseMode.stop);
       await _player.play(DeviceFileSource(file.path));
@@ -98,16 +105,23 @@ class EmergencyAlertSoundService {
   Future<void> stop() async {
     if (!kIsWeb && Platform.isAndroid) {
       try {
-        await _channel.invokeMethod<void>('release');
+        await _channel.invokeMethod<void>('stopAlertBeep');
       } catch (_) {
-        // Ignore release errors.
+        // Ignore stop errors when nothing is playing.
       }
     }
     await _player.stop();
   }
 
   Future<void> dispose() async {
-    await stop();
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        await _channel.invokeMethod<void>('release');
+      } catch (_) {
+        // Ignore release errors.
+      }
+    }
+    await _player.stop();
     await _player.dispose();
   }
 }

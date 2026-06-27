@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import 'app_route_observer.dart';
 import 'book_appointment_page.dart';
 import 'l10n/app_localizations.dart';
 import 'models/appointment_item.dart';
 import 'reschedule_appointment_page.dart';
 import 'services/appointments_service.dart';
+import 'services/voice_assistant_coordinator.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
 
@@ -15,7 +19,7 @@ class AppointmentsPage extends StatefulWidget {
   State<AppointmentsPage> createState() => _AppointmentsPageState();
 }
 
-class _AppointmentsPageState extends State<AppointmentsPage> {
+class _AppointmentsPageState extends State<AppointmentsPage> with RouteAware {
   static const Color _bg = Color(0xFF000000);
   static const Color _accent = Color(0xFF63C3C4);
   static const Color _cancelRed = Color(0xFFE85C5C);
@@ -30,6 +34,31 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
   void initState() {
     super.initState();
     _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      VoiceAssistantCoordinator.instance.setTopRouteLabel('AppointmentsPage');
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPopNext() {
+    VoiceAssistantCoordinator.instance.setTopRouteLabel('AppointmentsPage');
+    unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
   }
 
   Future<void> _load() async {

@@ -5,6 +5,7 @@ import 'l10n/app_localizations.dart';
 import 'login_page.dart';
 import 'pin_onboarding_page.dart';
 import 'register_page.dart';
+import 'services/app_settings_service.dart';
 import 'services/voice_flow_coordinator.dart';
 import 'widgets/accessible_focus_region.dart';
 
@@ -25,7 +26,9 @@ class _StartPageState extends State<StartPage> with RouteAware {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      VoiceFlowCoordinator.instance.startWelcomeFlow();
+      if (AppSettingsService.instance.isVoiceConversationEnabled) {
+        VoiceFlowCoordinator.instance.startWelcomeFlow();
+      }
     });
   }
 
@@ -47,7 +50,9 @@ class _StartPageState extends State<StartPage> with RouteAware {
 
   @override
   void didPopNext() {
-    VoiceFlowCoordinator.instance.startWelcomeFlow();
+    if (AppSettingsService.instance.isVoiceConversationEnabled) {
+      VoiceFlowCoordinator.instance.startWelcomeFlow();
+    }
   }
 
   @override

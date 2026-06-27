@@ -5,8 +5,10 @@ import 'package:flutter/foundation.dart';
 
 import '../models/book_appointment_session.dart';
 import 'app_experience_service.dart';
+import 'app_settings_service.dart';
 import 'voice_assistant_coordinator.dart';
 import 'voice_flows/book_appointment_voice_flow.dart';
+import 'voice_flows/settings_voice_flow.dart';
 import 'voice_flows/welcome_voice_flow.dart';
 
 /// Runs multi-step voice dialogues on top of the wake-word assistant.
@@ -28,6 +30,7 @@ class VoiceFlowCoordinator extends ChangeNotifier {
     final loggedIn = FirebaseAuth.instance.currentUser != null;
     if (loggedIn && !AppExperienceService.instance.isPatientExperience) return;
     if (_welcomeActive || _active) return;
+    if (!AppSettingsService.instance.isVoiceConversationEnabled) return;
 
     final generation = ++_welcomeGeneration;
     _welcomeActive = true;
@@ -78,9 +81,18 @@ class VoiceFlowCoordinator extends ChangeNotifier {
     notifyListeners();
   }
 
+  void cancelActiveFlow() {
+    if (_welcomeActive) {
+      cancelWelcomeFlow();
+      return;
+    }
+    cancelBookFlow();
+  }
+
   Future<void> startBookAppointmentFlow() async {
     if (!AppExperienceService.instance.isPatientExperience) return;
     if (_active) return;
+    if (!AppSettingsService.instance.isVoiceConversationEnabled) return;
 
     _active = true;
     _statusKey = 'voiceFlowBookingInProgress';
@@ -99,6 +111,34 @@ class VoiceFlowCoordinator extends ChangeNotifier {
       } else {
         debugPrint('VoiceFlowCoordinator book flow failed: $error\n$stack');
         await assistant.speakPrompt('voiceFlowBookingFailed');
+      }
+    } finally {
+      assistant.releaseMicLock();
+      _active = false;
+      _statusKey = '';
+      notifyListeners();
+      assistant.resumeAfterVoiceFlow();
+    }
+  }
+
+  Future<void> startSettingsFlow({bool openPage = false}) async {
+    if (!AppExperienceService.instance.isPatientExperience) return;
+    if (_active || _welcomeActive) return;
+    if (!AppSettingsService.instance.isVoiceConversationEnabled) return;
+
+    _active = true;
+    _statusKey = 'voiceFlowSettingsInProgress';
+    notifyListeners();
+
+    final assistant = VoiceAssistantCoordinator.instance;
+    assistant.acquireMicLock();
+
+    try {
+      await SettingsVoiceFlow().run(openSettingsPage: openPage);
+    } catch (error, stack) {
+      if (error is! VoiceFlowCancelledException) {
+        debugPrint('VoiceFlowCoordinator settings flow failed: $error\n$stack');
+        await assistant.speakPrompt('voiceSettingsFailed');
       }
     } finally {
       assistant.releaseMicLock();

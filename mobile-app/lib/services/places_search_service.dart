@@ -31,6 +31,7 @@ class PlacesSearchService {
     required String query,
     double? originLat,
     double? originLng,
+    bool mergeOnlineResults = false,
   }) async {
     final trimmed = query.trim();
     if (trimmed.isEmpty) return const [];
@@ -76,15 +77,18 @@ class PlacesSearchService {
       addResult(item, requireKeywordMatch: true);
     }
 
-    // 2) Online search only when nothing local matched.
-    if (results.isEmpty) {
+    // 2) Online search when nothing local matched, or when merging branch results.
+    if (results.isEmpty || mergeOnlineResults) {
       final remoteDestinations = await _searchOnline(
         trimmed,
         originLat: originLat,
         originLng: originLng,
       );
       for (final item in remoteDestinations) {
-        addResult(item, requireKeywordMatch: false);
+        addResult(
+          item,
+          requireKeywordMatch: mergeOnlineResults,
+        );
       }
     }
 

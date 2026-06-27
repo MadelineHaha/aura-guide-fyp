@@ -39,6 +39,67 @@ class PlaceSearchMatcher {
         compactQuery == 'yourlocation';
   }
 
+  /// Saved-home navigation intent (not the app main menu).
+  static bool isGoHomeNavigationQuery(String query) {
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+
+    const phrases = <String>[
+      'go home',
+      'go to home',
+      'navigate home',
+      'navigate to home',
+      'take me home',
+      'drive home',
+      'my home',
+      'home address',
+      'back home',
+      'pulang rumah',
+      'ke rumah',
+      '回家',
+      '回屋',
+    ];
+    for (final phrase in phrases) {
+      if (normalized == phrase || normalized.contains(phrase)) {
+        return true;
+      }
+    }
+
+    return normalized == 'rumah' || normalized == 'home';
+  }
+
+  /// Saved-work navigation intent.
+  static bool isGoWorkNavigationQuery(String query) {
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+
+    const phrases = <String>[
+      'go to work',
+      'go work',
+      'navigate to work',
+      'navigate work',
+      'take me to work',
+      'drive to work',
+      'my office',
+      'work address',
+      'to the office',
+      'to my office',
+      'tempat kerja',
+      'ke pejabat',
+      'pejabat saya',
+      '去上班',
+      '去工作',
+      '上班',
+    ];
+    for (final phrase in phrases) {
+      if (normalized == phrase || normalized.contains(phrase)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   static bool matches({
     required String query,
     required NavDestination destination,

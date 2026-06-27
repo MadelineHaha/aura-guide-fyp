@@ -10,6 +10,7 @@ class HealthRecordItem {
     required this.filePath,
     required this.hasInlineFile,
     required this.userId,
+    this.uploadedAt,
   });
 
   final String recordId;
@@ -24,4 +25,6 @@ class HealthRecordItem {
   final String filePath;
   final bool hasInlineFile;
   final String userId;
+  /// Upload instant in clinic-local time when available.
+  final DateTime? uploadedAt;
 }

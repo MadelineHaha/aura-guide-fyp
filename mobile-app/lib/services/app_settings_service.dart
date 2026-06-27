@@ -96,6 +96,17 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
 
   static final AppSettingsService instance = AppSettingsService._();
 
+  /// Slower, clearer speech for the voice assistant and in-app prompts.
+  static const double assistantSpeechRate = 0.40;
+
+  /// Slightly slower speech for navigation and obstacle alerts.
+  static const double calmSpeechRate = 0.42;
+
+  /// Clear, steady speech for emergency SOS countdown and alert prompts.
+  static const double emergencySpeechRate = 0.72;
+  static const double emergencyPitch = 1.05;
+  static const double emergencyVolume = 1.0;
+
   static const _fontKey = 'settings_font_scale';
   static const _notificationsKey = 'settings_notifications';
   static const _fallDetectionKey = 'settings_fall_detection';
@@ -274,15 +285,6 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
     );
     notifyListeners();
     await _persist();
-    if (value) {
-      await speakAndAwaitCompletion(
-        localized('voiceOnlyModeEnabledAnnouncement'),
-      );
-    } else {
-      await speakAndAwaitCompletion(
-        localized('voiceOnlyModeDisabledAnnouncement'),
-      );
-    }
   }
 
   Future<void> setLanguageCode(String code) async {
@@ -304,6 +306,10 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
 
   String get languageLabel =>
       AppSettings.languages[_settings.languageCode] ?? 'English';
+
+  /// Conversation box and assistant TTS are shown only in voice-only mode.
+  bool get isVoiceConversationEnabled =>
+      _settings.voiceAssistantEnabled && _settings.voiceOnlyModeEnabled;
 
   String localized(String key, [Map<String, Object?> params = const {}]) {
     return AppLocalizations(_settings.languageCode).t(key, params);
@@ -351,6 +357,9 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
     await _ensureTtsReady();
     if (_activeSpeakToken != token) return;
 
+    await _prepareAssistantVoice();
+    if (_activeSpeakToken != token) return;
+
     await _tts.stop();
     if (_activeSpeakToken != token) return;
 
@@ -365,6 +374,73 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// Faster localized speech for emergency SOS countdown and alerts.
+  Future<void> speakEmergency(String text) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+
+    final token = Object();
+    _activeSpeakToken = token;
+
+    await _ensureTtsReady();
+    if (_activeSpeakToken != token) return;
+
+    await _prepareEmergencyVoice();
+    if (_activeSpeakToken != token) return;
+
+    await _tts.stop();
+    if (_activeSpeakToken != token) return;
+
+    await _tts.awaitSpeakCompletion(true);
+    if (_activeSpeakToken != token) return;
+    _lastSpokenText = trimmed;
+    _lastSpeakStartedAt = DateTime.now();
+    isSpeakingNotifier.value = true;
+    if (!kIsWeb && Platform.isAndroid) {
+      await _tts.speak(trimmed, focus: true);
+    } else {
+      await _tts.speak(trimmed);
+    }
+    if (_activeSpeakToken == token) {
+      isSpeakingNotifier.value = false;
+    }
+  }
+
+  /// Faster localized emergency speech; waits until playback finishes.
+  Future<void> speakEmergencyAndAwait(String text) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+
+    final token = Object();
+    _activeSpeakToken = token;
+
+    await _ensureTtsReady();
+    if (_activeSpeakToken != token) return;
+
+    await _prepareEmergencyVoice();
+    if (_activeSpeakToken != token) return;
+
+    await _tts.stop();
+    if (_activeSpeakToken != token) return;
+
+    await _tts.awaitSpeakCompletion(true);
+    if (_activeSpeakToken != token) return;
+    _lastSpokenText = trimmed;
+    _lastSpeakStartedAt = DateTime.now();
+    isSpeakingNotifier.value = true;
+    if (!kIsWeb && Platform.isAndroid) {
+      await _tts.speak(trimmed, focus: true);
+    } else {
+      await _tts.speak(trimmed);
+    }
+    if (_activeSpeakToken != token) return;
+
+    await _tts.awaitSpeakCompletion(true);
+    if (_activeSpeakToken == token) {
+      isSpeakingNotifier.value = false;
+    }
+  }
+
   /// Normal-speed speech using the device default TTS engine (e.g. Google TTS).
   Future<void> speakSystemVoice(String text) async {
     await _speakWithSystemVoice(text, speechRate: 1.0);
@@ -372,7 +448,7 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Slower, clearer speech for navigation obstacle alerts.
   Future<void> speakCalmSystemVoice(String text) async {
-    await _speakWithSystemVoice(text, speechRate: 0.50);
+    await _speakWithSystemVoice(text, speechRate: calmSpeechRate);
   }
 
   Future<void> _speakWithSystemVoice(
@@ -493,6 +569,9 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
     await _ensureTtsReady();
     if (_activeSpeakToken != token) return;
 
+    await _prepareAssistantVoice();
+    if (_activeSpeakToken != token) return;
+
     await _tts.stop();
     if (_activeSpeakToken != token) return;
 
@@ -575,10 +654,23 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _ensureTtsReady() async {
     if (_ttsReady) return;
     await _tts.awaitSpeakCompletion(true);
-    await _tts.setSpeechRate(0.48);
+    await _tts.setSpeechRate(assistantSpeechRate);
     await _tts.setPitch(1.0);
     await _applyTtsLanguage();
     _ttsReady = true;
+  }
+
+  Future<void> _prepareAssistantVoice() async {
+    await _tts.setSpeechRate(assistantSpeechRate);
+    await _tts.setPitch(1.0);
+    await _applyTtsLanguage();
+  }
+
+  Future<void> _prepareEmergencyVoice() async {
+    await _tts.setSpeechRate(emergencySpeechRate);
+    await _tts.setPitch(emergencyPitch);
+    await _tts.setVolume(emergencyVolume);
+    await _applyTtsLanguage();
   }
 
   Future<void> _configureSystemVoice({double speechRate = 1.0}) async {
@@ -621,7 +713,7 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
       // Optional on some platforms.
     }
 
-    const locales = ['en-US', 'en-GB', 'en-AU', 'en'];
+    const locales = ['en-SG', 'en-MY', 'en-US', 'en-AU', 'en-GB', 'en'];
     for (final locale in locales) {
       try {
         final available = await _tts.isLanguageAvailable(locale);
@@ -720,9 +812,11 @@ class AppSettingsService extends ChangeNotifier with WidgetsBindingObserver {
 
   int _englishVoiceScore(String locale, String name) {
     var score = 0;
+    if (locale == 'en-sg') score += 110;
+    if (locale == 'en-my') score += 105;
     if (locale == 'en-us') score += 100;
-    if (locale == 'en-gb') score += 80;
-    if (locale == 'en-au') score += 60;
+    if (locale == 'en-au') score += 70;
+    if (locale == 'en-gb') score += 50;
     if (locale.startsWith('en')) score += 40;
     if (name.contains('en-us')) score += 20;
     if (name.contains('local')) score += 10;

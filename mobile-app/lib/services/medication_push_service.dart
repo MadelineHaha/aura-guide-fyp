@@ -504,6 +504,7 @@ class MedicationPushService {
       }
 
       final route = MaterialPageRoute<void>(
+        settings: const RouteSettings(name: 'MedicationsPage'),
         builder: (_) => MedicationsPage(highlightReminderId: reminderId),
       );
       navigator.push(route);

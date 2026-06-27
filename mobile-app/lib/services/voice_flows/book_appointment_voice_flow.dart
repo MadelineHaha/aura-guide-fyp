@@ -5,9 +5,14 @@ import '../../book_appointment_page.dart';
 import '../../models/book_appointment_session.dart';
 import '../../models/bookable_slot.dart';
 import '../../models/staff_option.dart';
+import '../../utils/appointment_types.dart';
 import '../../utils/appointment_time_slots.dart';
+import '../../utils/temporal_parser.dart';
+import '../../utils/voice_option_parser.dart';
 import '../app_settings_service.dart';
 import '../voice_assistant_coordinator.dart';
+
+enum _ModifyPart { role, staff, session, date, time, cancel }
 
 /// Multi-step spoken dialogue for booking an appointment.
 class BookAppointmentVoiceFlow {
@@ -23,54 +28,284 @@ class BookAppointmentVoiceFlow {
 
   Future<void> run() async {
     try {
-      await session.selectSession(await _askSessionType());
-      await session.selectRole(await _askRole());
-      await session.selectStaff(await _askStaff());
-      final date = await _askDate();
-      await session.selectDate(date);
-      session.selectSlot(await _askSlot());
-      final confirmed = await _assistant.confirmPrompt(
-        'voiceFlowBookConfirm',
-        params: {
-          'type': session.sessionTitleForKey(
-            session.sessionKey ?? 'general',
-            _l10n,
-          ),
-          'staff': session.selectedStaff?.displayName ?? '',
-          'date': _formatDate(session.selectedDate!),
-          'time': AppointmentTimeSlots.formatTimeLabel(
-            session.selectedSlot!.dateTime,
-          ),
-        },
-      );
-      if (!confirmed) {
-        await _assistant.speakPrompt('voiceFlowBookingCancelled');
-        return;
-      }
+      await _ensureBookingDetails();
 
-      final success = await session.submitBooking(
-        session.sessionTitleForKey(session.sessionKey ?? 'general', _l10n),
-      );
-      if (success) {
-        await _assistant.speakPrompt('voiceFlowBookingSuccess');
-        rootNavigatorKey.currentState?.pop(true);
-      } else {
-        await _assistant.speakPrompt('voiceFlowBookingFailed');
+      while (true) {
+        final confirmed = await _confirmBooking();
+        if (confirmed == true) {
+          await _submitBooking();
+          return;
+        }
+        if (confirmed == false) {
+          final part = await _askModifyPart();
+          if (part == _ModifyPart.cancel) {
+            await _assistant.speakPrompt('voiceFlowBookingCancelled');
+            rootNavigatorKey.currentState?.pop();
+            return;
+          }
+          if (part != null) {
+            await _applyModification(part);
+          }
+          continue;
+        }
       }
+    } on VoiceFlowNavigationException {
+      // Navigation already handled (e.g. user said "go back").
     } on VoiceFlowCancelledException {
       await _assistant.speakPrompt('voiceFlowBookingCancelled');
       rootNavigatorKey.currentState?.pop();
     }
   }
 
-  Future<String> _askSessionType() async {
-    String promptKey = 'voiceFlowAskSessionType';
+  Future<void> _ensureBookingDetails() async {
+    if (session.roleKey == null) {
+      await session.selectRole(await _askRole());
+    }
+    if (session.selectedStaff == null) {
+      await session.selectStaff(await _askStaff());
+    }
+    if (session.sessionKey == null) {
+      await session.selectSession(await _askSessionType());
+    }
+    if (session.selectedDate == null) {
+      await session.selectDate(await _askDate());
+    }
+    if (session.selectedSlot == null) {
+      session.selectSlot(await _askSlot());
+    }
+  }
+
+  Future<void> _submitBooking() async {
+    final success = await session.submitBooking(
+      session.sessionCanonicalTypeForKey(
+        session.sessionKey ?? AppointmentTypes.doctorOptions.first.key,
+      ),
+    );
+    if (success) {
+      await _assistant.speakPrompt('voiceFlowBookingSuccess');
+      rootNavigatorKey.currentState?.pop(true);
+    } else {
+      await _assistant.speakPrompt('voiceFlowBookingFailed');
+    }
+  }
+
+  Map<String, Object?> _confirmParams() {
+    return {
+      'type': session.sessionTitleForKey(
+        session.sessionKey ?? AppointmentTypes.doctorOptions.first.key,
+        _l10n,
+      ),
+      'staff': session.selectedStaff?.displayName ?? '',
+      'date': _formatDate(session.selectedDate!),
+      'time': AppointmentTimeSlots.formatTimeLabel(
+        session.selectedSlot!.dateTime,
+      ),
+    };
+  }
+
+  Future<bool?> _confirmBooking() async {
+    while (true) {
+      final answer = await _assistant.promptAndListen(
+        'voiceFlowBookConfirm',
+        params: _confirmParams(),
+      );
+      if (_isAffirmative(answer)) return true;
+      if (_isNegative(answer)) return false;
+      await _assistant.speakPrompt('voiceFlowBookConfirmRetry');
+    }
+  }
+
+  Future<_ModifyPart?> _askModifyPart() async {
+    String promptKey = 'voiceFlowBookModifyAsk';
     while (true) {
       final answer = await _assistant.promptAndListen(promptKey);
-      final parsed = _parseSessionType(answer);
+      final parsed = _parseModifyPart(answer);
       if (parsed != null) return parsed;
-      promptKey = 'voiceFlowSessionTypeRetry';
+      promptKey = 'voiceFlowBookModifyRetry';
     }
+  }
+
+  Future<void> _applyModification(_ModifyPart part) async {
+    switch (part) {
+      case _ModifyPart.role:
+        session.prepareVoiceModifyRole();
+        await session.selectRole(await _askRole());
+        await session.selectStaff(await _askStaff());
+        await session.selectSession(await _askSessionType());
+        await session.selectDate(await _askDate());
+        session.selectSlot(await _askSlot());
+      case _ModifyPart.staff:
+        session.prepareVoiceModifyStaff();
+        if (session.roleKey != null) {
+          await session.loadStaffForRole(session.roleKey!);
+        }
+        await session.selectStaff(await _askStaff());
+        await session.selectDate(await _askDate());
+        session.selectSlot(await _askSlot());
+      case _ModifyPart.session:
+        session.prepareVoiceModifySession();
+        await session.selectSession(await _askSessionType());
+        await session.selectDate(await _askDate());
+        session.selectSlot(await _askSlot());
+      case _ModifyPart.date:
+        session.prepareVoiceModifyDate();
+        await session.selectDate(await _askDate());
+        session.selectSlot(await _askSlot());
+      case _ModifyPart.time:
+        session.prepareVoiceModifyTime();
+        session.selectSlot(await _askSlot());
+      case _ModifyPart.cancel:
+        break;
+    }
+  }
+
+  _ModifyPart? _parseModifyPart(String? answer) {
+    final raw = (answer ?? '').trim();
+    if (raw.isEmpty) return null;
+
+    const parts = [
+      _ModifyPart.role,
+      _ModifyPart.staff,
+      _ModifyPart.session,
+      _ModifyPart.date,
+      _ModifyPart.time,
+      _ModifyPart.cancel,
+    ];
+    final byOption = VoiceOptionParser.selectByOptionIndex(parts, raw);
+    if (byOption != null) return byOption;
+
+    final text = VoiceAssistantCoordinator.normalizeSpeech(raw);
+
+    if (_containsAny(raw, const ['取消', 'batal']) ||
+        _containsAny(text, const ['cancel', 'stop', 'quit', 'never mind', 'abort'])) {
+      return _ModifyPart.cancel;
+    }
+    if (_containsAny(raw, const ['类型', '会话']) ||
+        _containsAny(text, const ['session type', 'session', 'appointment type', 'type'])) {
+      return _ModifyPart.session;
+    }
+    if (_containsAny(raw, const ['职员', '人员', '医护']) ||
+        _containsAny(text, const ['staff', 'provider', 'doctor name', 'therapist name'])) {
+      return _ModifyPart.staff;
+    }
+    if (_containsAny(raw, const ['时间', '时段']) ||
+        _containsAny(text, const ['time', 'slot', 'hour'])) {
+      return _ModifyPart.time;
+    }
+    if (_containsAny(raw, const ['日期', '日子']) ||
+        _containsAny(text, const ['date', 'day'])) {
+      return _ModifyPart.date;
+    }
+    if (_containsAny(raw, const ['角色', '医生', '治疗师']) ||
+        _containsAny(text, const ['role', 'doctor', 'therapist', 'specialist'])) {
+      return _ModifyPart.role;
+    }
+    return null;
+  }
+
+  bool _isAffirmative(String? answer) {
+    final raw = (answer ?? '').trim();
+    if (raw.isEmpty) return false;
+    if (_containsAny(raw, const ['是', '好', '确认', '对', '可以'])) return true;
+    final text = VoiceAssistantCoordinator.normalizeSpeech(raw);
+    return _containsAny(
+      text,
+      const ['yes', 'yeah', 'yep', 'confirm', 'book', 'ok', 'okay', 'ya', 'sure'],
+    );
+  }
+
+  bool _isNegative(String? answer) {
+    final raw = (answer ?? '').trim();
+    if (raw.isEmpty) return false;
+    if (_containsAny(raw, const ['不', '否', '不要', '不是', 'tidak'])) return true;
+    final text = VoiceAssistantCoordinator.normalizeSpeech(raw);
+    return _containsAny(
+      text,
+      const ['no', 'nope', 'change', 'modify', 'edit', 'wrong', 'not'],
+    );
+  }
+
+  Future<String> _askSessionType() async {
+    final options = BookAppointmentSession.sessionOptionsForRole(session.roleKey);
+    final labels = options.map((option) => _l10n(option.titleKey)).toList();
+    final optionsText = _numberedList(labels);
+    final params = {'options': optionsText};
+
+    while (true) {
+      var answer = await _assistant.promptAndListen(
+        'voiceFlowAskSessionType',
+        params: params,
+      );
+      final selected = _parseSessionType(answer, options);
+      if (selected != null) return selected;
+
+      while (true) {
+        final recoveryKey = _sessionTypeRecoveryPromptKey(answer);
+        answer = await _assistant.speakPromptAndListen(
+          recoveryKey,
+          params: params,
+        );
+
+        if (_wantsRepeatSessionTypes(answer)) break;
+
+        final fromRecovery = _parseSessionType(answer, options);
+        if (fromRecovery != null) return fromRecovery;
+      }
+    }
+  }
+
+  String _sessionTypeRecoveryPromptKey(String? answer) {
+    if (answer == null || answer.trim().isEmpty) {
+      return 'voiceFlowSessionTypeNotCapturedRepeatOrNumber';
+    }
+    return 'voiceFlowSessionTypeInvalidRepeatOrNumber';
+  }
+
+  bool _wantsRepeatSessionTypes(String? answer) {
+    final raw = (answer ?? '').trim();
+    if (raw.isEmpty) return false;
+    if (_containsAny(raw, const ['是', '好', '重复', '再听', '再说'])) return true;
+
+    final text = VoiceAssistantCoordinator.normalizeSpeech(raw);
+    if (text.isEmpty) return false;
+    return _containsAny(
+      text,
+      const [
+        'yes',
+        'yeah',
+        'yep',
+        'repeat',
+        'again',
+        'listen',
+        'ulang',
+        'dengar',
+        'semula',
+      ],
+    );
+  }
+
+  bool _wantsRepeatTimeSlots(String? answer) {
+    final raw = (answer ?? '').trim();
+    if (raw.isEmpty) return false;
+    if (_containsAny(raw, const ['是', '好', '重复', '再听', '再说'])) return true;
+
+    final text = VoiceAssistantCoordinator.normalizeSpeech(raw);
+    if (text.isEmpty) return false;
+    return _containsAny(
+      text,
+      const [
+        'yes',
+        'yeah',
+        'yep',
+        'repeat',
+        'again',
+        'listen',
+        'ulang',
+        'dengar',
+        'semula',
+        'slots',
+      ],
+    );
   }
 
   Future<String> _askRole() async {
@@ -119,7 +354,6 @@ class BookAppointmentVoiceFlow {
   }
 
   Future<BookableSlot> _askSlot() async {
-    String promptKey = 'voiceFlowAskTime';
     while (true) {
       if (session.loadingSlots) {
         await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -129,52 +363,182 @@ class BookAppointmentVoiceFlow {
         await _assistant.speakPrompt('voiceFlowNoSlots');
         final retryDate = await _askDate();
         await session.selectDate(retryDate);
-        promptKey = 'voiceFlowAskTime';
         continue;
       }
 
-      final labels = session.availableSlots
-          .map((slot) => AppointmentTimeSlots.formatTimeLabel(slot.dateTime))
-          .toList();
-      final answer = await _assistant.promptAndListen(
-        promptKey,
-        params: {'options': _numberedList(labels)},
+      final slots = session.availableSlots;
+      final optionsText = _slotOptionsText(slots);
+      var answer = await _assistant.promptAndListen(
+        'voiceFlowAskTime',
+        params: {'options': optionsText},
       );
-      final picked = _parseSlotChoice(answer, session.availableSlots);
+      var picked = _parseSlotChoice(answer, slots);
       if (picked != null) return picked;
-      promptKey = 'voiceFlowTimeRetry';
+
+      while (true) {
+        final recoveryKey = _timeRecoveryPromptKey(answer, slots);
+        final params = recoveryKey == 'voiceFlowTimeUnavailableRepeatOrChoose'
+            ? {'time': _formatRequestedTimeLabel(answer)}
+            : const <String, Object?>{};
+
+        answer = await _assistant.speakPromptAndListen(recoveryKey, params: params);
+
+        if (_wantsRepeatTimeSlots(answer)) break;
+
+        picked = _parseSlotChoice(answer, slots);
+        if (picked != null) return picked;
+      }
     }
   }
 
-  String _numberedList(List<String> items) {
-    return items.asMap().entries.map((entry) {
-      return '${entry.key + 1}. ${entry.value}';
-    }).join('. ');
+  String _slotOptionsText(List<BookableSlot> slots) {
+    final labels = slots
+        .map((slot) => AppointmentTimeSlots.formatTimeLabel(slot.dateTime))
+        .toList();
+    return _numberedList(labels);
   }
+
+  String _timeRecoveryPromptKey(String? answer, List<BookableSlot> slots) {
+    if (answer == null || answer.trim().isEmpty) {
+      return 'voiceFlowTimeNotCapturedRepeatOrChoose';
+    }
+    if (_looksLikeTimeRequest(answer) && _parseSlotChoice(answer, slots) == null) {
+      return 'voiceFlowTimeUnavailableRepeatOrChoose';
+    }
+    return 'voiceFlowTimeInvalidRepeatOrChoose';
+  }
+
+  bool _looksLikeTimeRequest(String answer) {
+    return TemporalParser.looksLikeTimeExpression(answer);
+  }
+
+  String _formatRequestedTimeLabel(String? answer) {
+    final raw = (answer ?? '').trim();
+    if (raw.isEmpty) return raw;
+
+    final parsed = TemporalParser.extractTime(raw);
+    if (parsed != null) {
+      final base = session.selectedDate ?? DateTime.now();
+      return AppointmentTimeSlots.formatTimeLabel(
+        DateTime(
+          base.year,
+          base.month,
+          base.day,
+          parsed.hour,
+          parsed.minute ?? 0,
+        ),
+      );
+    }
+
+    return raw;
+  }
+
+  String _numberedList(List<String> items) =>
+      VoiceOptionParser.formatNumberedList(items);
 
   String _formatDate(DateTime date) {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-'
         '${date.day.toString().padLeft(2, '0')}';
   }
 
-  String? _parseSessionType(String? answer) {
-    final text = VoiceAssistantCoordinator.normalizeSpeech(answer ?? '');
+  String? _parseSessionType(String? answer, List<AppointmentTypeOption> options) {
+    final raw = (answer ?? '').trim();
+    if (raw.isEmpty) return null;
+
+    final number = VoiceOptionParser.extractOptionNumber(raw, options.length);
+    if (number != null) return options[number - 1].key;
+
+    final text = VoiceAssistantCoordinator.normalizeSpeech(raw);
     if (text.isEmpty) return null;
-    if (_containsAny(text, const ['urgent', 'emergency', '紧急', 'kecemasan', 'paling penting'])) return 'urgent';
-    if (_containsAny(text, const ['therapist', 'therapy', 'rehab', '治疗', '复健', 'terapi', 'pemulihan'])) {
-      return 'therapist_session';
+
+    for (final option in options) {
+      final localized = VoiceAssistantCoordinator.normalizeSpeech(_l10n(option.titleKey));
+      if (localized.isNotEmpty && text.contains(localized)) return option.key;
+
+      final canonical = VoiceAssistantCoordinator.normalizeSpeech(option.canonicalType);
+      if (canonical.isNotEmpty && text.contains(canonical)) return option.key;
+
+      if (_matchesSessionKeywords(text, option.key)) return option.key;
     }
-    if (_containsAny(text, const ['general', 'checkup', 'check up', 'check-up', '常规', '检查', 'umum', 'pemeriksaan'])) {
-      return 'general';
-    }
-    if (text.contains('1') || text.contains('first') || text.contains('一') || text.contains('satu')) return 'general';
-    if (text.contains('2') || text.contains('second') || text.contains('二') || text.contains('dua')) return 'therapist_session';
-    if (text.contains('3') || text.contains('third') || text.contains('三') || text.contains('tiga')) return 'urgent';
     return null;
   }
 
+  bool _matchesSessionKeywords(String text, String sessionKey) {
+    switch (sessionKey) {
+      case 'general_checkup':
+        return _containsAny(
+          text,
+          const ['general', 'checkup', 'check up', 'check-up', '常规', '检查', 'umum', 'pemeriksaan'],
+        );
+      case 'follow_up_consultation':
+        return _containsAny(
+          text,
+          const ['follow up', 'follow-up', 'followup', 'susulan', '复诊', '后续'],
+        );
+      case 'urgent_consultation':
+        return _containsAny(
+          text,
+          const ['urgent', 'emergency', '紧急', 'kecemasan', 'paling penting'],
+        );
+      case 'chronic_disease_review':
+        return _containsAny(
+          text,
+          const ['chronic', 'disease', '慢性病', 'penyakit kronik'],
+        );
+      case 'medication_review':
+        return _containsAny(
+          text,
+          const ['medication', 'medicine', 'drug', '药物', 'ubat', 'perubatan'],
+        );
+      case 'pre_operative_assessment':
+        return _containsAny(
+          text,
+          const ['pre operative', 'pre-operative', 'preoperative', 'surgery', '手术前', 'pra operasi'],
+        );
+      case 'physical_therapy':
+        return _containsAny(
+          text,
+          const ['physical therapy', 'physiotherapy', 'fisioterapi', '物理治疗'],
+        );
+      case 'occupational_therapy':
+        return _containsAny(
+          text,
+          const ['occupational', '职业治疗', 'terapi pekerjaan'],
+        );
+      case 'rehabilitation':
+        return _containsAny(
+          text,
+          const ['rehabilitation', 'rehab', '复健', 'pemulihan'],
+        );
+      case 'pain_management':
+        return _containsAny(
+          text,
+          const ['pain management', 'pain', '疼痛', 'kesakitan'],
+        );
+      case 'speech_therapy':
+        return _containsAny(
+          text,
+          const ['speech therapy', 'speech', '语言治疗', 'terapi pertuturan'],
+        );
+      case 'mental_health_counseling':
+        return _containsAny(
+          text,
+          const ['mental health', 'counseling', 'counselling', '心理健康', 'kaunseling'],
+        );
+      default:
+        return false;
+    }
+  }
+
   String? _parseRole(String? answer) {
-    final text = VoiceAssistantCoordinator.normalizeSpeech(answer ?? '');
+    final raw = (answer ?? '').trim();
+    if (raw.isEmpty) return null;
+
+    final option = VoiceOptionParser.extractOptionNumber(raw, 2);
+    if (option == 1) return 'doctor';
+    if (option == 2) return 'therapist';
+
+    final text = VoiceAssistantCoordinator.normalizeSpeech(raw);
     if (text.isEmpty) return null;
     if (_containsAny(text, const ['doctor', 'physician', 'dr', '医生', 'doktor'])) return 'doctor';
     if (_containsAny(text, const ['therapist', 'therapy', '治疗师', 'terapis'])) return 'therapist';
@@ -182,13 +546,14 @@ class BookAppointmentVoiceFlow {
   }
 
   StaffOption? _parseStaffChoice(String? answer, List<StaffOption> options) {
-    final text = VoiceAssistantCoordinator.normalizeSpeech(answer ?? '');
-    if (text.isEmpty) return null;
+    final raw = (answer ?? '').trim();
+    if (raw.isEmpty) return null;
 
-    final number = _extractOptionNumber(text);
-    if (number != null && number >= 1 && number <= options.length) {
-      return options[number - 1];
-    }
+    final number = VoiceOptionParser.extractOptionNumber(raw, options.length);
+    if (number != null) return options[number - 1];
+
+    final text = VoiceAssistantCoordinator.normalizeSpeech(raw);
+    if (text.isEmpty) return null;
 
     for (final option in options) {
       final name = VoiceAssistantCoordinator.normalizeSpeech(option.name);
@@ -248,13 +613,32 @@ class BookAppointmentVoiceFlow {
   }
 
   BookableSlot? _parseSlotChoice(String? answer, List<BookableSlot> slots) {
-    final text = VoiceAssistantCoordinator.normalizeSpeech(answer ?? '');
-    if (text.isEmpty) return null;
+    final raw = (answer ?? '').trim();
+    if (raw.isEmpty) return null;
 
-    final number = _extractOptionNumber(text);
-    if (number != null && number >= 1 && number <= slots.length) {
-      return slots[number - 1];
+    if (_wantsRepeatTimeSlots(answer)) return null;
+
+    // 1. Explicit option phrases ("option 3", "number one") always win.
+    final explicitOption =
+        VoiceOptionParser.extractExplicitOptionNumber(raw, slots.length);
+    if (explicitOption != null) return slots[explicitOption - 1];
+
+    // 2. Clock times ("9 am", "9 pagi") — not bare option numbers.
+    if (TemporalParser.looksLikeTimeExpression(raw)) {
+      final fromTime = _parseSlotFromTimeSpeech(raw, slots);
+      if (fromTime != null) return fromTime;
     }
+
+    // 3. Bare option numbers ("1", "three", "9" as list index).
+    final number = VoiceOptionParser.extractOptionNumber(
+      raw,
+      slots.length,
+      skipIfTimeLike: true,
+    );
+    if (number != null) return slots[number - 1];
+
+    final text = VoiceAssistantCoordinator.normalizeSpeech(raw);
+    if (text.isEmpty) return null;
 
     if (_containsAny(text, const ['first', 'earliest'])) return slots.first;
 
@@ -265,32 +649,32 @@ class BookAppointmentVoiceFlow {
       if (label.isNotEmpty && text.contains(label.replaceAll(' ', ''))) {
         return slot;
       }
-      final hourMatch = RegExp(r'(\d{1,2})').firstMatch(text);
-      if (hourMatch != null && slot.dateTime.hour == int.parse(hourMatch.group(1)!)) {
-        return slot;
-      }
     }
+
     return null;
   }
 
-  int? _extractOptionNumber(String text) {
-    final words = {
-      'one': 1,
-      'first': 1,
-      'two': 2,
-      'second': 2,
-      'three': 3,
-      'third': 3,
-      'four': 4,
-      'fourth': 4,
-      'five': 5,
-      'fifth': 5,
-    };
-    for (final entry in words.entries) {
-      if (text.contains(entry.key)) return entry.value;
+  BookableSlot? _parseSlotFromTimeSpeech(String raw, List<BookableSlot> slots) {
+    final parsed = TemporalParser.extractTime(raw);
+    if (parsed == null) return null;
+
+    final base = session.selectedDate ?? DateTime.now();
+    final requested = DateTime(
+      base.year,
+      base.month,
+      base.day,
+      parsed.hour,
+      parsed.minute ?? 0,
+    );
+    return _slotMatchingMinute(slots, requested);
+  }
+
+  BookableSlot? _slotMatchingMinute(List<BookableSlot> slots, DateTime requested) {
+    for (final slot in slots) {
+      if (AppointmentTimeSlots.sameMinute(slot.dateTime, requested)) {
+        return slot;
+      }
     }
-    final digit = RegExp(r'\b(\d+)\b').firstMatch(text);
-    if (digit != null) return int.tryParse(digit.group(1)!);
     return null;
   }
 

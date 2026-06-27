@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'app_route_observer.dart';
 import 'l10n/app_localizations.dart';
 import 'models/health_record_item.dart';
 import 'services/activity_log_actions.dart';
 import 'services/activity_log_service.dart';
 import 'services/health_record_audio_service.dart';
 import 'services/health_records_service.dart';
+import 'services/voice_assistant_coordinator.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
 
@@ -19,7 +21,7 @@ class HealthRecordsPage extends StatefulWidget {
   State<HealthRecordsPage> createState() => _HealthRecordsPageState();
 }
 
-class _HealthRecordsPageState extends State<HealthRecordsPage> {
+class _HealthRecordsPageState extends State<HealthRecordsPage> with RouteAware {
   static const Color _bg = Color(0xFF000000);
   static const Color _subtext = Color(0xFF999999);
   static const Color _accent = Color(0xFF63C3C4);
@@ -40,10 +42,29 @@ class _HealthRecordsPageState extends State<HealthRecordsPage> {
         details: 'Opened health records page.',
       ),
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      VoiceAssistantCoordinator.instance.setTopRouteLabel('HealthRecordsPage');
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPopNext() {
+    VoiceAssistantCoordinator.instance.setTopRouteLabel('HealthRecordsPage');
   }
 
   @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
     _audio.dispose();
     super.dispose();
   }

@@ -13,6 +13,8 @@ import 'services/fall_detection_coordinator.dart';
 import 'services/medication_push_service.dart';
 import 'services/medication_local_reminder_service.dart';
 import 'services/user_profile_service.dart';
+import 'services/voice_assistant_coordinator.dart';
+import 'app_route_observer.dart';
 import 'widgets/accessible_focus_region.dart';
 import 'widgets/app_back_button.dart';
 import 'voice_login_page.dart';
@@ -25,7 +27,7 @@ class SettingsPage extends StatefulWidget {
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends State<SettingsPage> {
+class _SettingsPageState extends State<SettingsPage> with RouteAware {
   static const Color _bg = Color(0xFF000000);
   static const Color _accent = Color(0xFF63C3C4);
 
@@ -41,10 +43,29 @@ class _SettingsPageState extends State<SettingsPage> {
     _settings.addListener(_onSettingsChanged);
     AppExperienceService.instance.addListener(_onSettingsChanged);
     _loadVoiceLoginStatus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      VoiceAssistantCoordinator.instance.setTopRouteLabel('SettingsPage');
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPopNext() {
+    VoiceAssistantCoordinator.instance.setTopRouteLabel('SettingsPage');
   }
 
   @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
     _settings.removeListener(_onSettingsChanged);
     AppExperienceService.instance.removeListener(_onSettingsChanged);
     super.dispose();

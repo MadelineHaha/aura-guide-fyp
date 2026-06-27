@@ -9,6 +9,7 @@ import '../../register_page.dart';
 import '../../voice_login_page.dart';
 import '../../voice_register_page.dart';
 import '../voice_assistant_coordinator.dart';
+import '../../utils/voice_option_parser.dart';
 
 enum WelcomeChoice { signIn, register, activatePin }
 
@@ -53,6 +54,8 @@ class WelcomeVoiceFlow {
         if (parsed != null) return parsed;
 
         promptKey = 'welcomeVoiceMenuRetry';
+      } on VoiceFlowNavigationException {
+        return null;
       } on VoiceFlowCancelledException {
         await _assistant.speakPrompt('welcomeVoiceCancelled');
         return null;
@@ -86,6 +89,8 @@ class WelcomeVoiceFlow {
         }
 
         promptKey = 'welcomeVoiceSignInMethodRetry';
+      } on VoiceFlowNavigationException {
+        return;
       } on VoiceFlowCancelledException {
         await _assistant.speakPrompt('welcomeVoiceCancelled');
         return;
@@ -117,6 +122,8 @@ class WelcomeVoiceFlow {
         }
 
         promptKey = 'welcomeVoiceRegisterMethodRetry';
+      } on VoiceFlowNavigationException {
+        return;
       } on VoiceFlowCancelledException {
         await _assistant.speakPrompt('welcomeVoiceCancelled');
         return;
@@ -143,6 +150,16 @@ class WelcomeVoiceFlow {
   WelcomeChoice? _parseWelcomeChoice(String? answer) {
     final normalized = VoiceAssistantCoordinator.normalizeSpeech(answer ?? '');
     if (normalized.isEmpty) return null;
+
+    final option = VoiceOptionParser.extractOptionNumber(answer ?? '', 3);
+    if (option != null) {
+      return switch (option) {
+        1 => WelcomeChoice.signIn,
+        2 => WelcomeChoice.register,
+        3 => WelcomeChoice.activatePin,
+        _ => null,
+      };
+    }
 
     if (_matchesAny(normalized, const [
       'activate with pin',
@@ -200,6 +217,9 @@ class WelcomeVoiceFlow {
   }
 
   bool _matchesVoiceLogin(String? answer) {
+    final option = VoiceOptionParser.extractOptionNumber(answer ?? '', 2);
+    if (option == 1) return true;
+
     final normalized = VoiceAssistantCoordinator.normalizeSpeech(answer ?? '');
     return _matchesAny(normalized, const [
       'voice login',
@@ -217,6 +237,9 @@ class WelcomeVoiceFlow {
   }
 
   bool _matchesManualLogin(String? answer) {
+    final option = VoiceOptionParser.extractOptionNumber(answer ?? '', 2);
+    if (option == 2) return true;
+
     final normalized = VoiceAssistantCoordinator.normalizeSpeech(answer ?? '');
     return _matchesAny(normalized, const [
       'manual login',
@@ -237,6 +260,9 @@ class WelcomeVoiceFlow {
   }
 
   bool _matchesVoiceRegister(String? answer) {
+    final option = VoiceOptionParser.extractOptionNumber(answer ?? '', 2);
+    if (option == 1) return true;
+
     final normalized = VoiceAssistantCoordinator.normalizeSpeech(answer ?? '');
     return _matchesAny(normalized, const [
       'voice register',
@@ -253,6 +279,9 @@ class WelcomeVoiceFlow {
   }
 
   bool _matchesManualRegister(String? answer) {
+    final option = VoiceOptionParser.extractOptionNumber(answer ?? '', 2);
+    if (option == 2) return true;
+
     final normalized = VoiceAssistantCoordinator.normalizeSpeech(answer ?? '');
     return _matchesAny(normalized, const [
       'manual register',

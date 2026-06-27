@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/therapy_session_item.dart';
+import '../utils/appointment_types.dart';
 import '../utils/clinic_datetime.dart';
 
 class TherapySessionsService {
@@ -11,8 +12,7 @@ class TherapySessionsService {
   static const _appointments = 'appointments';
 
   static bool _isTherapyType(String? value) {
-    final type = value?.trim().toLowerCase() ?? '';
-    return type == 'therapy session' || type == 'therapist session';
+    return AppointmentTypes.isTherapistAppointmentType(value);
   }
 
   String? _staffIdFromData(Map<String, dynamic> data) {

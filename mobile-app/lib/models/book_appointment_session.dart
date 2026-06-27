@@ -4,6 +4,7 @@ import '../models/bookable_slot.dart';
 import '../models/staff_option.dart';
 import '../services/appointments_service.dart';
 import '../utils/appointment_time_slots.dart';
+import '../utils/appointment_types.dart';
 import '../utils/clinic_datetime.dart';
 
 /// Shared booking wizard state for touch UI and guided voice flows.
@@ -13,20 +14,16 @@ class BookAppointmentSession extends ChangeNotifier {
 
   final AppointmentsService _service;
 
-  static const sessionOptions = <({String key, String titleKey, String subtitleKey})>[
-    (key: 'general', titleKey: 'sessionGeneral', subtitleKey: 'sessionGeneralDesc'),
-    (
-      key: 'therapist_session',
-      titleKey: 'sessionTherapist',
-      subtitleKey: 'sessionTherapistDesc',
-    ),
-    (key: 'urgent', titleKey: 'sessionUrgent', subtitleKey: 'sessionUrgentDesc'),
-  ];
+  static const sessionOptions = AppointmentTypes.allOptions;
 
   static const roleOptions = <({String key, String titleKey})>[
     (key: 'doctor', titleKey: 'roleDoctor'),
     (key: 'therapist', titleKey: 'roleTherapist'),
   ];
+
+  static List<AppointmentTypeOption> sessionOptionsForRole(String? roleKey) {
+    return AppointmentTypes.optionsForRole(roleKey);
+  }
 
   int step = 0;
   String? sessionKey;
@@ -42,22 +39,25 @@ class BookAppointmentSession extends ChangeNotifier {
   String? slotsErrorMessage;
 
   String sessionTitleForKey(String key, String Function(String) localize) {
-    for (final option in sessionOptions) {
-      if (option.key == key) return localize(option.titleKey);
-    }
-    return localize(sessionOptions.first.titleKey);
+    final option = AppointmentTypes.optionForKey(key);
+    if (option != null) return localize(option.titleKey);
+    return localize(AppointmentTypes.doctorOptions.first.titleKey);
   }
 
-  Future<void> selectSession(String key) async {
-    sessionKey = key;
-    step = 1;
-    notifyListeners();
+  String sessionCanonicalTypeForKey(String key) {
+    final option = AppointmentTypes.optionForKey(key);
+    return option?.canonicalType ?? AppointmentTypes.doctorOptions.first.canonicalType;
   }
 
   Future<void> selectRole(String key) async {
     roleKey = key;
     selectedStaff = null;
-    step = 2;
+    sessionKey = null;
+    selectedDate = null;
+    selectedSlot = null;
+    availableSlots = [];
+    slotsErrorMessage = null;
+    step = 1;
     notifyListeners();
     await loadStaffForRole(key);
   }
@@ -76,11 +76,18 @@ class BookAppointmentSession extends ChangeNotifier {
 
   Future<void> selectStaff(StaffOption option) async {
     selectedStaff = option;
+    sessionKey = null;
     selectedDate = null;
     selectedSlot = null;
     availableSlots = [];
     slotsErrorMessage = null;
     loadingSlots = false;
+    step = 2;
+    notifyListeners();
+  }
+
+  Future<void> selectSession(String key) async {
+    sessionKey = key;
     step = 3;
     notifyListeners();
   }
@@ -151,13 +158,73 @@ class BookAppointmentSession extends ChangeNotifier {
       loadingSlots = false;
       slotsErrorMessage = null;
     } else if (step == 2) {
+      sessionKey = null;
+    } else if (step == 1) {
       selectedStaff = null;
+      sessionKey = null;
+      selectedDate = null;
+      selectedSlot = null;
+      availableSlots = [];
+      loadingSlots = false;
+      slotsErrorMessage = null;
+      roleKey = null;
       staff = [];
       loadingStaff = false;
-    } else if (step == 1) {
-      roleKey = null;
     }
     step -= 1;
+    notifyListeners();
+  }
+
+  void prepareVoiceModifyRole() {
+    roleKey = null;
+    selectedStaff = null;
+    sessionKey = null;
+    selectedDate = null;
+    selectedSlot = null;
+    availableSlots = [];
+    staff = [];
+    loadingStaff = false;
+    loadingSlots = false;
+    slotsErrorMessage = null;
+    step = 0;
+    notifyListeners();
+  }
+
+  void prepareVoiceModifyStaff() {
+    selectedStaff = null;
+    selectedDate = null;
+    selectedSlot = null;
+    availableSlots = [];
+    loadingSlots = false;
+    slotsErrorMessage = null;
+    step = 1;
+    notifyListeners();
+  }
+
+  void prepareVoiceModifySession() {
+    sessionKey = null;
+    selectedDate = null;
+    selectedSlot = null;
+    availableSlots = [];
+    loadingSlots = false;
+    slotsErrorMessage = null;
+    step = 2;
+    notifyListeners();
+  }
+
+  void prepareVoiceModifyDate() {
+    selectedDate = null;
+    selectedSlot = null;
+    availableSlots = [];
+    loadingSlots = false;
+    slotsErrorMessage = null;
+    step = 3;
+    notifyListeners();
+  }
+
+  void prepareVoiceModifyTime() {
+    selectedSlot = null;
+    step = 3;
     notifyListeners();
   }
 
